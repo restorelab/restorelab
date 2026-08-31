@@ -46,3 +46,62 @@ type GuestExecutor interface {
 	// callers can tell "your service is broken" apart from "I could not ask".
 	ExecInGuest(ctx context.Context, workloadID string, req ExecRequest) (*ExecResult, error)
 }
+
+// GuestOS is what a guest agent reports about the operating system running
+// inside the guest. Every field is best-effort: an agent that answers at all
+// always fills Family, but the rest varies by agent version and by OS.
+type GuestOS struct {
+	// Family is the normalised OS family, lowercase: "windows" or "linux".
+	// It is "" when the agent answered something this code does not
+	// recognise, which callers must treat as "unknown", never as "linux".
+	Family string
+	// ID is the agent's own identifier ("debian", "mswindows", ...).
+	ID string
+	// Name is the human-readable OS name ("Debian GNU/Linux").
+	Name string
+	// PrettyName is the fullest human-readable form the agent has
+	// ("Debian GNU/Linux 12 (bookworm)"), or "" when it reports none.
+	PrettyName string
+	// Version is the OS version as the agent words it ("12 (bookworm)").
+	Version string
+}
+
+// Guest OS families reported in GuestOS.Family.
+const (
+	GuestOSWindows = "windows"
+	GuestOSLinux   = "linux"
+)
+
+// GuestOSDetector is an optional companion to GuestExecutor, implemented by
+// providers whose guest agent can also report what OS it is running on.
+//
+// It exists so that callers do not have to know our packaging conventions:
+// a command check can pick /bin/sh or cmd on its own instead of making the
+// operator remember that a Windows drill needs "shell: cmd" spelled out.
+//
+// Callers must type-assert for it and degrade gracefully when it is absent
+// or fails — the guest is often still booting when the first check runs,
+// and "I could not ask" is a normal, temporary answer, not a fatal one.
+type GuestOSDetector interface {
+	// GuestOS reports the OS running inside the guest. It returns a wrapped
+	// ErrGuestAgentUnavailable when the agent could not be reached, the same
+	// way ExecInGuest does.
+	GuestOS(ctx context.Context, workloadID string) (GuestOS, error)
+}
+
+// String renders a guest OS for a human, in the fullest form the agent gave
+// us. It is "unknown" when the agent reported nothing usable.
+func (g GuestOS) String() string {
+	switch {
+	case g.PrettyName != "":
+		return g.PrettyName
+	case g.Name != "" && g.Version != "":
+		return g.Name + " " + g.Version
+	case g.Name != "":
+		return g.Name
+	case g.ID != "":
+		return g.ID
+	default:
+		return "unknown"
+	}
+}

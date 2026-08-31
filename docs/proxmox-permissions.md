@@ -75,7 +75,7 @@ pveum role add RestoreLabStorage --privs "Datastore.Audit,Datastore.AllocateSpac
 | `VM.Allocate` | Create the temporary workload, and destroy it during cleanup |
 | `VM.Config.*` | Rewrite the network onto the isolated bridge, cap CPU/RAM, stamp ownership metadata |
 | `VM.PowerMgmt` | Start and stop the temporary workload |
-| `VM.GuestAgent.Audit` | Read the guest agent to learn the restored IP address |
+| `VM.GuestAgent.Audit` | Read the guest agent: the restored IP address, and the guest's OS |
 | `VM.GuestAgent.Unrestricted` | Run in-guest validation commands (`command` checks) |
 | `VM.Audit` | List workloads and read their configuration |
 | `VM.Backup` | Read the backup catalogue of a production workload (no write access to it) |

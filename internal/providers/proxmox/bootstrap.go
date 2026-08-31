@@ -268,7 +268,7 @@ func (c *AdminClient) doRequest(ctx context.Context, method, path string, form u
 // change or destroy anything.
 //   - VM.Audit                view VM/CT configuration and status
 //   - VM.Backup               read a workload's backup catalogue
-//   - VM.GuestAgent.Audit     query the QEMU guest agent (guest readiness, IP discovery)
+//   - VM.GuestAgent.Audit     query the QEMU guest agent (guest readiness, IP discovery, OS detection)
 //   - Datastore.Audit         view storage contents and usage
 //   - Datastore.AllocateSpace see backup volumes at all (see below)
 //   - Sys.Audit               view node/cluster health, bridges and capacity
@@ -340,7 +340,7 @@ var DrillPrivileges = append(append([]string{}, ReadOnlyPrivileges...), []string
 // cannot do its job.
 var optionalPrivileges = map[string]string{
 	"VM.Monitor":                 "runtime state reads, removed in Proxmox VE 9",
-	"VM.GuestAgent.Audit":        "guest agent queries, used to discover the restored guest's address",
+	"VM.GuestAgent.Audit":        "guest agent queries, used to discover the restored guest's address and OS",
 	"VM.GuestAgent.Unrestricted": "in-guest command checks",
 	"SDN.Use":                    "attaching a workload to the isolated bridge (Proxmox VE 9 and newer)",
 }

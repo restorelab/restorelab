@@ -401,3 +401,157 @@ func equalStrings(a, b []string) bool {
 }
 
 var _ core.Check = CommandCheck{}
+
+// osAwareExecutor is a fakeExecutor that also answers core.GuestOSDetector,
+// the way a real Proxmox provider does.
+type osAwareExecutor struct {
+	fakeExecutor
+	guestOS  core.GuestOS
+	osErr    error
+	osCalls  int
+	lastOSID string
+}
+
+func (f *osAwareExecutor) GuestOS(ctx context.Context, workloadID string) (core.GuestOS, error) {
+	f.osCalls++
+	f.lastOSID = workloadID
+	if f.osErr != nil {
+		return core.GuestOS{}, f.osErr
+	}
+	return f.guestOS, nil
+}
+
+var _ core.GuestOSDetector = (*osAwareExecutor)(nil)
+
+func TestCommandCheck_AutoShellFromGuestOS(t *testing.T) {
+	tests := []struct {
+		name    string
+		guestOS core.GuestOS
+		want    []string
+	}{
+		{
+			name:    "windows guest gets cmd",
+			guestOS: core.GuestOS{Family: core.GuestOSWindows, ID: "mswindows", Name: "Microsoft Windows"},
+			want:    []string{"cmd", "/c", "hostname"},
+		},
+		{
+			name:    "linux guest gets /bin/sh",
+			guestOS: core.GuestOS{Family: core.GuestOSLinux, ID: "debian", Name: "Debian GNU/Linux"},
+			want:    []string{"/bin/sh", "-c", "hostname"},
+		},
+		{
+			name:    "unrecognised family falls back to /bin/sh",
+			guestOS: core.GuestOS{ID: "freebsd", Name: "FreeBSD"},
+			want:    []string{"/bin/sh", "-c", "hostname"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exec := &osAwareExecutor{guestOS: tt.guestOS}
+			exec.result = passResult(0, "host", "")
+
+			res := runCommandCheck(t, exec, "vm-9001", map[string]any{"run": "hostname"})
+			if res.Status != core.CheckPass {
+				t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+			}
+			if got := exec.lastReq.Argv; !equalStrings(got, tt.want) {
+				t.Fatalf("Argv = %v, want %v", got, tt.want)
+			}
+			if exec.osCalls != 1 {
+				t.Fatalf("GuestOS calls = %d, want 1", exec.osCalls)
+			}
+			if exec.lastOSID != "vm-9001" {
+				t.Fatalf("GuestOS workloadID = %q, want %q", exec.lastOSID, "vm-9001")
+			}
+		})
+	}
+}
+
+func TestCommandCheck_ExplicitShellSkipsDetection(t *testing.T) {
+	exec := &osAwareExecutor{guestOS: core.GuestOS{Family: core.GuestOSWindows}}
+	exec.result = passResult(0, "", "")
+
+	res := runCommandCheck(t, exec, "vm-1", map[string]any{"run": "hostname", "shell": "bash"})
+	if res.Status != core.CheckPass {
+		t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+	}
+	if exec.osCalls != 0 {
+		t.Fatalf("GuestOS calls = %d, want 0: an explicit shell must be obeyed verbatim", exec.osCalls)
+	}
+	if got, want := exec.lastReq.Argv, []string{"bash", "-c", "hostname"}; !equalStrings(got, want) {
+		t.Fatalf("Argv = %v, want %v", got, want)
+	}
+}
+
+func TestCommandCheck_ArgvSkipsDetection(t *testing.T) {
+	exec := &osAwareExecutor{guestOS: core.GuestOS{Family: core.GuestOSWindows}}
+	exec.result = passResult(0, "", "")
+
+	res := runCommandCheck(t, exec, "vm-1", map[string]any{"argv": []any{"hostname"}})
+	if res.Status != core.CheckPass {
+		t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+	}
+	if exec.osCalls != 0 {
+		t.Fatalf("GuestOS calls = %d, want 0: argv runs with no shell at all", exec.osCalls)
+	}
+}
+
+func TestCommandCheck_ExecutorWithoutDetectionStillRuns(t *testing.T) {
+	exec := &fakeExecutor{result: passResult(0, "", "")}
+
+	res := runCommandCheck(t, exec, "vm-1", map[string]any{"run": "hostname"})
+	if res.Status != core.CheckPass {
+		t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+	}
+	if got, want := exec.lastReq.Argv, []string{"/bin/sh", "-c", "hostname"}; !equalStrings(got, want) {
+		t.Fatalf("Argv = %v, want %v", got, want)
+	}
+}
+
+// A guest that is still booting cannot answer get-osinfo. That must not stop
+// the check from trying — the default shell may well be right, and the check
+// gets retried anyway.
+func TestCommandCheck_DetectionFailureStillRunsDefaultShell(t *testing.T) {
+	exec := &osAwareExecutor{osErr: fmt.Errorf("%w: agent not answering", core.ErrGuestAgentUnavailable)}
+	exec.result = passResult(0, "host", "")
+
+	res := runCommandCheck(t, exec, "vm-1", map[string]any{"run": "hostname"})
+	if res.Status != core.CheckPass {
+		t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+	}
+	if got, want := exec.lastReq.Argv, []string{"/bin/sh", "-c", "hostname"}; !equalStrings(got, want) {
+		t.Fatalf("Argv = %v, want %v", got, want)
+	}
+}
+
+// When detection failed AND the command could not run, the operator needs
+// both halves of the story: the exec error, and the fact that the shell was
+// a guess.
+func TestCommandCheck_DetectionFailureIsReportedWhenExecFails(t *testing.T) {
+	exec := &osAwareExecutor{osErr: errors.New("no permission to ask")}
+	exec.err = fmt.Errorf("%w: agent not answering", core.ErrGuestAgentUnavailable)
+
+	res := runCommandCheck(t, exec, "vm-1", map[string]any{"run": "hostname"})
+	if res.Status != core.CheckError {
+		t.Fatalf("Status = %v, want CheckError", res.Status)
+	}
+	for _, want := range []string{"guest OS could not be detected", "/bin/sh", "no permission to ask", `"shell"`} {
+		if !strings.Contains(res.Message, want) {
+			t.Fatalf("Message should mention %q, got: %q", want, res.Message)
+		}
+	}
+}
+
+func TestCommandCheck_NoFallbackNoteWhenDetectionWorked(t *testing.T) {
+	exec := &osAwareExecutor{guestOS: core.GuestOS{Family: core.GuestOSLinux}}
+	exec.err = fmt.Errorf("%w: agent went away mid-run", core.ErrGuestAgentUnavailable)
+
+	res := runCommandCheck(t, exec, "vm-1", map[string]any{"run": "hostname"})
+	if res.Status != core.CheckError {
+		t.Fatalf("Status = %v, want CheckError", res.Status)
+	}
+	if strings.Contains(res.Message, "could not be detected") {
+		t.Fatalf("Message must not blame detection when it succeeded, got: %q", res.Message)
+	}
+}

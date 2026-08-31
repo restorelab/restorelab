@@ -87,7 +87,9 @@ Checks are given with --check, repeatable:
     --check 'cmd:systemctl is-active postgresql'
 
 A cmd: check runs inside the restored guest through the QEMU guest agent, so
-it needs no network route into the isolated recovery network at all.
+it needs no network route into the isolated recovery network at all. The
+interpreter is chosen from the guest's own OS - cmd on Windows, /bin/sh
+elsewhere - so the same --check works on either.
 
 With no --check, a TCP check on port 22 is used: it proves the guest booted,
 configured its network, and started a service.`,

@@ -26,8 +26,9 @@ const defaultMaxOutputBytes = 65536
 //   - run: command line, executed through a shell inside the guest
 //   - argv: list of strings, executed directly with no shell
 //     (exactly one of run/argv is required)
-//   - shell: interpreter used for run (default "/bin/sh"); accepts a path,
-//     or the shorthands sh, bash, cmd, powershell
+//   - shell: interpreter used for run; accepts a path, or the shorthands
+//     sh, bash, cmd, powershell. Omit it and the check asks the guest agent
+//     what OS it is running and picks cmd on Windows, /bin/sh elsewhere.
 //   - expect: the trimmed stdout must equal this exactly
 //   - stdout_contains: substring stdout must contain
 //   - stdout_matches: regular expression stdout must match
@@ -53,7 +54,7 @@ func (CommandCheck) Run(ctx context.Context, target core.Target, cfg core.CheckC
 		argvParam = p.StringSlice("argv")
 	}
 
-	shell := p.String("shell", "/bin/sh")
+	shell := p.String("shell", "")
 	_, hasExpect := cfg.Params["expect"]
 	expect := p.String("expect", "")
 	_, hasStdoutContains := cfg.Params["stdout_contains"]
@@ -75,17 +76,6 @@ func (CommandCheck) Run(ctx context.Context, target core.Target, cfg core.CheckC
 		return core.CheckResult{Status: core.CheckError, Message: `command: param "argv" must not be empty`}
 	}
 
-	var argv []string
-	if hasRun {
-		resolved, err := resolveShellArgv(shell, run)
-		if err != nil {
-			return core.CheckResult{Status: core.CheckError, Message: err.Error()}
-		}
-		argv = resolved
-	} else {
-		argv = argvParam
-	}
-
 	if target.Exec == nil {
 		return core.CheckResult{
 			Status: core.CheckError,
@@ -93,6 +83,27 @@ func (CommandCheck) Run(ctx context.Context, target core.Target, cfg core.CheckC
 				"(no guest executor configured for this target); the workload needs the QEMU guest agent " +
 				"installed and enabled",
 		}
+	}
+
+	// detectErr records why automatic shell selection fell back to the
+	// default. It is not itself a failure — the fallback may well be right —
+	// but if the command then fails to run at all, it is the first thing an
+	// operator needs to see.
+	var detectErr error
+	var argv []string
+	if hasRun {
+		// A blank shell — absent, or templated down to nothing — means
+		// "you decide", not "run the empty interpreter".
+		if strings.TrimSpace(shell) == "" {
+			shell, detectErr = autoShell(ctx, target)
+		}
+		resolved, err := resolveShellArgv(shell, run)
+		if err != nil {
+			return core.CheckResult{Status: core.CheckError, Message: err.Error()}
+		}
+		argv = resolved
+	} else {
+		argv = argvParam
 	}
 
 	res, err := target.Exec.ExecInGuest(ctx, target.WorkloadID, core.ExecRequest{
@@ -106,12 +117,12 @@ func (CommandCheck) Run(ctx context.Context, target core.Target, cfg core.CheckC
 				Status: core.CheckError,
 				Message: fmt.Sprintf(
 					"command: guest agent unavailable: %v (install and start qemu-guest-agent in the guest, "+
-						"then enable the QEMU guest agent on the VM)", err),
+						"then enable the QEMU guest agent on the VM)%s", err, shellFallbackNote(detectErr, shell)),
 			}
 		}
 		return core.CheckResult{
 			Status:  core.CheckError,
-			Message: fmt.Sprintf("command: could not run %q in the guest: %v", strings.Join(argv, " "), err),
+			Message: fmt.Sprintf("command: could not run %q in the guest: %v%s", strings.Join(argv, " "), err, shellFallbackNote(detectErr, shell)),
 		}
 	}
 
@@ -215,4 +226,50 @@ func commandEvidence(stdout, stderr string) string {
 	default:
 		return " (no output)"
 	}
+}
+
+// defaultShell is the interpreter used for "run" when the plan names none
+// and the guest cannot tell us what it is running.
+const defaultShell = "/bin/sh"
+
+// autoShell picks the interpreter for a "run" command line when the plan did
+// not name one, by asking the guest agent what OS it is running.
+//
+// Nobody should have to know our packaging conventions to drill a Windows
+// VM: "--check 'cmd:sc query Winmgmt'" must work the same way it does on
+// Linux. The returned error is advisory — the caller still gets a usable
+// shell — and only says why the default was used instead of a detected one.
+func autoShell(ctx context.Context, target core.Target) (string, error) {
+	detector, ok := target.Exec.(core.GuestOSDetector)
+	if !ok {
+		// The provider can run commands but cannot introspect the guest.
+		// Nothing went wrong; the default is all there is.
+		return defaultShell, nil
+	}
+
+	guestOS, err := detector.GuestOS(ctx, target.WorkloadID)
+	if err != nil {
+		return defaultShell, err
+	}
+
+	switch guestOS.Family {
+	case core.GuestOSWindows:
+		return "cmd", nil
+	case core.GuestOSLinux:
+		return defaultShell, nil
+	default:
+		return defaultShell, fmt.Errorf("the guest agent reported an OS this check does not recognise (%s)", guestOS)
+	}
+}
+
+// shellFallbackNote explains, on a command that could not be run at all, that
+// the interpreter was a guess. Silence here is what would make a Windows
+// drill baffling: "could not run /bin/sh -c ..." tells the operator nothing
+// about why a Linux shell was aimed at their Windows guest.
+func shellFallbackNote(detectErr error, shell string) string {
+	if detectErr == nil {
+		return ""
+	}
+	return fmt.Sprintf(" (the guest OS could not be detected, so %q was used by default: %v; "+
+		`set "shell" on the check to name the interpreter yourself)`, shell, detectErr)
 }

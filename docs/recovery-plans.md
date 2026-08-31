@@ -209,7 +209,7 @@ socket.
 | --- | --- | --- |
 | `run` | — | Command line, executed through a shell in the guest |
 | `argv` | — | List of strings, executed directly with no shell |
-| `shell` | `/bin/sh` | Interpreter for `run`: a path, or `sh`, `bash`, `cmd`, `powershell` |
+| `shell` | auto-detected | Interpreter for `run`: a path, or `sh`, `bash`, `cmd`, `powershell` |
 | `expect` | — | Trimmed stdout must equal this exactly |
 | `stdout_contains` | — | Substring stdout must contain |
 | `stdout_matches` | — | Regular expression stdout must match |
@@ -219,6 +219,14 @@ socket.
 
 Exactly one of `run` and `argv` is required. Assertions are evaluated in
 order: exit code, `expect`, `stdout_contains`, `stdout_matches`.
+
+Leave `shell` out and the check asks the guest agent what operating system it
+is running (`agent/get-osinfo`, the same privilege IP discovery already uses)
+and picks `cmd` on Windows, `/bin/sh` everywhere else. Set it explicitly when
+you want something specific — `powershell`, `bash`, an interpreter path — or
+when the guest is one the agent does not describe. If detection fails and the
+command then cannot run at all, the check says so, naming the shell it fell
+back to.
 
 ```yaml
 - type: command
