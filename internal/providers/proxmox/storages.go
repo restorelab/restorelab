@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
+	"strings"
 )
 
 // Storage is a storage as the cluster sees it, used by diagnostics: knowing
@@ -284,4 +286,65 @@ func (p *Provider) EffectivePermissions(ctx context.Context, path string) (map[s
 // answered.
 func (p *Provider) Raw(ctx context.Context, path string, params url.Values) ([]byte, error) {
 	return p.get(ctx, path, params)
+}
+
+// BackupConfig returns the workload configuration stored inside a backup,
+// as key/value pairs.
+//
+// It is what lets a restore neutralise every network interface the backup
+// carries rather than only the first one: Proxmox validates the restored
+// configuration as it creates the workload, so an interface left pointing at
+// a production bridge fails the restore outright on a cluster with SDN
+// permissions - and would be a live production bridge on a cluster without.
+//
+// Proxmox returns this as a plain text blob, not JSON, with a leading
+// "#comment" block and lines of "key: value".
+func (p *Provider) BackupConfig(ctx context.Context, node, volid string) (map[string]string, error) {
+	raw, err := p.get(ctx, fmt.Sprintf("/nodes/%s/vzdump/extractconfig", node), url.Values{
+		"volume": {volid},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var blob string
+	if err := json.Unmarshal(raw, &blob); err != nil {
+		return nil, fmt.Errorf("proxmox: decode backup config for %s: %w", volid, err)
+	}
+	return parseConfigBlob(blob), nil
+}
+
+// parseConfigBlob turns Proxmox's "key: value" configuration text into a map,
+// ignoring comments and the "#qmdump#map" lines it prefixes restores with.
+func parseConfigBlob(blob string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(blob, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = strings.TrimSpace(value)
+	}
+	return out
+}
+
+// BackupNetworkDevices lists the network interface keys a backup carries,
+// sorted, e.g. ["net0", "net1"].
+func BackupNetworkDevices(config map[string]string) []string {
+	var nets []string
+	for key := range config {
+		if netIfaceRE.MatchString(key) {
+			nets = append(nets, key)
+		}
+	}
+	sort.Strings(nets)
+	return nets
 }

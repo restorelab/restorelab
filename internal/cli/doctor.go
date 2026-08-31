@@ -307,6 +307,23 @@ func (a *app) doctorWorkload(ctx context.Context, hv core.HypervisorProvider, pr
 		return
 	}
 	backup, err := bp.GetLatestBackup(ctx, id)
+	if err == nil && a.rawAPI {
+		if pve, isPVE := hv.(*proxmox.Provider); isPVE {
+			if w, werr := hv.GetWorkload(ctx, id); werr == nil {
+				if cfg, cerr := pve.BackupConfig(ctx, w.Node, backup.ID); cerr == nil {
+					nets := proxmox.BackupNetworkDevices(cfg)
+					fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
+						fmt.Sprintf("backup carries %d network interface(s): %v", len(nets), nets)))
+					for _, n := range nets {
+						fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim, "  "+n+": "+cfg[n]))
+					}
+				} else {
+					fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow,
+						fmt.Sprintf("cannot read the config stored in the backup: %v", cerr)))
+				}
+			}
+		}
+	}
 	switch {
 	case errors.Is(err, core.ErrNoBackup):
 		fail("workload %s has no backup to restore", id)

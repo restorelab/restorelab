@@ -614,7 +614,7 @@ func TestRestoreSendsThePoolOnlyWhenSet(t *testing.T) {
 			t.Fatalf("Restore: %v", err)
 		}
 
-		form := m.recorded()[0].Form
+		form := restoreForm(t, m, "pve1")
 		assertForm(t, form, "pool", "restorelab")
 	})
 
@@ -629,7 +629,7 @@ func TestRestoreSendsThePoolOnlyWhenSet(t *testing.T) {
 			t.Fatalf("Restore: %v", err)
 		}
 
-		form := m.recorded()[0].Form
+		form := restoreForm(t, m, "pve1")
 		if form.Has("pool") {
 			t.Errorf("pool must not be sent when none is configured, got %q", form.Get("pool"))
 		}
@@ -666,7 +666,7 @@ func TestRestoreIsolatesAndStampsAtCreation(t *testing.T) {
 		t.Fatalf("Restore: %v", err)
 	}
 
-	form := m.recorded()[0].Form
+	form := restoreForm(t, m, "pve1")
 
 	net0 := form.Get("net0")
 	if !strings.Contains(net0, "bridge=vmbr99") {
@@ -702,5 +702,105 @@ func TestRestoreOmitsNetworkWhenNoneIsConfigured(t *testing.T) {
 	}
 	if m.recorded()[0].Form.Has("net0") {
 		t.Error("net0 must not be sent when no network was configured")
+	}
+}
+
+// restoreForm returns the form of the restore POST, which is no longer the
+// first request the provider makes: it reads the backup's configuration first.
+func restoreForm(t *testing.T, m *mockServer, node string) url.Values {
+	t.Helper()
+	for _, r := range m.recorded() {
+		if r.Method == http.MethodPost && r.Path == "/api2/json/nodes/"+node+"/qemu" {
+			return r.Form
+		}
+	}
+	t.Fatal("no restore request was made")
+	return nil
+}
+
+// mockBackupConfig makes the extractconfig endpoint answer with a workload
+// configuration carrying the given interfaces.
+func mockBackupConfig(m *mockServer, node string, nets map[string]string) {
+	lines := []string{"#qmdump#map:scsi0:drive-scsi0:local-zfs:", "boot: order=scsi0", "cores: 2"}
+	for k, v := range nets {
+		lines = append(lines, k+": "+v)
+	}
+	m.on("GET", "/api2/json/nodes/"+node+"/vzdump/extractconfig", 200, strings.Join(lines, "\n"))
+}
+
+// A workload with several interfaces must have every one of them neutralised
+// in the create call. Overriding only net0 leaves the second NIC pointing at a
+// production bridge, which Proxmox refuses when SDN permissions apply — and
+// which would be a live production bridge where they do not.
+func TestRestoreNeutralisesEveryInterfaceTheBackupCarries(t *testing.T) {
+	m := newMockServer(t)
+	mockBackupConfig(m, "pve1", map[string]string{
+		"net0": "virtio=AA:BB:CC:DD:EE:FF,bridge=vmbr0",
+		"net1": "virtio=11:22:33:44:55:66,bridge=vmbr1,tag=42",
+		"net2": "e1000=AA:AA:AA:AA:AA:AA,bridge=vmbr2",
+	})
+	m.on("POST", "/api2/json/nodes/pve1/qemu", 200, "UPID:pve1:qmrestore:9000:root@pam:")
+	p := newTestProvider(t, m, nil)
+
+	if _, err := p.Restore(context.Background(),
+		core.Backup{ID: "local:backup/vzdump-qemu-104.vma.zst", Node: "pve1"},
+		core.RestoreOptions{
+			TargetWorkloadID: "9000",
+			Node:             "pve1",
+			Network:          core.NetworkConfig{Bridge: "vmbr99", Isolated: true},
+		},
+	); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	form := restoreForm(t, m, "pve1")
+	for _, iface := range []string{"net0", "net1", "net2"} {
+		got := form.Get(iface)
+		if !strings.Contains(got, "bridge=vmbr99") {
+			t.Errorf("%s = %q, want it pointed at the isolated bridge", iface, got)
+		}
+	}
+	for _, production := range []string{"vmbr0", "vmbr1", "vmbr2", "AA:BB:CC", "11:22:33"} {
+		if strings.Contains(form.Encode(), production) {
+			t.Errorf("the create call still carries %q from production", production)
+		}
+	}
+}
+
+// When the backup's configuration cannot be read, overriding net0 is what
+// RestoreLab did before this existed: no worse than it was, and a workload
+// with more interfaces fails loudly at restore rather than coming up attached
+// to production.
+func TestRestoreFallsBackToNet0WhenTheBackupConfigIsUnreadable(t *testing.T) {
+	m := newMockServer(t)
+	m.on("GET", "/api2/json/nodes/pve1/vzdump/extractconfig", 500, nil)
+	m.on("POST", "/api2/json/nodes/pve1/qemu", 200, "UPID:pve1:qmrestore:9000:root@pam:")
+	p := newTestProvider(t, m, nil)
+
+	if _, err := p.Restore(context.Background(),
+		core.Backup{ID: "local:backup/x.vma.zst", Node: "pve1"},
+		core.RestoreOptions{
+			TargetWorkloadID: "9000",
+			Node:             "pve1",
+			Network:          core.NetworkConfig{Bridge: "vmbr99", Isolated: true},
+		},
+	); err != nil {
+		t.Fatalf("Restore must still proceed: %v", err)
+	}
+	if got := restoreForm(t, m, "pve1").Get("net0"); !strings.Contains(got, "bridge=vmbr99") {
+		t.Errorf("net0 = %q, want the isolated bridge", got)
+	}
+}
+
+func TestParseConfigBlobIgnoresCommentsAndMapLines(t *testing.T) {
+	config := parseConfigBlob("#qmdump#map:scsi0:drive-scsi0:local-zfs:\n# a comment\nname: tooling\nnet0: virtio,bridge=vmbr1\n\nagent: 1\n")
+	if config["name"] != "tooling" || config["agent"] != "1" {
+		t.Errorf("config = %v", config)
+	}
+	if _, ok := config["#qmdump#map"]; ok {
+		t.Error("the qmdump map line must not become a config key")
+	}
+	if got := BackupNetworkDevices(config); len(got) != 1 || got[0] != "net0" {
+		t.Errorf("BackupNetworkDevices() = %v", got)
 	}
 }

@@ -327,7 +327,15 @@ func (p *Provider) Restore(ctx context.Context, backup core.Backup, opts core.Re
 	//     403 SDN.Use unless the caller holds that privilege on the production
 	//     network - which RestoreLab must never need.
 	if opts.Network.Bridge != "" {
-		form.Set("net0", renderNetConfig(opts.Network))
+		// Every interface the backup carries, not just the first: a workload
+		// with two NICs would otherwise be created with its second one still
+		// pointing at a production bridge, which Proxmox refuses outright when
+		// SDN permissions apply, and which would be a live production bridge
+		// where they do not. FinalizeRestore removes the extra ones once the
+		// workload exists; this makes sure none of them is ever production.
+		for _, iface := range p.backupNetworkDevices(ctx, node, backup.ID) {
+			form.Set(iface, renderNetConfig(opts.Network))
+		}
 	}
 
 	// Stamp ownership at creation for a related reason: a workload that exists
@@ -717,4 +725,22 @@ func renderMetadata(metadata map[string]string) string {
 		lines = append(lines, k+"="+metadata[k])
 	}
 	return strings.Join(lines, "\n")
+}
+
+// backupNetworkDevices lists the network interfaces stored in a backup, so a
+// restore can neutralise all of them. It falls back to just net0 when the
+// configuration cannot be read: overriding one interface is what RestoreLab
+// did before this existed, so the failure mode is no worse than it was, and a
+// workload with more interfaces fails loudly at restore rather than quietly
+// coming up attached to production.
+func (p *Provider) backupNetworkDevices(ctx context.Context, node, volid string) []string {
+	config, err := p.BackupConfig(ctx, node, volid)
+	if err != nil {
+		return []string{"net0"}
+	}
+	nets := BackupNetworkDevices(config)
+	if len(nets) == 0 {
+		return []string{"net0"}
+	}
+	return nets
 }
