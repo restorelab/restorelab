@@ -79,6 +79,10 @@ Checks are given with --check, repeatable:
     --check tcp:22
     --check http://{{ .ip }}:8080/health
     --check dns:example.com
+    --check 'cmd:systemctl is-active postgresql'
+
+A cmd: check runs inside the restored guest through the QEMU guest agent, so
+it needs no network route into the isolated recovery network at all.
 
 With no --check, a TCP check on port 22 is used: it proves the guest booted,
 configured its network, and started a service.`,
@@ -95,7 +99,7 @@ configured its network, and started a service.`,
 	f.bind(cmd)
 	fs := cmd.Flags()
 	fs.StringVar(&f.backup, "backup", "latest", `restore point: "latest" or a backup id`)
-	fs.StringArrayVar(&f.checkSpecs, "check", nil, "check to run (repeatable): ping, tcp:PORT, http://..., dns:NAME")
+	fs.StringArrayVar(&f.checkSpecs, "check", nil, "check to run (repeatable): ping, tcp:PORT, http://..., dns:NAME, cmd:COMMAND")
 	fs.DurationVar(&f.startupTimeout, "startup-timeout", plan.DefaultStartupTimeout, "how long to wait for the guest to become reachable")
 	fs.DurationVar(&f.rtoTarget, "rto", 0, "recovery time objective the run is graded against")
 	fs.IntVar(&f.cpuLimit, "cpu", 0, "cap the temporary workload's cores")
@@ -187,6 +191,13 @@ func parseCheckSpec(spec string) (plan.CheckSpec, error) {
 		}
 		return plan.CheckSpec{Type: "tcp", Params: map[string]any{"port": port}}, nil
 
+	case strings.HasPrefix(spec, "cmd:"):
+		run := strings.TrimPrefix(spec, "cmd:")
+		if strings.TrimSpace(run) == "" {
+			return plan.CheckSpec{}, fmt.Errorf("invalid check %q: expected cmd:COMMAND", spec)
+		}
+		return plan.CheckSpec{Type: "command", Params: map[string]any{"run": run}}, nil
+
 	case strings.HasPrefix(spec, "dns:"):
 		name := strings.TrimPrefix(spec, "dns:")
 		if name == "" {
@@ -195,7 +206,7 @@ func parseCheckSpec(spec string) (plan.CheckSpec, error) {
 		return plan.CheckSpec{Type: "dns", Params: map[string]any{"name": name}}, nil
 	}
 
-	return plan.CheckSpec{}, fmt.Errorf("unknown check %q: expected ping, tcp:PORT, http(s)://..., or dns:NAME", spec)
+	return plan.CheckSpec{}, fmt.Errorf("unknown check %q: expected ping, tcp:PORT, http(s)://..., dns:NAME, or cmd:COMMAND", spec)
 }
 
 // runPlan wires the providers, the check registry and the engine together,
