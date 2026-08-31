@@ -1,0 +1,348 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/restorelab/restorelab/internal/checks"
+	"github.com/restorelab/restorelab/internal/core"
+	"github.com/restorelab/restorelab/internal/plan"
+	"github.com/restorelab/restorelab/internal/recovery"
+	"github.com/restorelab/restorelab/internal/report"
+)
+
+// runFlags are shared by `recovery test` and `recovery run`.
+type runFlags struct {
+	providerID string
+	backupID   string
+	node       string
+	storage    string
+	network    string
+	reportPath string
+	dryRun     bool
+	keep       bool
+
+	// `recovery test` only: the ad-hoc plan is built from these.
+	backup         string
+	checkSpecs     []string
+	startupTimeout time.Duration
+	rtoTarget      time.Duration
+	cpuLimit       int
+	memoryLimitMB  int
+	skipStartup    bool
+}
+
+func (f *runFlags) bind(cmd *cobra.Command) {
+	fs := cmd.Flags()
+	fs.StringVar(&f.providerID, "provider", "", "hypervisor provider to restore on")
+	fs.StringVar(&f.backupID, "backup-provider", "", "backup provider to search for restore points")
+	fs.StringVar(&f.node, "node", "", "node to restore on (overrides the plan)")
+	fs.StringVar(&f.storage, "storage", "", "storage for the restored disks (overrides the plan)")
+	fs.StringVar(&f.network, "network", "", "network profile for the temporary workload (overrides the plan)")
+	fs.StringVar(&f.reportPath, "report", "", "write the report to a file (.json, .html or .txt by extension)")
+	fs.BoolVar(&f.dryRun, "dry-run", false, "resolve the backup and validate the plan without restoring anything")
+	fs.BoolVar(&f.keep, "keep", false, "keep the temporary workload instead of destroying it (debugging)")
+}
+
+func newRecoveryCmd(a *app) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "recovery",
+		Short: "Run recovery drills",
+	}
+	cmd.AddCommand(newRecoveryTestCmd(a), newRecoveryRunCmd(a))
+	return cmd
+}
+
+func newRecoveryTestCmd(a *app) *cobra.Command {
+	f := &runFlags{}
+
+	cmd := &cobra.Command{
+		Use:   "test <workload-id>",
+		Short: "Run a one-off recovery drill on a workload",
+		Long: `Restores a workload's latest backup into an isolated environment, boots it,
+runs the requested checks, measures the recovery time, and destroys the
+temporary workload.
+
+Nothing about the production workload is touched.
+
+Checks are given with --check, repeatable:
+
+    --check ping
+    --check tcp:22
+    --check http://{{ .ip }}:8080/health
+    --check dns:example.com
+
+With no --check, a TCP check on port 22 is used: it proves the guest booted,
+configured its network, and started a service.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := adHocPlan(args[0], f)
+			if err != nil {
+				return err
+			}
+			return a.runPlan(cmd.Context(), p, f)
+		},
+	}
+
+	f.bind(cmd)
+	fs := cmd.Flags()
+	fs.StringVar(&f.backup, "backup", "latest", `restore point: "latest" or a backup id`)
+	fs.StringArrayVar(&f.checkSpecs, "check", nil, "check to run (repeatable): ping, tcp:PORT, http://..., dns:NAME")
+	fs.DurationVar(&f.startupTimeout, "startup-timeout", plan.DefaultStartupTimeout, "how long to wait for the guest to become reachable")
+	fs.DurationVar(&f.rtoTarget, "rto", 0, "recovery time objective the run is graded against")
+	fs.IntVar(&f.cpuLimit, "cpu", 0, "cap the temporary workload's cores")
+	fs.IntVar(&f.memoryLimitMB, "memory", 0, "cap the temporary workload's memory, in MiB")
+	fs.BoolVar(&f.skipStartup, "no-start", false, "restore only: never boot the guest")
+	return cmd
+}
+
+func newRecoveryRunCmd(a *app) *cobra.Command {
+	f := &runFlags{}
+
+	cmd := &cobra.Command{
+		Use:   "run <plan.yaml>",
+		Short: "Run a recovery drill from a plan file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			p, err := plan.Load(args[0])
+			if err != nil {
+				return err
+			}
+			return a.runPlan(cmd.Context(), p, f)
+		},
+	}
+
+	f.bind(cmd)
+	return cmd
+}
+
+// adHocPlan turns `recovery test` flags into a plan, so both entry points run
+// exactly the same engine over exactly the same structure.
+func adHocPlan(workloadID string, f *runFlags) (*plan.Plan, error) {
+	p := &plan.Plan{
+		Name: "adhoc-" + workloadID,
+		Workload: plan.WorkloadRef{
+			Provider: f.providerID,
+			ID:       workloadID,
+		},
+		Backup: plan.BackupSpec{Provider: f.backupID, Strategy: plan.StrategyLatest},
+		Restore: plan.RestoreSpec{
+			Node:          f.node,
+			Storage:       f.storage,
+			Network:       f.network,
+			CPULimit:      f.cpuLimit,
+			MemoryLimitMB: f.memoryLimitMB,
+		},
+		Startup:   plan.StartupSpec{Skip: f.skipStartup, Timeout: plan.Duration(f.startupTimeout)},
+		RTOTarget: plan.Duration(f.rtoTarget),
+	}
+
+	if f.backup != "" && f.backup != "latest" {
+		p.Backup.Strategy = plan.StrategySpecific
+		p.Backup.ID = f.backup
+	}
+
+	if !f.skipStartup {
+		specs := f.checkSpecs
+		if len(specs) == 0 {
+			specs = []string{"tcp:22"}
+		}
+		for _, s := range specs {
+			c, err := parseCheckSpec(s)
+			if err != nil {
+				return nil, err
+			}
+			p.Checks = append(p.Checks, c)
+		}
+	}
+
+	p.ApplyDefaults()
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// parseCheckSpec parses the shorthand accepted by --check.
+func parseCheckSpec(spec string) (plan.CheckSpec, error) {
+	switch {
+	case spec == "ping":
+		return plan.CheckSpec{Type: "ping", Params: map[string]any{}}, nil
+
+	case strings.HasPrefix(spec, "http://"), strings.HasPrefix(spec, "https://"):
+		return plan.CheckSpec{Type: "http", Params: map[string]any{"url": spec}}, nil
+
+	case strings.HasPrefix(spec, "tcp:"):
+		port, err := strconv.Atoi(strings.TrimPrefix(spec, "tcp:"))
+		if err != nil || port < 1 || port > 65535 {
+			return plan.CheckSpec{}, fmt.Errorf("invalid check %q: expected tcp:PORT with a port between 1 and 65535", spec)
+		}
+		return plan.CheckSpec{Type: "tcp", Params: map[string]any{"port": port}}, nil
+
+	case strings.HasPrefix(spec, "dns:"):
+		name := strings.TrimPrefix(spec, "dns:")
+		if name == "" {
+			return plan.CheckSpec{}, fmt.Errorf("invalid check %q: expected dns:NAME", spec)
+		}
+		return plan.CheckSpec{Type: "dns", Params: map[string]any{"name": name}}, nil
+	}
+
+	return plan.CheckSpec{}, fmt.Errorf("unknown check %q: expected ping, tcp:PORT, http(s)://..., or dns:NAME", spec)
+}
+
+// runPlan wires the providers, the check registry and the engine together,
+// streams progress, and renders the report.
+func (a *app) runPlan(ctx context.Context, p *plan.Plan, f *runFlags) error {
+	cfg, err := a.config()
+	if err != nil {
+		return err
+	}
+
+	hv, hvEntry, err := a.hypervisor(firstNonEmpty(f.providerID, p.Workload.Provider))
+	if err != nil {
+		return err
+	}
+	bp, _, err := a.backups(firstNonEmpty(f.backupID, p.Backup.Provider, hvEntry.ID))
+	if err != nil {
+		return err
+	}
+
+	networkName := firstNonEmpty(f.network, p.Restore.Network, cfg.Defaults.Network, "isolated")
+	network, err := cfg.ResolveNetwork(networkName)
+	if err != nil {
+		return err
+	}
+	if p.Restore.Bridge != "" {
+		network.Bridge = p.Restore.Bridge
+	}
+	if !network.Isolated {
+		// The engine refuses this too; failing here means the user finds out
+		// before any provider call is made.
+		fmt.Fprintf(a.err, "%s network profile %q is not isolated: the restored workload will be able to reach production\n",
+			a.warn(), networkName)
+	}
+
+	engine, err := recovery.New(recovery.Deps{
+		Hypervisor: hv,
+		Backups:    bp,
+		Checks:     checks.Default(),
+		Emit:       a.progressPrinter(),
+		// The event stream is what the user reads; structured logs are for
+		// --verbose and for the future server, not for a terminal timeline.
+		Logger: a.runLogger(),
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(a.out, "%s %s  %s\n\n",
+		a.paint(colorBold, "Recovery drill"),
+		p.Name,
+		a.paint(colorDim, fmt.Sprintf("workload %s on %s, network %s (%s)",
+			p.Workload.ID, hvEntry.ID, networkName, network.Bridge)),
+	)
+
+	run, runErr := engine.Run(ctx, p, recovery.RunOptions{
+		Network:      network,
+		Node:         firstNonEmpty(f.node, p.Restore.Node, cfg.Defaults.Node),
+		Storage:      firstNonEmpty(f.storage, p.Restore.Storage, cfg.Defaults.Storage),
+		DryRun:       f.dryRun,
+		KeepWorkload: f.keep,
+	})
+
+	// The report is written from the run even when the run failed: a failed
+	// drill is exactly the case where the report matters most.
+	if run != nil {
+		fmt.Fprintln(a.out)
+		if err := report.Text(a.out, run, report.Options{Color: !a.noColor, ASCII: asciiOnly(), Verbose: a.verbose}); err != nil {
+			return err
+		}
+		if f.reportPath != "" {
+			if err := a.writeReport(f.reportPath, run); err != nil {
+				return err
+			}
+			fmt.Fprintf(a.out, "\nReport written to %s\n", f.reportPath)
+		}
+	}
+
+	return runErr
+}
+
+// runLogger keeps the engine's structured logs out of an interactive drill
+// unless the user asked for them.
+func (a *app) runLogger() *slog.Logger {
+	level := slog.LevelWarn
+	if a.verbose {
+		level = slog.LevelDebug
+	}
+	return slog.New(slog.NewTextHandler(a.err, &slog.HandlerOptions{Level: level}))
+}
+
+// progressPrinter renders the engine's event stream as it happens, so a long
+// restore is not a silent terminal.
+func (a *app) progressPrinter() func(recovery.Event) {
+	return func(e recovery.Event) {
+		switch {
+		case e.Check != nil:
+			glyph := a.ok()
+			if !e.Check.OK() {
+				glyph = a.fail()
+			}
+			fmt.Fprintf(a.out, "  %s %-24s %s\n", glyph, e.Check.Name, a.paint(colorDim, e.Check.Message))
+
+		case e.Status == core.StepRunning:
+			fmt.Fprintf(a.out, "  %s %s\n", a.paint(colorDim, "·"), e.Message)
+
+		case e.Status == core.StepDone:
+			fmt.Fprintf(a.out, "  %s %s\n", a.ok(), e.Message)
+
+		case e.Status == core.StepFailed:
+			fmt.Fprintf(a.out, "  %s %s\n", a.fail(), firstNonEmpty(e.Message, e.Err))
+
+		case e.Status == core.StepSkipped:
+			fmt.Fprintf(a.out, "  %s %s\n", a.paint(colorDim, "-"), e.Message)
+		}
+	}
+}
+
+// writeReport renders the run into a file, choosing the format from the
+// extension.
+func (a *app) writeReport(path string, run *core.RecoveryRun) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create report: %w", err)
+	}
+	defer f.Close()
+
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".json":
+		err = report.JSON(f, run)
+	case ".html", ".htm":
+		err = report.HTML(f, run)
+	case ".txt", "":
+		err = report.Text(f, run, report.Options{Color: false, ASCII: true, Verbose: true})
+	default:
+		return fmt.Errorf("unsupported report format %q: use .json, .html or .txt", filepath.Ext(path))
+	}
+	if err != nil {
+		return fmt.Errorf("write report: %w", err)
+	}
+	return f.Close()
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
