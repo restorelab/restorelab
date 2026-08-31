@@ -631,3 +631,113 @@ func TestStorageRoleIsSelfSufficient(t *testing.T) {
 		}
 	}
 }
+
+// Proxmox VE 9 routes every bridge access through the SDN permission tree, so
+// attaching a restored workload even to a plain Linux bridge is refused with
+// 403 SDN.Use without this grant. It is scoped to the one bridge drills use:
+// the difference between "may use the recovery network" and "may attach a
+// workload to any network on this cluster".
+func TestBootstrapGrantsSDNUseOnTheIsolatedBridgeOnly(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-1", "csrf-1")
+	opts := emptyClusterOpts()
+	opts.Bridge = "vmbr99"
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+	m.on("GET", "/api2/json/access/roles", 200, []map[string]any{pve9Roles})
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	if _, err := c.Bootstrap(context.Background(), opts); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	var granted bool
+	for _, r := range writesOnly(m.recorded()) {
+		if r.Path != "/api2/json/access/acl" {
+			continue
+		}
+		path := r.Form.Get("path")
+		if path == "/sdn/zones/localnetwork/vmbr99" {
+			granted = true
+		}
+		if path == "/sdn" || path == "/sdn/zones" || path == "/sdn/zones/localnetwork" {
+			t.Errorf("SDN.Use must be scoped to the bridge, not to %q", path)
+		}
+	}
+	if !granted {
+		t.Error("no SDN.Use grant on the isolated bridge; a restore would be refused with 403")
+	}
+}
+
+func TestBootstrapSkipsTheSDNGrantWithoutABridge(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-1", "csrf-1")
+	opts := emptyClusterOpts() // no Bridge
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	if _, err := c.Bootstrap(context.Background(), opts); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	for _, r := range writesOnly(m.recorded()) {
+		if r.Path == "/api2/json/access/acl" && strings.HasPrefix(r.Form.Get("path"), "/sdn") {
+			t.Errorf("no SDN grant should be made when no bridge was given, got %q", r.Form.Get("path"))
+		}
+	}
+}
+
+// Re-running a bootstrap must be able to reconcile roles and ACLs without
+// destroying a token that already works, since Proxmox reveals a secret only
+// at creation.
+func TestBootstrapReusesAnExistingTokenWhenAsked(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-1", "csrf-1")
+	opts := emptyClusterOpts()
+	opts.ReuseExistingToken = true
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+	m.on("GET", "/api2/json/access/users/"+opts.UserID+"/token", 200, []map[string]any{
+		{"tokenid": opts.TokenName},
+	})
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	result, err := c.Bootstrap(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Bootstrap with an existing token must succeed when reuse was asked: %v", err)
+	}
+	if result.Secret != "" {
+		t.Error("Proxmox cannot reveal an existing secret; none must be invented")
+	}
+	if result.TokenID != opts.UserID+"!"+opts.TokenName {
+		t.Errorf("TokenID = %q", result.TokenID)
+	}
+	for _, r := range writesOnly(m.recorded()) {
+		if strings.Contains(r.Path, "/token/") {
+			t.Errorf("an existing token must not be recreated, got %s %s", r.Method, r.Path)
+		}
+	}
+}
+
+// Without the reuse flag, an existing token still stops the run: silently
+// carrying on would leave the caller with a token whose secret it does not
+// have.
+func TestBootstrapStillRefusesAnExistingTokenByDefault(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-1", "csrf-1")
+	opts := emptyClusterOpts()
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+	m.on("GET", "/api2/json/access/users/"+opts.UserID+"/token", 200, []map[string]any{
+		{"tokenid": opts.TokenName},
+	})
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	if _, err := c.Bootstrap(context.Background(), opts); err == nil {
+		t.Fatal("Bootstrap() error = nil, want a refusal on a pre-existing token")
+	}
+}

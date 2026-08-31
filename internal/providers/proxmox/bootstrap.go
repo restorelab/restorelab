@@ -342,6 +342,7 @@ var optionalPrivileges = map[string]string{
 	"VM.Monitor":                 "runtime state reads, removed in Proxmox VE 9",
 	"VM.GuestAgent.Audit":        "guest agent queries, used to discover the restored guest's address",
 	"VM.GuestAgent.Unrestricted": "in-guest command checks",
+	"SDN.Use":                    "attaching a workload to the isolated bridge (Proxmox VE 9 and newer)",
 }
 
 // supportedPrivileges derives the privilege vocabulary of this cluster from
@@ -433,8 +434,29 @@ type BootstrapOptions struct {
 	ReadOnly  bool     // create a read-only role and read-only ACLs
 	Node      string   // "" means every node
 	Storages  []string // storages needing write access for restores; ignored when ReadOnly
-	DryRun    bool     // report what would be done, change nothing
+	// Bridge is the isolated bridge drills restore onto. Proxmox VE 9 routes
+	// every bridge access through the SDN permission tree, so using even a
+	// plain Linux bridge requires SDN.Use on it. Empty skips the grant.
+	Bridge string
+	// SDNZone is the zone that bridge lives under. Classic, non-SDN bridges
+	// sit in "localnetwork", which is the default.
+	SDNZone string
+	// ReuseExistingToken keeps a token that already exists instead of failing.
+	// Proxmox reveals a secret only at creation, so the caller must already
+	// hold it; this exists so re-running a bootstrap can reconcile roles and
+	// ACLs without destroying a working token.
+	ReuseExistingToken bool
+	DryRun             bool // report what would be done, change nothing
 }
+
+// defaultSDNZone is where Proxmox files bridges that no SDN zone manages.
+const defaultSDNZone = "localnetwork"
+
+// sdnPrivileges lets the service account attach a workload to the isolated
+// bridge. Granted only on that one bridge: it is the difference between "may
+// use the recovery network" and "may attach a workload to any network on this
+// cluster".
+var sdnPrivileges = []string{"SDN.Use"}
 
 func (o BootstrapOptions) validate() error {
 	if o.UserID == "" {
@@ -602,7 +624,30 @@ func (c *AdminClient) Bootstrap(ctx context.Context, opts BootstrapOptions) (*Bo
 		}
 	}
 
-	tokenStep, tokenID, secret, err := c.ensureToken(ctx, opts.UserID, opts.TokenName, opts.DryRun)
+	// The isolated bridge, scoped to itself. Proxmox VE 9 checks bridge access
+	// through /sdn/zones/{zone}/{bridge}, so without this the restore is
+	// refused with 403 SDN.Use even for a plain Linux bridge.
+	if !opts.ReadOnly && opts.Bridge != "" {
+		zone := opts.SDNZone
+		if zone == "" {
+			zone = defaultSDNZone
+		}
+		netRoleID := opts.RoleName + "Network"
+		netStep, err := c.ensureRole(ctx, roles, supported, netRoleID, sdnPrivileges, opts.DryRun)
+		record(netStep)
+		if err != nil {
+			return result, err
+		}
+		roles[netRoleID] = privsKey(sdnPrivileges)
+
+		step, err := c.grantACL(ctx, fmt.Sprintf("/sdn/zones/%s/%s", zone, opts.Bridge), opts.UserID, netRoleID, opts.DryRun)
+		record(step)
+		if err != nil {
+			return result, err
+		}
+	}
+
+	tokenStep, tokenID, secret, err := c.ensureToken(ctx, opts.UserID, opts.TokenName, opts.ReuseExistingToken, opts.DryRun)
 	record(tokenStep)
 	if err != nil {
 		return result, err
@@ -843,13 +888,22 @@ func (c *AdminClient) listTokenIDs(ctx context.Context, userID string) (map[stri
 // existing token on the administrator's behalf (that would be a surprising,
 // irreversible action to take implicitly), the caller must pick a new name
 // or remove the old token itself.
-func (c *AdminClient) ensureToken(ctx context.Context, userID, tokenName string, dryRun bool) (step BootstrapStep, tokenID, secret string, err error) {
+func (c *AdminClient) ensureToken(ctx context.Context, userID, tokenName string, reuse, dryRun bool) (step BootstrapStep, tokenID, secret string, err error) {
 	fullID := userID + "!" + tokenName
 	desc := fmt.Sprintf("create token %s", fullID)
 
 	existing, err := c.listTokenIDs(ctx, userID)
 	if err != nil {
 		return BootstrapStep{}, "", "", fmt.Errorf("proxmox: list tokens for %s: %w", userID, err)
+	}
+	if existing[tokenName] && reuse {
+		// The caller says it already holds this secret. Reconciling roles and
+		// ACLs must not require destroying a token that works.
+		return BootstrapStep{
+			Description: desc,
+			Status:      "already exists",
+			Detail:      "kept, along with the secret you already hold",
+		}, fullID, "", nil
 	}
 	if existing[tokenName] {
 		step := BootstrapStep{

@@ -158,6 +158,17 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 		}
 	}
 
+	// Re-running connect must be able to reconcile roles and ACLs without
+	// destroying a token that already works. Proxmox only ever reveals a
+	// secret once, so this is only safe when the configuration already holds
+	// that exact token's sealed secret.
+	reuse := false
+	if existing, err := cfg.Provider(f.id); err == nil {
+		if existing.TokenID == f.serviceUser+"!"+f.tokenName && existing.TokenSecret != "" {
+			reuse = true
+		}
+	}
+
 	opts := proxmox.BootstrapOptions{
 		UserID:    f.serviceUser,
 		Comment:   "RestoreLab recovery drills",
@@ -167,7 +178,10 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 		ReadOnly:  f.readOnly,
 		Node:      f.node,
 		Storages:  f.storages,
+		Bridge:    a.isolatedBridge(cfg, f),
 		DryRun:    f.dryRun,
+
+		ReuseExistingToken: reuse,
 	}
 	if f.noPool || f.readOnly {
 		opts.Pool = ""
@@ -218,9 +232,27 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 		TempIDMin:  9000,
 		TempIDMax:  9999,
 	}
+	previousSecret := ""
+	if existing, err := cfg.Provider(entry.ID); err == nil {
+		previousSecret = existing.TokenSecret
+	}
+
 	cfg.Upsert(entry)
-	if err := cfg.SetProviderSecret(entry.ID, result.Secret, key); err != nil {
-		return err
+	switch {
+	case result.Secret != "":
+		if err := cfg.SetProviderSecret(entry.ID, result.Secret, key); err != nil {
+			return err
+		}
+	case previousSecret != "":
+		// The token was reused: Proxmox gave us no secret because it only
+		// ever hands one out at creation. Keep the one already sealed.
+		stored, err := cfg.Provider(entry.ID)
+		if err != nil {
+			return err
+		}
+		stored.TokenSecret = previousSecret
+	default:
+		return fmt.Errorf("no token secret available for %s: delete the token in Proxmox and run connect again", entry.TokenID)
 	}
 	if cfg.Defaults.Provider == "" {
 		cfg.Defaults.Provider = entry.ID
@@ -458,4 +490,22 @@ func readFileOrStdin(path string) (string, error) {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	return string(data), nil
+}
+
+// isolatedBridge resolves the bridge a drill restores onto, so the bootstrap
+// can grant the service account the right to attach a workload to it - and to
+// nothing else.
+func (a *app) isolatedBridge(cfg *config.Config, f *connectFlags) string {
+	if f.bridgeName != "" {
+		return f.bridgeName
+	}
+	name := cfg.Defaults.Network
+	if name == "" {
+		name = "isolated"
+	}
+	profile, err := cfg.Network(name)
+	if err != nil || !profile.Isolated {
+		return ""
+	}
+	return profile.Bridge
 }
