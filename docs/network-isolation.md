@@ -43,6 +43,35 @@ cannot verify isolation.
 A Linux bridge with **no ports and no gateway** is a switch that goes nowhere.
 That is what you want.
 
+### With RestoreLab
+
+```bash
+restorelab network create
+```
+
+It asks for an administrator's password, creates the bridge through the
+Proxmox API and applies it. `restorelab connect --create-bridge` does the same
+during onboarding, and plain `connect` offers it when it notices the bridge is
+missing.
+
+This needs administrator credentials rather than RestoreLab's own token: the
+service account deliberately has no `Sys.Modify`, because a tool that runs
+recovery drills has no business reconfiguring your hypervisor's network. The
+password is used once, in memory, and never stored.
+
+Two things it will refuse to do, on purpose:
+
+- **touch a bridge that already has ports, an address or a gateway.** Turning
+  such a bridge into an isolated one would cut the node off its own network.
+  It stops and tells you what it found.
+- **pretend applying is free.** Activating the configuration reloads the
+  node's networking. Adding a portless bridge touches no existing interface,
+  but the change is real — `--no-apply` writes the configuration and leaves it
+  to take effect at the next reboot.
+
+The manual alternatives below remain valid, and are what `network create` does
+on your behalf.
+
 ### Web UI
 
 *Datacenter → node → System → Network → Create → Linux Bridge*

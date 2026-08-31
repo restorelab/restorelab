@@ -60,6 +60,7 @@ after it has been proven against real clusters.
 | CLI (`init`, `provider`, `workloads`, `backups`, `recovery`, `cleanup`) | done |
 | Reports: terminal, JSON, self-contained HTML | done |
 | One-command setup (`connect`) creating a least-privilege service account | done |
+| `doctor` diagnostics and `network create` for the isolated bridge | done |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
 | REST API + PostgreSQL + workers + web dashboard | planned |
 
