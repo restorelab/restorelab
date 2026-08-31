@@ -481,3 +481,94 @@ func TestBootstrapNeverLeaksPasswordOrSecret(t *testing.T) {
 		t.Error("Close did not clear password/ticket/csrfToken")
 	}
 }
+
+// pve9Roles is the privilege vocabulary of a Proxmox VE 9 cluster as seen
+// through its built-in roles: VM.Monitor is gone, the VM.GuestAgent.* pair is
+// present. Only the privileges RestoreLab asks for are listed; a real cluster
+// has many more, which is irrelevant to the filtering.
+var pve9Roles = map[string]any{
+	"roleid": "Administrator",
+	"privs": strings.Join([]string{
+		"VM.Audit", "VM.Backup", "VM.GuestAgent.Audit", "VM.GuestAgent.Unrestricted",
+		"Datastore.Audit", "Datastore.AllocateSpace", "Sys.Audit",
+		"VM.Allocate", "VM.Config.CPU", "VM.Config.Disk", "VM.Config.HWType",
+		"VM.Config.Memory", "VM.Config.Network", "VM.Config.Options", "VM.PowerMgmt",
+	}, ","),
+}
+
+// The privilege list is not stable across Proxmox major versions. Asking for
+// one that this cluster does not know fails the whole role creation with a
+// parameter verification error, so RestoreLab must adapt to the vocabulary it
+// finds rather than to the one it was written against.
+func TestBootstrapDropsPrivilegesTheClusterDoesNotKnow(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-1", "csrf-1")
+	opts := emptyClusterOpts()
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+	// Override the empty role list with a PVE 9 vocabulary.
+	m.on("GET", "/api2/json/access/roles", 200, []map[string]any{pve9Roles})
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	result, err := c.Bootstrap(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Bootstrap must succeed on Proxmox VE 9: %v", err)
+	}
+
+	for _, r := range writesOnly(m.recorded()) {
+		if r.Path != "/api2/json/access/roles" {
+			continue
+		}
+		privs := r.Form.Get("privs")
+		if strings.Contains(privs, "VM.Monitor") {
+			t.Errorf("VM.Monitor must not be sent to a cluster that does not know it: %q", privs)
+		}
+		// The auxiliary storage role is Datastore-only by design.
+		if strings.HasSuffix(r.Form.Get("roleid"), "Storage") {
+			continue
+		}
+		if !strings.Contains(privs, "VM.Audit") {
+			t.Errorf("supported privileges must still be sent: %q", privs)
+		}
+	}
+
+	var explained bool
+	for _, step := range result.Steps {
+		if strings.Contains(step.Detail, "VM.Monitor") && strings.Contains(step.Detail, "not supported") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Errorf("the dropped privilege must be reported to the user, got steps %+v", result.Steps)
+	}
+}
+
+// Dropping an optional privilege is adaptation; dropping one RestoreLab cannot
+// work without is a broken assumption, and must stop rather than quietly
+// create a role that cannot do its job.
+func TestBootstrapFailsWhenARequiredPrivilegeIsUnknown(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-1", "csrf-1")
+	opts := emptyClusterOpts()
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+	m.on("GET", "/api2/json/access/roles", 200, []map[string]any{
+		{"roleid": "Administrator", "privs": "VM.Backup,Sys.Audit,Datastore.Audit"},
+	})
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	_, err := c.Bootstrap(context.Background(), opts)
+	if err == nil {
+		t.Fatal("Bootstrap() error = nil, want a refusal when VM.Audit is unknown")
+	}
+	if !strings.Contains(err.Error(), "VM.Audit") {
+		t.Errorf("the error must name the missing privilege, got %v", err)
+	}
+	for _, r := range writesOnly(m.recorded()) {
+		if r.Path == "/api2/json/access/users" {
+			t.Error("nothing may be created once the privilege check has failed")
+		}
+	}
+}

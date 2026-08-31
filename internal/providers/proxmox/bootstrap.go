@@ -266,17 +266,19 @@ func (c *AdminClient) doRequest(ctx context.Context, method, path string, form u
 // ReadOnlyPrivileges is granted to a read-only RestoreLab service account:
 // enough to inspect cluster, VM/CT and backup state without being able to
 // change or destroy anything.
-//   - VM.Audit         view VM/CT configuration and status
-//   - VM.Backup        list and read backup snapshots (browse restore points)
-//   - VM.Monitor       read VM/CT runtime status
-//   - Datastore.Audit  view storage contents and usage
-//   - Sys.Audit        view node/cluster health
+//   - VM.Audit              view VM/CT configuration and status
+//   - VM.Backup             list and read backup snapshots (browse restore points)
+//   - VM.GuestAgent.Audit   query the QEMU guest agent (guest readiness, IP discovery)
+//   - Datastore.Audit       view storage contents and usage
+//   - Sys.Audit             view node/cluster health, bridges and capacity
+//   - VM.Monitor            read VM runtime state (Proxmox VE 8 and older only)
 var ReadOnlyPrivileges = []string{
 	"VM.Audit",
 	"VM.Backup",
-	"VM.Monitor",
+	"VM.GuestAgent.Audit",
 	"Datastore.Audit",
 	"Sys.Audit",
+	"VM.Monitor",
 }
 
 // DrillPrivileges is granted to a RestoreLab drill service account: every
@@ -287,16 +289,16 @@ var ReadOnlyPrivileges = []string{
 // intent is that even a fully compromised drill token can only ever affect
 // whatever it is scoped to via ACLs (see Bootstrap), never the wider
 // cluster.
-//   - VM.Allocate            create and destroy VMs/CTs
-//   - VM.Config.CPU          reconfigure CPU
-//   - VM.Config.Disk         attach/detach/resize disks
-//   - VM.Config.HWType       change guest hardware type (e.g. bios/machine)
-//   - VM.Config.Memory       reconfigure memory
-//   - VM.Config.Network      attach/detach network interfaces
-//   - VM.Config.Options      reconfigure general options (name, boot order...)
-//   - VM.GuestAgent.Audit    query the QEMU guest agent for readiness checks
-//   - VM.PowerMgmt           start/stop/reset a VM/CT
-//   - Datastore.AllocateSpace allocate space for a restored disk
+//   - VM.Allocate                 create and destroy VMs/CTs
+//   - VM.Config.CPU               reconfigure CPU
+//   - VM.Config.Disk              attach/detach/resize disks
+//   - VM.Config.HWType            change guest hardware type (e.g. bios/machine)
+//   - VM.Config.Memory            reconfigure memory
+//   - VM.Config.Network           rewrite the network onto the isolated bridge
+//   - VM.Config.Options           reconfigure general options (name, boot order...)
+//   - VM.GuestAgent.Unrestricted  run validation commands inside the guest
+//   - VM.PowerMgmt                start/stop a VM/CT
+//   - Datastore.AllocateSpace     allocate space for a restored disk
 var DrillPrivileges = append(append([]string{}, ReadOnlyPrivileges...), []string{
 	"VM.Allocate",
 	"VM.Config.CPU",
@@ -305,10 +307,77 @@ var DrillPrivileges = append(append([]string{}, ReadOnlyPrivileges...), []string
 	"VM.Config.Memory",
 	"VM.Config.Network",
 	"VM.Config.Options",
-	"VM.GuestAgent.Audit",
+	"VM.GuestAgent.Unrestricted",
 	"VM.PowerMgmt",
 	"Datastore.AllocateSpace",
 }...)
+
+// optionalPrivileges may legitimately not exist on a given Proxmox version.
+// The privilege vocabulary is not stable across major releases: VM.Monitor
+// was removed in Proxmox VE 9, and the VM.GuestAgent.* pair only appeared in
+// 8. Rather than hardcoding one version's list and failing on every other,
+// Bootstrap discovers what this cluster actually supports and drops the
+// entries below when they are unknown, saying so.
+//
+// Anything NOT in this map is required: if the cluster does not know it,
+// something is wrong enough to stop rather than silently create a role that
+// cannot do its job.
+var optionalPrivileges = map[string]string{
+	"VM.Monitor":                 "runtime state reads (removed in Proxmox VE 9)",
+	"VM.GuestAgent.Audit":        "guest agent queries, used to discover the restored guest's address",
+	"VM.GuestAgent.Unrestricted": "in-guest command checks",
+}
+
+// supportedPrivileges derives the privilege vocabulary of this cluster from
+// the roles it already has. Every built-in role's privileges are, by
+// definition, valid names on that version - and Administrator holds them all.
+func supportedPrivileges(roles map[string]string) map[string]bool {
+	out := map[string]bool{}
+	for _, privs := range roles {
+		for _, p := range splitPrivs(privs) {
+			out[p] = true
+		}
+	}
+	return out
+}
+
+// filterPrivileges keeps what this cluster understands and reports the rest.
+// An empty supported set means discovery failed, in which case nothing is
+// dropped: guessing is worse than letting the API refuse.
+func filterPrivileges(want []string, supported map[string]bool) (kept, dropped []string) {
+	if len(supported) == 0 {
+		return want, nil
+	}
+	for _, p := range want {
+		if supported[p] {
+			kept = append(kept, p)
+			continue
+		}
+		dropped = append(dropped, p)
+	}
+	return kept, dropped
+}
+
+// describeDropped renders the "we left these out" note shown next to the role
+// creation step, and errors when a privilege we cannot do without is missing.
+func describeDropped(dropped []string) (string, error) {
+	if len(dropped) == 0 {
+		return "", nil
+	}
+	var required, optional []string
+	for _, p := range dropped {
+		if why, ok := optionalPrivileges[p]; ok {
+			optional = append(optional, fmt.Sprintf("%s (%s)", p, why))
+			continue
+		}
+		required = append(required, p)
+	}
+	if len(required) > 0 {
+		return "", fmt.Errorf("proxmox: this cluster does not know the privilege(s) %s, which RestoreLab cannot work without; please report your Proxmox VE version",
+			strings.Join(required, ", "))
+	}
+	return "not supported on this Proxmox version, skipped: " + strings.Join(optional, "; "), nil
+}
 
 // storagePrivileges is granted, on a per-storage basis, to the auxiliary
 // storage role Bootstrap creates for drill mode (see ensureStorageAccess).
@@ -408,6 +477,9 @@ func (c *AdminClient) Bootstrap(ctx context.Context, opts BootstrapOptions) (*Bo
 	if err != nil {
 		return result, fmt.Errorf("proxmox: list roles: %w", err)
 	}
+	// Captured once, from the cluster's own built-in roles, before anything
+	// below starts adding roles of ours to the map.
+	supported := supportedPrivileges(roles)
 
 	// The role backing the broad, cluster-wide read-only grants below: the
 	// caller's own role in ReadOnly mode, or the fixed readOnlyRoleName
@@ -416,7 +488,7 @@ func (c *AdminClient) Bootstrap(ctx context.Context, opts BootstrapOptions) (*Bo
 	if !opts.ReadOnly {
 		roRoleID = readOnlyRoleName
 	}
-	roStep, err := c.ensureRole(ctx, roles, roRoleID, ReadOnlyPrivileges, opts.DryRun)
+	roStep, err := c.ensureRole(ctx, roles, supported, roRoleID, ReadOnlyPrivileges, opts.DryRun)
 	record(roStep)
 	if err != nil {
 		return result, err
@@ -426,7 +498,7 @@ func (c *AdminClient) Bootstrap(ctx context.Context, opts BootstrapOptions) (*Bo
 	drillRoleID := ""
 	if !opts.ReadOnly {
 		drillRoleID = opts.RoleName
-		drillStep, err := c.ensureRole(ctx, roles, drillRoleID, DrillPrivileges, opts.DryRun)
+		drillStep, err := c.ensureRole(ctx, roles, supported, drillRoleID, DrillPrivileges, opts.DryRun)
 		record(drillStep)
 		if err != nil {
 			return result, err
@@ -491,7 +563,7 @@ func (c *AdminClient) Bootstrap(ctx context.Context, opts BootstrapOptions) (*Bo
 
 		if len(opts.Storages) > 0 {
 			storageRoleID := opts.RoleName + "Storage"
-			storageStep, err := c.ensureRole(ctx, roles, storageRoleID, storagePrivileges, opts.DryRun)
+			storageStep, err := c.ensureRole(ctx, roles, supported, storageRoleID, storagePrivileges, opts.DryRun)
 			record(storageStep)
 			if err != nil {
 				return result, err
@@ -577,18 +649,36 @@ func (c *AdminClient) listRoles(ctx context.Context) (map[string]string, error) 
 // existing is consulted (and, by the caller, kept up to date) rather than
 // re-fetched on every call so Bootstrap issues one GET /access/roles per
 // run rather than one per role it needs to ensure.
-func (c *AdminClient) ensureRole(ctx context.Context, existing map[string]string, roleID string, privs []string, dryRun bool) (BootstrapStep, error) {
+func (c *AdminClient) ensureRole(ctx context.Context, existing map[string]string, supported map[string]bool, roleID string, privs []string, dryRun bool) (BootstrapStep, error) {
 	desc := fmt.Sprintf("create role %s", roleID)
+
+	// The privilege vocabulary differs between Proxmox major versions, so the
+	// caller passes what this cluster actually knows, captured before any role
+	// was created - deriving it from `existing` here would see RestoreLab's
+	// own freshly created roles and narrow the vocabulary to itself.
+	kept, dropped := filterPrivileges(privs, supported)
+	note, err := describeDropped(dropped)
+	if err != nil {
+		return BootstrapStep{}, err
+	}
+	privs = kept
 	desired := privsKey(privs)
+
+	detail := func(base string) string {
+		if note == "" {
+			return base
+		}
+		return base + " — " + note
+	}
 
 	cur, exists := existing[roleID]
 	switch {
 	case exists && privsKey(splitPrivs(cur)) == desired:
-		return BootstrapStep{Description: desc, Status: "already exists", Detail: "privileges: " + desired}, nil
+		return BootstrapStep{Description: desc, Status: "already exists", Detail: detail("privileges: " + desired)}, nil
 
 	case exists:
 		if dryRun {
-			return BootstrapStep{Description: desc, Status: "would create", Detail: "would update privileges to: " + desired}, nil
+			return BootstrapStep{Description: desc, Status: "would create", Detail: detail("would update privileges to: " + desired)}, nil
 		}
 		if _, err := c.doRequest(ctx, http.MethodPut, "/access/roles/"+roleID, url.Values{
 			"privs":  {desired},
@@ -596,11 +686,11 @@ func (c *AdminClient) ensureRole(ctx context.Context, existing map[string]string
 		}); err != nil {
 			return BootstrapStep{}, fmt.Errorf("proxmox: update role %s: %w", roleID, err)
 		}
-		return BootstrapStep{Description: desc, Status: "updated", Detail: "privileges: " + desired}, nil
+		return BootstrapStep{Description: desc, Status: "updated", Detail: detail("privileges: " + desired)}, nil
 
 	default:
 		if dryRun {
-			return BootstrapStep{Description: desc, Status: "would create", Detail: "privileges: " + desired}, nil
+			return BootstrapStep{Description: desc, Status: "would create", Detail: detail("privileges: " + desired)}, nil
 		}
 		if _, err := c.doRequest(ctx, http.MethodPost, "/access/roles", url.Values{
 			"roleid": {roleID},
@@ -608,7 +698,7 @@ func (c *AdminClient) ensureRole(ctx context.Context, existing map[string]string
 		}); err != nil {
 			return BootstrapStep{}, fmt.Errorf("proxmox: create role %s: %w", roleID, err)
 		}
-		return BootstrapStep{Description: desc, Status: "created", Detail: "privileges: " + desired}, nil
+		return BootstrapStep{Description: desc, Status: "created", Detail: detail("privileges: " + desired)}, nil
 	}
 }
 
