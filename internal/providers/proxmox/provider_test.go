@@ -543,14 +543,55 @@ func TestValidateIsolationFailsForBridgeWithUplink(t *testing.T) {
 	}
 }
 
+// The node's bridges are visible and the requested one is genuinely absent:
+// that is a real misconfiguration, and a hard stop.
 func TestValidateIsolationFailsWhenBridgeMissing(t *testing.T) {
 	m := newMockServer(t)
-	m.on("GET", "/api2/json/nodes/pve1/network", 200, []map[string]any{})
+	m.on("GET", "/api2/json/nodes/pve1/network", 200, []map[string]any{
+		{"iface": "vmbr0", "type": "bridge", "bridge_ports": "eno1", "gateway": "10.0.0.1"},
+		{"iface": "vmbr1", "type": "bridge", "bridge_ports": ""},
+	})
 	p := newTestProvider(t, m, nil)
 
 	err := p.ValidateIsolation(context.Background(), "pve1", core.NetworkConfig{Bridge: "vmbr99"})
 	if !errors.Is(err, core.ErrNetworkNotIsolated) {
 		t.Errorf("expected core.ErrNetworkNotIsolated, got %v", err)
+	}
+}
+
+// No bridge at all in the listing means the credentials cannot see them, not
+// that the node has none. Proxmox does exactly this: on PVE 9.2.3 a token
+// holding Sys.Audit on the node received only the physical NIC. Reporting it
+// as "not isolated" would block a drill whose bridge is in fact correct, so
+// the two cases must stay distinguishable to the caller.
+func TestValidateIsolationReportsUnverifiableWhenNoBridgeIsVisible(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []map[string]any
+	}{
+		{name: "empty listing", entries: []map[string]any{}},
+		{
+			name: "only physical interfaces",
+			entries: []map[string]any{
+				{"iface": "enp5s0", "type": "eth", "exists": 1},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMockServer(t)
+			m.on("GET", "/api2/json/nodes/pve1/network", 200, tt.entries)
+			p := newTestProvider(t, m, nil)
+
+			err := p.ValidateIsolation(context.Background(), "pve1", core.NetworkConfig{Bridge: "vmbr99"})
+			if !errors.Is(err, core.ErrIsolationUnverified) {
+				t.Errorf("expected core.ErrIsolationUnverified, got %v", err)
+			}
+			if errors.Is(err, core.ErrNetworkNotIsolated) {
+				t.Error("an unverifiable check must not masquerade as proven danger")
+			}
+		})
 	}
 }
 

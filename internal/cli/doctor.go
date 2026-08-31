@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -123,10 +124,43 @@ func (a *app) doctor(ctx context.Context, providerID, workloadID string) error {
 		case !canValidate || node == "":
 			warn("cannot verify bridge %q from here", network.Bridge)
 		default:
-			if err := validator.ValidateIsolation(ctx, node, network); err != nil {
+			if a.rawAPI {
+				if perms, permErr := pve.EffectivePermissions(ctx, "/nodes/"+node); permErr == nil {
+					for path, privs := range perms {
+						granted := make([]string, 0, len(privs))
+						for priv, on := range privs {
+							if on {
+								granted = append(granted, priv)
+							}
+						}
+						sort.Strings(granted)
+						fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
+							fmt.Sprintf("perm %-24s %s", path, strings.Join(granted, ","))))
+					}
+				}
+				if raw, rawErr := pve.Raw(ctx, "/nodes/"+node+"/network", url.Values{"type": {"bridge"}}); rawErr == nil {
+					fmt.Fprintf(a.out, "      raw type=bridge %s\n", a.paint(colorDim, string(raw)))
+				} else {
+					fmt.Fprintf(a.out, "      raw type=bridge error: %v\n", rawErr)
+				}
+				if raw, rawErr := pve.Raw(ctx, "/nodes/"+node+"/network", nil); rawErr == nil {
+					body := string(raw)
+					if len(body) > 3000 {
+						body = body[:3000] + "..."
+					}
+					fmt.Fprintf(a.out, "      raw %s\n", a.paint(colorDim, body))
+				}
+			}
+			err := validator.ValidateIsolation(ctx, node, network)
+			switch {
+			case errors.Is(err, core.ErrIsolationUnverified):
+				warn("cannot verify bridge %q on %s with these credentials", network.Bridge, node)
+				fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
+					"Proxmox does not show this token the node's bridges; a drill will proceed on the plan's assertion that the network is isolated"))
+			case err != nil:
 				fail("bridge %q on %s: %v", network.Bridge, node, err)
 				fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim, "see docs/network-isolation.md to create a bridge with no uplink"))
-			} else {
+			default:
 				ok("isolated bridge %q present on %s", network.Bridge, node)
 			}
 		}

@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -134,7 +135,18 @@ func (e *Engine) checkNetworkIsolation(ctx context.Context, node string, network
 			core.ErrNetworkNotIsolated)
 	}
 	if nv, ok := e.hv.(core.NetworkValidator); ok {
-		if err := nv.ValidateIsolation(ctx, node, network); err != nil {
+		err := nv.ValidateIsolation(ctx, node, network)
+		switch {
+		case err == nil:
+		case errors.Is(err, core.ErrIsolationUnverified):
+			// The provider could not read the node's network configuration.
+			// That is not evidence of danger, and refusing here would make the
+			// product unusable wherever a token cannot see the bridge list.
+			// The plan asserted this network is isolated; proceed on that
+			// assertion, loudly, and let the report carry it.
+			e.log.Warn("network isolation could not be verified, proceeding on the plan's assertion",
+				"node", node, "bridge", network.Bridge, "err", err)
+		default:
 			return err
 		}
 	}

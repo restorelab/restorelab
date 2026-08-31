@@ -13,9 +13,17 @@ var (
 	// ErrNotManaged is returned when a destructive operation targets a
 	// resource RestoreLab did not create. This is a hard safety stop.
 	ErrNotManaged = errors.New("resource is not managed by restorelab")
-	// ErrNetworkNotIsolated is returned when the restore network cannot be
-	// proven isolated from production.
+	// ErrNetworkNotIsolated is returned when the restore network is known not
+	// to be isolated: the bridge exists and has an uplink. This is a hard
+	// stop - restoring onto it would put a production clone on a live network.
 	ErrNetworkNotIsolated = errors.New("restore network is not isolated")
+	// ErrIsolationUnverified is returned when isolation could not be checked
+	// at all, typically because the provider credentials cannot read the
+	// node's network configuration. It is deliberately distinct from
+	// ErrNetworkNotIsolated: "I could not verify" is not "it is unsafe", and
+	// conflating them either blocks legitimate drills or silently downgrades a
+	// real danger. Callers decide, and must say which one they are facing.
+	ErrIsolationUnverified = errors.New("network isolation could not be verified")
 	// ErrUnauthorized signals bad or insufficient credentials.
 	ErrUnauthorized = errors.New("unauthorized")
 	// ErrInsufficientCapacity is returned when the target node cannot host the

@@ -629,17 +629,36 @@ func (p *Provider) ValidateIsolation(ctx context.Context, node string, network c
 		return fmt.Errorf("proxmox: decode network config for node %s: %w", node, err)
 	}
 
+	var bridgesSeen int
 	for _, e := range entries {
+		if asString(e["type"]) == "bridge" {
+			bridgesSeen++
+		}
 		if asString(e["iface"]) != network.Bridge {
 			continue
 		}
 		ports := strings.TrimSpace(asString(e["bridge_ports"]))
 		gateway := strings.TrimSpace(asString(e["gateway"]))
+		address := strings.TrimSpace(asString(e["cidr"]))
+		if address == "" {
+			address = strings.TrimSpace(asString(e["address"]))
+		}
 		if ports != "" || gateway != "" {
 			return fmt.Errorf("proxmox: bridge %q on node %q has an uplink (bridge_ports=%q gateway=%q): %w",
 				network.Bridge, node, ports, gateway, core.ErrNetworkNotIsolated)
 		}
+		_ = address // an address without a gateway does not by itself defeat isolation
 		return nil
+	}
+
+	// Proxmox does not always show a node's bridges to a non-administrative
+	// token: on PVE 9.2.3 a token holding Sys.Audit on the node received only
+	// the physical NIC, with ?type=bridge returning an empty list. Reporting
+	// that as "not isolated" would block a drill whose bridge is in fact fine,
+	// so say what is actually true - nothing could be verified.
+	if bridgesSeen == 0 {
+		return fmt.Errorf("proxmox: cannot read the bridges of node %q with these credentials (%d interface(s) visible): %w",
+			node, len(entries), core.ErrIsolationUnverified)
 	}
 	return fmt.Errorf("proxmox: bridge %q not found on node %q: %w", network.Bridge, node, core.ErrNetworkNotIsolated)
 }

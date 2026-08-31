@@ -2,6 +2,9 @@ package recovery
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,5 +174,94 @@ func TestRunWithoutGuestExecutorLeavesTargetExecNil(t *testing.T) {
 	}
 	if gotTarget.IP != "10.99.0.14" {
 		t.Errorf("target IP = %q, want the discovered address", gotTarget.IP)
+	}
+}
+
+// unverifiableProvider cannot read the node's network configuration, which is
+// what a Proxmox token that Sys.Audit does not get bridge visibility for looks
+// like.
+type unverifiableProvider struct {
+	*fakeProvider
+	err error
+}
+
+func (u *unverifiableProvider) ValidateIsolation(_ context.Context, _ string, _ core.NetworkConfig) error {
+	return u.err
+}
+
+// "I could not verify" must not be treated as "it is unsafe": that would block
+// every drill on a cluster whose token cannot list bridges. Proven danger
+// still stops the run.
+func TestIsolationCheckDistinguishesUnverifiedFromUnsafe(t *testing.T) {
+	tests := []struct {
+		name       string
+		validation error
+		wantRun    bool
+	}{
+		{
+			name:       "isolation verified",
+			validation: nil,
+			wantRun:    true,
+		},
+		{
+			name:       "isolation unverifiable, the plan's assertion stands",
+			validation: fmt.Errorf("cannot read bridges: %w", core.ErrIsolationUnverified),
+			wantRun:    true,
+		},
+		{
+			name:       "isolation disproven, hard stop",
+			validation: fmt.Errorf("bridge has an uplink: %w", core.ErrNetworkNotIsolated),
+			wantRun:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := &fakeProvider{
+				idStr:        "fake-hv",
+				latestBackup: &core.Backup{ID: "backup-1", WorkloadID: "101", CreatedAt: time.Now().Add(-time.Hour)},
+				statuses:     []core.WorkloadStatus{{PowerState: core.PowerStateRunning, IPs: []string{"10.99.0.14"}}},
+			}
+			hv := &unverifiableProvider{fakeProvider: base, err: tt.validation}
+
+			checks := &fakeCheckRunner{results: []core.CheckResult{{Name: "tcp", Status: core.CheckPass}}}
+			engine := newTestEngine(t, hv, hv, checks, newFakeClock())
+
+			p := &plan.Plan{
+				Name:     "isolation",
+				Workload: plan.WorkloadRef{Provider: "fake", ID: "101"},
+				Backup:   plan.BackupSpec{Strategy: plan.StrategyLatest},
+				Startup:  plan.StartupSpec{Timeout: plan.Duration(time.Minute)},
+				Checks:   []plan.CheckSpec{{Type: "tcp", Params: map[string]any{"port": 22}}},
+			}
+			p.ApplyDefaults()
+
+			run, err := engine.Run(context.Background(), p, RunOptions{
+				Network: isolatedNetwork(),
+				Node:    "pve1",
+			})
+
+			if tt.wantRun {
+				if err != nil {
+					t.Fatalf("Run() error = %v, want the drill to proceed", err)
+				}
+				if run.TempWorkloadID == "" {
+					t.Error("no workload was ever created")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatal("Run() error = nil, want a refusal")
+			}
+			if !errors.Is(err, core.ErrNetworkNotIsolated) {
+				t.Errorf("error = %v, want core.ErrNetworkNotIsolated", err)
+			}
+			for _, call := range base.Calls() {
+				if strings.HasPrefix(call, "Restore(") {
+					t.Errorf("nothing may be restored onto a network known not to be isolated, got %q", call)
+				}
+			}
+		})
 	}
 }
