@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/restorelab/restorelab/internal/config"
+	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/crypto"
 	"github.com/restorelab/restorelab/internal/providers"
 	"github.com/restorelab/restorelab/internal/providers/proxmox"
@@ -42,6 +43,10 @@ type connectFlags struct {
 	readOnly bool
 	dryRun   bool
 	yes      bool
+
+	createBridge bool
+	bridgeName   string
+	noApply      bool
 }
 
 func newConnectCmd(a *app) *cobra.Command {
@@ -97,6 +102,10 @@ The administrator password can be typed at the prompt, read from a file with
 	fs.BoolVar(&f.readOnly, "read-only", false, "discovery and --dry-run only: cannot restore, start or destroy anything")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "show what would be created, change nothing")
 	fs.BoolVarP(&f.yes, "yes", "y", false, "do not ask for confirmation")
+
+	fs.BoolVar(&f.createBridge, "create-bridge", false, "also create the isolated bridge drills restore onto")
+	fs.StringVar(&f.bridgeName, "bridge", "", "bridge to create (default: the isolated network profile's bridge)")
+	fs.BoolVar(&f.noApply, "no-apply", false, "write the bridge configuration without activating it")
 
 	return cmd
 }
@@ -235,8 +244,78 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 	}
 	fmt.Fprintf(a.out, "%s token verified: %d node(s) visible\n", a.ok(), len(nodes))
 
+	// The isolated bridge is the last thing standing between a fresh install
+	// and a real drill, and this is the only moment RestoreLab holds the
+	// privileges to create it: the service token deliberately cannot.
+	a.maybeCreateBridge(ctx, admin, cfg, f, hv, nodes)
+
 	a.printConnectNextSteps(f)
 	return nil
+}
+
+func (a *app) maybeCreateBridge(ctx context.Context, admin *proxmox.AdminClient, cfg *config.Config,
+	f *connectFlags, hv core.HypervisorProvider, nodes []core.Node) {
+
+	bridge := f.bridgeName
+	if bridge == "" {
+		name := cfg.Defaults.Network
+		if name == "" {
+			name = "isolated"
+		}
+		profile, err := cfg.Network(name)
+		if err != nil || !profile.Isolated {
+			return
+		}
+		bridge = profile.Bridge
+	}
+
+	node := f.node
+	if node == "" {
+		for _, n := range nodes {
+			if n.Online {
+				node = n.ID
+				break
+			}
+		}
+	}
+	if node == "" || bridge == "" {
+		return
+	}
+
+	// Nothing to do when it is already there.
+	if validator, ok := hv.(core.NetworkValidator); ok {
+		if err := validator.ValidateIsolation(ctx, node, core.NetworkConfig{Bridge: bridge, Isolated: true}); err == nil {
+			fmt.Fprintf(a.out, "%s isolated bridge %s already present on %s\n", a.ok(), bridge, node)
+			return
+		}
+	}
+
+	if !f.createBridge {
+		fmt.Fprintf(a.out, "\n%s no isolated bridge %q on %s yet: a drill needs one\n", a.warn(), bridge, node)
+		if !isTerminal(os.Stdin) || f.yes {
+			fmt.Fprintf(a.out, "  %s\n", a.paint(colorCyan, "restorelab network create"))
+			return
+		}
+		fmt.Fprintf(a.out, "  %s\n", a.paint(colorDim,
+			"a Linux bridge with no ports, no address and no gateway; applying it reloads the node's networking"))
+		if !a.confirm("Create it now?") {
+			fmt.Fprintf(a.out, "  %s\n", a.paint(colorCyan, "restorelab network create"))
+			return
+		}
+	}
+
+	result, err := admin.EnsureIsolatedBridge(ctx, proxmox.BridgeOptions{
+		Node:   node,
+		Bridge: bridge,
+		Apply:  !f.noApply,
+		DryRun: f.dryRun,
+	})
+	if err != nil {
+		fmt.Fprintf(a.err, "%s could not create the bridge: %v\n", a.fail(), err)
+		fmt.Fprintf(a.err, "  %s\n", a.paint(colorDim, "see docs/network-isolation.md to create it by hand"))
+		return
+	}
+	a.printBridgeResult(result, f.dryRun)
 }
 
 // ensureInitialised loads the configuration and master key, creating both when
