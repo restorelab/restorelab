@@ -119,6 +119,15 @@ func (a *app) addProvider(ctx context.Context, kind string, f *providerFlags) er
 	if f.id == "" || f.endpoint == "" || f.tokenID == "" {
 		return fmt.Errorf("--id, --endpoint and --token-id are required")
 	}
+
+	defaultPort := proxmoxPort
+	if kind == providers.KindPBS {
+		defaultPort = pbsPort
+	}
+	endpoint, err := normalizeEndpoint(f.endpoint, defaultPort)
+	if err != nil {
+		return err
+	}
 	if kind == providers.KindPBS && f.datastore == "" {
 		return fmt.Errorf("--datastore is required for a Proxmox Backup Server")
 	}
@@ -140,7 +149,7 @@ func (a *app) addProvider(ctx context.Context, kind string, f *providerFlags) er
 	entry := config.Provider{
 		ID:          f.id,
 		Kind:        kind,
-		Endpoint:    strings.TrimRight(f.endpoint, "/"),
+		Endpoint:    endpoint,
 		TokenID:     f.tokenID,
 		Insecure:    f.insecure,
 		Fingerprint: f.fingerprint,

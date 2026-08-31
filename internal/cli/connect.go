@@ -69,7 +69,11 @@ The administrator password can be typed at the prompt, read from a file with
 --admin-password-file, or supplied through $` + adminPasswordEnv + `.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.connect(cmd.Context(), strings.TrimRight(args[0], "/"), f)
+			endpoint, err := normalizeEndpoint(args[0], proxmoxPort)
+			if err != nil {
+				return err
+			}
+			return a.connect(cmd.Context(), endpoint, f)
 		},
 	}
 
@@ -238,15 +242,21 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 // ensureInitialised loads the configuration and master key, creating both when
 // this is the first command ever run on this machine.
 func (a *app) ensureInitialised() (*config.Config, crypto.Key, error) {
-	if _, _, err := a.ensureMasterKey(); err != nil {
+	keyPath, created, err := a.ensureMasterKey()
+	if err != nil {
 		return nil, crypto.Key{}, err
+	}
+	if created {
+		fmt.Fprintf(a.out, "%s master key generated at %s\n", a.ok(), keyPath)
+		fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow, "Back it up: without it, stored provider tokens cannot be decrypted."))
 	}
 	key, err := a.masterKey()
 	if err != nil {
 		return nil, crypto.Key{}, err
 	}
 
-	cfg, err := a.config()
+	cfg, cfgErr := a.config()
+	err = cfgErr
 	if errors.Is(err, config.ErrNotFound) {
 		cfg = config.New()
 		if err := config.Save(a.path(), cfg); err != nil {
