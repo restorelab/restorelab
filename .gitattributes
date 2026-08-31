@@ -1,0 +1,8 @@
+# Normalise line endings: this repository is developed on Windows and built on
+# Linux, and a Makefile or a shell script with CRLF fails there.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
