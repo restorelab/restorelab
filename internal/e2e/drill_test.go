@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -47,6 +48,20 @@ type fakePVE struct {
 	guestIP string
 	// failStart makes the start task fail, to exercise the failure path.
 	failStart bool
+
+	// Guest agent exec: agentUp gates whether the agent answers at all, and
+	// execResults maps a command line to what running it produces.
+	agentUp     bool
+	execResults map[string]execResult
+	execCalls   []execCall
+	nextPID     int
+	pids        map[int]execResult
+}
+
+type execResult struct {
+	ExitCode int
+	Stdout   string
+	Stderr   string
 }
 
 type fakeVM struct {
@@ -58,6 +73,12 @@ type fakeVM struct {
 	tags    string
 }
 
+// execCall is one guest-agent command the fake received.
+type execCall struct {
+	Argv  []string
+	Input string
+}
+
 type recordedRequest struct {
 	Method string
 	Path   string
@@ -67,7 +88,10 @@ type recordedRequest struct {
 
 func newFakePVE(guestIP string) *fakePVE {
 	return &fakePVE{
-		guestIP: guestIP,
+		guestIP:     guestIP,
+		agentUp:     true,
+		execResults: map[string]execResult{},
+		pids:        map[int]execResult{},
 		vms: map[string]*fakeVM{
 			sourceVMID: {
 				id:     sourceVMID,
@@ -237,8 +261,40 @@ func (f *fakePVE) vmRoute(r *http.Request, vm *fakeVM, action string, form url.V
 		vm.running = false
 		return "UPID:pve1:stop:" + vm.id + ":root@pam:", http.StatusOK
 
+	case action == "agent/exec" && r.Method == http.MethodPost:
+		if !vm.running || !f.agentUp {
+			// PVE answers a missing or silent agent with an untyped 500.
+			return "QEMU guest agent is not running", http.StatusInternalServerError
+		}
+		argv := form["command"]
+		if len(argv) == 0 {
+			return nil, http.StatusBadRequest
+		}
+		f.execCalls = append(f.execCalls, execCall{Argv: argv, Input: form.Get("input-data")})
+
+		f.nextPID++
+		res, ok := f.execResults[strings.Join(argv, " ")]
+		if !ok {
+			res = execResult{ExitCode: 127, Stderr: "sh: command not found"}
+		}
+		f.pids[f.nextPID] = res
+		return map[string]any{"pid": f.nextPID}, http.StatusOK
+
+	case action == "agent/exec-status":
+		pid, _ := strconv.Atoi(r.URL.Query().Get("pid"))
+		res, ok := f.pids[pid]
+		if !ok {
+			return nil, http.StatusNotFound
+		}
+		return map[string]any{
+			"exited":   1,
+			"exitcode": res.ExitCode,
+			"out-data": res.Stdout,
+			"err-data": res.Stderr,
+		}, http.StatusOK
+
 	case action == "agent/network-get-interfaces":
-		if !vm.running {
+		if !vm.running || !f.agentUp {
 			return nil, http.StatusInternalServerError
 		}
 		return map[string]any{"result": []map[string]any{
@@ -710,4 +766,137 @@ func assertRestoreParams(t *testing.T, pve *fakePVE) {
 		return
 	}
 	t.Fatal("no restore request was made")
+}
+
+// inGuestPlan validates the restored service with a command run inside the
+// guest, which is what lets a drill work with no network path at all into the
+// isolated recovery network.
+func inGuestPlan(t *testing.T) *plan.Plan {
+	t.Helper()
+
+	p := &plan.Plan{
+		Name:     "postgres-prod",
+		Workload: plan.WorkloadRef{Provider: "proxmox-test", ID: sourceVMID},
+		Backup:   plan.BackupSpec{Strategy: plan.StrategyLatest, MaxAge: plan.Duration(26 * time.Hour)},
+		Restore:  plan.RestoreSpec{Node: node},
+		Startup:  plan.StartupSpec{Timeout: plan.Duration(30 * time.Second)},
+		Checks: []plan.CheckSpec{{
+			Type:   "command",
+			Name:   "PostgreSQL",
+			Params: map[string]any{"run": "systemctl is-active postgresql", "expect": "active"},
+		}},
+	}
+	p.ApplyDefaults()
+
+	if p.Startup.WaitsForIP() {
+		t.Fatal("a plan with only in-guest checks must not wait for an address")
+	}
+	if !p.Startup.WaitsForAgent() {
+		t.Fatal("a plan with in-guest checks must wait for the guest agent")
+	}
+	return p
+}
+
+func TestFullDrillWithInGuestCheckNeedsNoNetworkPath(t *testing.T) {
+	// No listener, and an address the test process could never reach: the
+	// whole point is that nothing here talks to the guest over the network.
+	pve, provider := newDrill(t, "10.99.0.14")
+	pve.execResults["/bin/sh -c systemctl is-active postgresql"] = execResult{Stdout: "active\n"}
+
+	engine := newEngine(t, provider, nil)
+
+	run, err := engine.Run(context.Background(), inGuestPlan(t), recovery.RunOptions{
+		Network: isolatedNetwork(),
+		Node:    node,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if run.Result != core.ResultSuccess {
+		t.Fatalf("Result = %s, want SUCCESS (err=%s, checks=%+v)", run.Result, run.Err, run.Checks)
+	}
+	if len(run.Checks) != 1 || !run.Checks[0].OK() {
+		t.Errorf("checks = %+v, want one passing check", run.Checks)
+	}
+	if !run.CleanupDone {
+		t.Error("cleanup must still run")
+	}
+
+	if len(pve.execCalls) != 1 {
+		t.Fatalf("execCalls = %+v, want exactly one guest command", pve.execCalls)
+	}
+	want := []string{"/bin/sh", "-c", "systemctl is-active postgresql"}
+	if strings.Join(pve.execCalls[0].Argv, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("argv = %q, want %q", pve.execCalls[0].Argv, want)
+	}
+	assertNoDestructiveCallOnSource(t, pve)
+}
+
+// A service that did not come back must fail the drill, not error it: the
+// command ran fine, the answer was just wrong.
+func TestInGuestCheckFailsWhenServiceIsDown(t *testing.T) {
+	pve, provider := newDrill(t, "10.99.0.14")
+	pve.execResults["/bin/sh -c systemctl is-active postgresql"] = execResult{ExitCode: 3, Stdout: "inactive\n"}
+
+	engine := newEngine(t, provider, nil)
+
+	run, err := engine.Run(context.Background(), inGuestPlan(t), recovery.RunOptions{
+		Network: isolatedNetwork(),
+		Node:    node,
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want a failure")
+	}
+	if run.Result != core.ResultFailed {
+		t.Errorf("Result = %s, want FAILED", run.Result)
+	}
+	failed := run.FailedChecks()
+	if len(failed) != 1 {
+		t.Fatalf("FailedChecks() = %+v, want one", failed)
+	}
+	if failed[0].Status != core.CheckFail {
+		t.Errorf("Status = %s, want fail: the command ran, its answer was wrong", failed[0].Status)
+	}
+	if !strings.Contains(failed[0].Message, "inactive") {
+		t.Errorf("message = %q, want the evidence in it", failed[0].Message)
+	}
+	if !run.CleanupDone {
+		t.Error("cleanup must run after a failed check")
+	}
+}
+
+// No guest agent is "I could not ask", not "your service is broken": a drill
+// against a guest whose agent never answers must fail on the wait, with a
+// message that says so, rather than accusing a service nobody ever reached.
+func TestDrillFailsClearlyWhenTheGuestAgentNeverAnswers(t *testing.T) {
+	pve, provider := newDrill(t, "10.99.0.14")
+	pve.agentUp = false
+
+	engine := newEngine(t, provider, nil)
+
+	p := inGuestPlan(t)
+	p.Startup.Timeout = plan.Duration(2 * time.Second)
+
+	run, err := engine.Run(context.Background(), p, recovery.RunOptions{
+		Network: isolatedNetwork(),
+		Node:    node,
+	})
+	if err == nil {
+		t.Fatal("Run() error = nil, want a failure when the agent never answers")
+	}
+	if run.Result != core.ResultFailed {
+		t.Errorf("Result = %s, want FAILED", run.Result)
+	}
+	if !strings.Contains(run.Err, "agent=no") {
+		t.Errorf("run error = %q, want it to say the agent never answered", run.Err)
+	}
+	if len(pve.execCalls) != 0 {
+		t.Errorf("no command may be attempted before the agent is up, got %+v", pve.execCalls)
+	}
+	if !run.CleanupDone {
+		t.Error("cleanup must still run")
+	}
+	if _, exists := pve.vms[tempVMID]; exists {
+		t.Error("the temporary workload survived")
+	}
 }
