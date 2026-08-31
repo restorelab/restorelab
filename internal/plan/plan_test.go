@@ -175,8 +175,8 @@ workload:
 	if !p.Cleanup.CleanupAlways() {
 		t.Error("cleanup must default to always")
 	}
-	if !p.Startup.WaitForIP {
-		t.Error("WaitForIP must default to true when no IP is pinned")
+	if !p.Startup.WaitsForIP() {
+		t.Error("WaitsForIP() must default to true when no IP is pinned and there are no checks")
 	}
 	if p.Startup.Timeout.D() != DefaultStartupTimeout {
 		t.Errorf("Startup.Timeout = %v", p.Startup.Timeout)
@@ -323,3 +323,81 @@ func TestDurationOr(t *testing.T) {
 // yamlUnmarshal keeps the duration tests readable without repeating the
 // decoder plumbing in every case.
 func yamlUnmarshal(data []byte, out any) error { return yaml.Unmarshal(data, out) }
+
+func TestStartupWaitDefaultsFollowTheChecks(t *testing.T) {
+	tests := []struct {
+		name      string
+		yaml      string
+		wantIP    bool
+		wantAgent bool
+	}{
+		{
+			name:   "no checks still proves the guest configured its network",
+			yaml:   "name: x\nworkload: {provider: p, id: \"1\"}\n",
+			wantIP: true,
+		},
+		{
+			name:   "network checks need an address",
+			yaml:   "name: x\nworkload: {provider: p, id: \"1\"}\nchecks:\n  - {type: tcp, port: 22}\n",
+			wantIP: true,
+		},
+		{
+			// The whole point of in-guest checks: no address, no DHCP, no
+			// route into the isolated network.
+			name:      "in-guest checks only wait on the agent",
+			yaml:      "name: x\nworkload: {provider: p, id: \"1\"}\nchecks:\n  - {type: command, run: \"true\"}\n",
+			wantIP:    false,
+			wantAgent: true,
+		},
+		{
+			name:      "mixed checks need both",
+			yaml:      "name: x\nworkload: {provider: p, id: \"1\"}\nchecks:\n  - {type: tcp, port: 22}\n  - {type: command, run: \"true\"}\n",
+			wantIP:    true,
+			wantAgent: true,
+		},
+		{
+			name:   "a pinned address needs no discovery",
+			yaml:   "name: x\nworkload: {provider: p, id: \"1\"}\nstartup: {ip: 10.99.0.14}\nchecks:\n  - {type: tcp, port: 22}\n",
+			wantIP: false,
+		},
+		{
+			name: "restore-only waits for nothing",
+			yaml: "name: x\nworkload: {provider: p, id: \"1\"}\nstartup: {skip: true}\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := Parse([]byte(tt.yaml))
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if got := p.Startup.WaitsForIP(); got != tt.wantIP {
+				t.Errorf("WaitsForIP() = %v, want %v", got, tt.wantIP)
+			}
+			if got := p.Startup.WaitsForAgent(); got != tt.wantAgent {
+				t.Errorf("WaitsForAgent() = %v, want %v", got, tt.wantAgent)
+			}
+		})
+	}
+}
+
+// An explicit value in a plan must survive the defaults: silently overriding
+// what someone wrote down is how a drill fails for reasons nobody can see.
+func TestExplicitStartupWaitsAreHonoured(t *testing.T) {
+	p, err := Parse([]byte("name: x\nworkload: {provider: p, id: \"1\"}\nstartup: {wait_for_ip: false}\nchecks:\n  - {type: tcp, port: 22}\n"))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if p.Startup.WaitsForIP() {
+		t.Error("an explicit wait_for_ip: false must be honoured even with network checks")
+	}
+
+	p, err = Parse([]byte("name: x\nworkload: {provider: p, id: \"1\"}\nstartup: {wait_for_agent: true}\nchecks:\n  - {type: tcp, port: 22}\n"))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if !p.Startup.WaitsForAgent() {
+		t.Error("an explicit wait_for_agent: true must be honoured")
+	}
+}

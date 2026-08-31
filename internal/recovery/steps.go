@@ -272,7 +272,7 @@ func (e *Engine) waitForGuest(ctx context.Context, run *core.RecoveryRun, p *pla
 
 	if p.Startup.Skip {
 		e.endStep(run, idx, core.StepSkipped, "startup skipped, guest was not booted", nil)
-		return core.Target{WorkloadID: tempID, Node: run.Node, Name: run.SourceName}, nil
+		return core.Target{WorkloadID: tempID, Node: run.Node, Name: run.SourceName, Exec: e.guestExecutor()}, nil
 	}
 
 	timeout := p.Startup.Timeout.D()
@@ -293,7 +293,14 @@ func (e *Engine) waitForGuest(ctx context.Context, run *core.RecoveryRun, p *pla
 			if ip == "" {
 				ip = status.PrimaryIP()
 			}
-			target := core.Target{IP: ip, IPs: status.IPs, WorkloadID: tempID, Node: run.Node, Name: run.SourceName}
+			target := core.Target{
+				IP:         ip,
+				IPs:        status.IPs,
+				WorkloadID: tempID,
+				Node:       run.Node,
+				Name:       run.SourceName,
+				Exec:       e.guestExecutor(),
+			}
 			e.endStep(run, idx, core.StepDone, fmt.Sprintf("guest is up%s", ipSuffix(ip)), nil)
 			return target, nil
 		}
@@ -336,13 +343,29 @@ func guestReady(s *core.WorkloadStatus, p *plan.Plan) bool {
 	if s.PowerState != core.PowerStateRunning {
 		return false
 	}
+	// In-guest checks travel through the agent, so the agent responding is
+	// what "ready" means for them - an address is beside the point.
+	if p.Startup.WaitsForAgent() && !s.AgentReady {
+		return false
+	}
 	if p.Startup.IP != "" {
 		return true // address pinned by the plan, discovery not required
 	}
-	if p.Startup.WaitForIP {
+	if p.Startup.WaitsForIP() {
 		return s.PrimaryIP() != ""
 	}
 	return true
+}
+
+// guestExecutor exposes in-guest command execution to the checks when the
+// provider supports it. A provider that cannot do it yields nil, and the
+// checks that need it say so plainly instead of reporting a healthy service
+// as broken.
+func (e *Engine) guestExecutor() core.GuestExecutor {
+	if x, ok := e.hv.(core.GuestExecutor); ok {
+		return x
+	}
+	return nil
 }
 
 func ipSuffix(ip string) string {
@@ -356,7 +379,11 @@ func describeStatus(s *core.WorkloadStatus) string {
 	if s == nil {
 		return "no status"
 	}
-	return fmt.Sprintf("power=%s ips=%v", s.PowerState, s.IPs)
+	agent := "agent=no"
+	if s.AgentReady {
+		agent = "agent=yes"
+	}
+	return fmt.Sprintf("power=%s %s ips=%v", s.PowerState, agent, s.IPs)
 }
 
 // runChecks runs every configured check against the recovered workload and

@@ -96,8 +96,14 @@ type StartupSpec struct {
 	// Timeout bounds the wait for the guest to become reachable.
 	Timeout Duration `yaml:"timeout,omitempty"`
 	// WaitForIP requires an IP address from the guest agent before checks run.
-	// When false, checks must supply their own target host.
-	WaitForIP bool `yaml:"wait_for_ip,omitempty"`
+	// When false, checks must supply their own target host. Nil means "decide
+	// from the checks": pointers here so an explicit value in a plan is never
+	// silently overwritten by the defaults.
+	WaitForIP *bool `yaml:"wait_for_ip,omitempty"`
+	// WaitForAgent requires the guest agent to respond before checks run. It
+	// is what plans made only of in-guest checks wait on, since they never
+	// need an address at all.
+	WaitForAgent *bool `yaml:"wait_for_agent,omitempty"`
 	// IP pins the guest address instead of discovering it (static addressing).
 	IP string `yaml:"ip,omitempty"`
 }
@@ -111,6 +117,12 @@ type CleanupSpec struct {
 	// It overrides Always and must be used deliberately.
 	KeepOnFailure bool `yaml:"keep_on_failure,omitempty"`
 }
+
+// WaitsForIP reports the effective address-discovery policy.
+func (s StartupSpec) WaitsForIP() bool { return s.WaitForIP != nil && *s.WaitForIP }
+
+// WaitsForAgent reports whether the run waits for the guest agent to respond.
+func (s StartupSpec) WaitsForAgent() bool { return s.WaitForAgent != nil && *s.WaitForAgent }
 
 // CleanupAlways reports the effective cleanup policy.
 func (c CleanupSpec) CleanupAlways() bool { return c.Always == nil || *c.Always }
@@ -235,10 +247,17 @@ func (p *Plan) ApplyDefaults() {
 	if p.Startup.Timeout == 0 {
 		p.Startup.Timeout = Duration(DefaultStartupTimeout)
 	}
-	if !p.Startup.Skip && p.Startup.IP == "" {
-		// Checks need somewhere to connect: discovering the guest IP is the
-		// default behaviour unless the plan pins one.
-		p.Startup.WaitForIP = true
+	if p.Startup.WaitForIP == nil {
+		// Network checks need somewhere to connect, so the guest address is
+		// discovered by default. A plan made only of in-guest checks needs no
+		// address at all: waiting for one there would fail drills on guests
+		// that legitimately have no DHCP inside the isolated network.
+		want := !p.Startup.Skip && p.Startup.IP == "" && p.needsNetwork()
+		p.Startup.WaitForIP = &want
+	}
+	if p.Startup.WaitForAgent == nil {
+		want := !p.Startup.Skip && p.needsGuestAgent()
+		p.Startup.WaitForAgent = &want
 	}
 	if p.Cleanup.Always == nil {
 		always := true
@@ -305,4 +324,37 @@ func (p *Plan) Validate() error {
 		return fmt.Errorf("invalid plan:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+// guestAgentCheckTypes are the checks that run inside the guest through the
+// provider rather than over the network. Extend this when a new one lands.
+var guestAgentCheckTypes = map[string]bool{
+	"command": true,
+}
+
+// needsNetwork reports whether any configured check connects to the guest over
+// the network, which is what makes discovering its address necessary.
+//
+// A plan with no checks at all still waits for an address: proving the guest
+// configured its network is the only signal such a drill has left.
+func (p *Plan) needsNetwork() bool {
+	if len(p.Checks) == 0 {
+		return true
+	}
+	for _, c := range p.Checks {
+		if !guestAgentCheckTypes[c.Type] {
+			return true
+		}
+	}
+	return false
+}
+
+// needsGuestAgent reports whether any configured check runs inside the guest.
+func (p *Plan) needsGuestAgent() bool {
+	for _, c := range p.Checks {
+		if guestAgentCheckTypes[c.Type] {
+			return true
+		}
+	}
+	return false
 }
