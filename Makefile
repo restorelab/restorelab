@@ -1,0 +1,72 @@
+BINARY      := restorelab
+PKG         := github.com/restorelab/restorelab
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT      ?= $(shell git rev-parse HEAD 2>/dev/null)
+DATE        ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS     := -s -w \
+	-X $(PKG)/internal/version.Version=$(VERSION) \
+	-X $(PKG)/internal/version.Commit=$(COMMIT) \
+	-X $(PKG)/internal/version.Date=$(DATE)
+
+GO          ?= go
+BIN_DIR     := bin
+
+.DEFAULT_GOAL := help
+
+.PHONY: help
+help: ## Show this help
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: build
+build: ## Build the restorelab binary into bin/
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/$(BINARY) ./cmd/restorelab
+
+.PHONY: install
+install: ## Install restorelab into GOBIN
+	$(GO) install -trimpath -ldflags "$(LDFLAGS)" ./cmd/restorelab
+
+.PHONY: test
+test: ## Run the test suite
+	$(GO) test ./...
+
+.PHONY: test-race
+test-race: ## Run tests with the race detector
+	$(GO) test -race ./...
+
+.PHONY: cover
+cover: ## Run tests and open the coverage report
+	$(GO) test -coverprofile=coverage.out ./...
+	$(GO) tool cover -html=coverage.out
+
+.PHONY: vet
+vet: ## Run go vet
+	$(GO) vet ./...
+
+.PHONY: fmt
+fmt: ## Format the codebase
+	gofmt -w -s $$(find . -name '*.go' -not -path './web/*')
+
+.PHONY: fmt-check
+fmt-check: ## Fail when the codebase is not gofmt-clean
+	@out=$$(gofmt -l $$(find . -name '*.go' -not -path './web/*')); \
+	if [ -n "$$out" ]; then echo "not gofmt-clean:"; echo "$$out"; exit 1; fi
+
+.PHONY: lint
+lint: ## Run golangci-lint (must be installed)
+	golangci-lint run ./...
+
+.PHONY: tidy
+tidy: ## Tidy go.mod / go.sum
+	$(GO) mod tidy
+
+.PHONY: check
+check: fmt-check vet test ## Everything CI runs
+
+.PHONY: clean
+clean: ## Remove build artefacts
+	rm -rf $(BIN_DIR) coverage.out
+
+.PHONY: docker
+docker: ## Build the container image
+	docker build -f deployments/docker/Dockerfile -t restorelab:$(VERSION) .

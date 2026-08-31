@@ -1,0 +1,37 @@
+# Binaries — anchored to the repo root, otherwise "restorelab" would also
+# ignore cmd/restorelab/
+/bin/
+/dist/
+/restorelab
+/restorelab.exe
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Local state and secrets — never commit these
+*.key
+master.key
+/config.yaml
+config.local.yaml
+.env
+.env.*
+!.env.example
+
+# Reports produced by local runs
+/reports/
+*.report.json
+*.report.html
+
+# Frontend
+node_modules/
+web/dist/
+web/.vite/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
