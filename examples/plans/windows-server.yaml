@@ -1,0 +1,54 @@
+# A Windows drill, validated entirely from inside the guest.
+#
+# Windows guests have no /bin/sh, so the shell must be named. Everything else
+# is identical to a Linux plan: the commands travel through the QEMU guest
+# agent, so no network path into the isolated recovery network is required.
+#
+# Requires the guest agent installed in the guest (it ships with the
+# virtio-win drivers) and enabled on the VM.
+
+name: windows-server
+
+workload:
+  provider: proxmox-main
+  id: "104"
+
+backup:
+  strategy: latest
+  max_age: 26h
+
+restore:
+  network: isolated
+
+startup:
+  timeout: 240s
+
+checks:
+  - type: command
+    name: guest responds
+    shell: cmd
+    run: hostname
+
+  # Winmgmt running is a decent proxy for "Windows actually finished booting"
+  # rather than "the VM is powered on".
+  - type: command
+    name: windows finished booting
+    shell: powershell
+    run: (Get-Service -Name Winmgmt).Status
+    expect: Running
+    retries: 6
+    retry_interval: 10s
+
+  # What you actually care about: your service came back.
+  - type: command
+    name: application service
+    shell: powershell
+    run: (Get-Service -Name W32Time).Status
+    expect: Running
+    retries: 6
+    retry_interval: 10s
+
+cleanup:
+  always: true
+
+rto_target: 10m
