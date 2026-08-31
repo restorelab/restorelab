@@ -1,0 +1,483 @@
+package proxmox
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/restorelab/restorelab/internal/core"
+)
+
+// newTestAdminClient wires an AdminClient to the mock server with sane
+// defaults every test can override via mutate.
+func newTestAdminClient(t *testing.T, m *mockServer, password string, mutate func(*AdminConfig)) *AdminClient {
+	t.Helper()
+	cfg := AdminConfig{
+		Endpoint: m.url(),
+		Username: "root@pam",
+		Password: password,
+		Timeout:  5 * time.Second,
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	c, err := NewAdminClient(cfg)
+	if err != nil {
+		t.Fatalf("NewAdminClient: %v", err)
+	}
+	return c
+}
+
+// mockTicket registers a canned successful /access/ticket response.
+func mockTicket(m *mockServer, ticket, csrf string) {
+	m.on("POST", "/api2/json/access/ticket", 200, map[string]any{
+		"ticket":              ticket,
+		"CSRFPreventionToken": csrf,
+		"username":            "root@pam",
+	})
+}
+
+func mustLogin(t *testing.T, c *AdminClient) {
+	t.Helper()
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+}
+
+// writesOnly filters out reads and the initial ticket exchange, leaving the
+// ordered sequence of state-changing requests Bootstrap issued.
+func writesOnly(reqs []recordedRequest) []recordedRequest {
+	var out []recordedRequest
+	for _, r := range reqs {
+		if r.Method != "POST" && r.Method != "PUT" {
+			continue
+		}
+		if r.Path == "/api2/json/access/ticket" {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func TestLoginSendsCredentialsAndSessionCarriesTicketAndCSRF(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-abc123", "csrf-xyz789")
+	m.on("GET", "/api2/json/version", 200, map[string]any{"version": "8.1.4"})
+	m.on("PUT", "/api2/json/access/acl", 200, nil)
+
+	c := newTestAdminClient(t, m, "s3cr3t-admin-pw", nil)
+	mustLogin(t, c)
+
+	// Ticket call carried username/password as form fields.
+	reqs := m.recorded()
+	if len(reqs) != 1 {
+		t.Fatalf("expected 1 request after Login, got %d", len(reqs))
+	}
+	ticketReq := reqs[0]
+	if got := ticketReq.Form.Get("username"); got != "root@pam" {
+		t.Errorf("ticket call username = %q, want %q", got, "root@pam")
+	}
+	if got := ticketReq.Form.Get("password"); got != "s3cr3t-admin-pw" {
+		t.Errorf("ticket call password = %q, want %q", got, "s3cr3t-admin-pw")
+	}
+
+	// A GET carries the cookie but not the CSRF header.
+	if _, err := c.Version(context.Background()); err != nil {
+		t.Fatalf("Version: %v", err)
+	}
+	getReq := m.recorded()[1]
+	if want := "PVEAuthCookie=tkt-abc123"; getReq.CookieHeader != want {
+		t.Errorf("GET Cookie = %q, want %q", getReq.CookieHeader, want)
+	}
+	if got := getReq.CSRFHeader; got != "" {
+		t.Errorf("GET must not carry CSRFPreventionToken, got %q", got)
+	}
+
+	// A write carries both the cookie and the CSRF header.
+	if _, err := c.doRequest(context.Background(), "PUT", "/access/acl", nil); err != nil {
+		t.Fatalf("doRequest PUT: %v", err)
+	}
+	putReq := m.recorded()[2]
+	if want := "PVEAuthCookie=tkt-abc123"; putReq.CookieHeader != want {
+		t.Errorf("PUT Cookie = %q, want %q", putReq.CookieHeader, want)
+	}
+	if got := putReq.CSRFHeader; got != "csrf-xyz789" {
+		t.Errorf("PUT CSRFPreventionToken = %q, want %q", got, "csrf-xyz789")
+	}
+}
+
+func TestLoginUnauthorizedMapsToErrUnauthorizedWithRealmHint(t *testing.T) {
+	m := newMockServer(t)
+	m.onError("POST", "/api2/json/access/ticket", 401, "authentication failure")
+
+	c := newTestAdminClient(t, m, "wrong-password", func(cfg *AdminConfig) {
+		cfg.Username = "root" // missing realm - the common mistake
+	})
+
+	err := c.Login(context.Background())
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !errors.Is(err, core.ErrUnauthorized) {
+		t.Errorf("expected core.ErrUnauthorized, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "realm") {
+		t.Errorf("expected error to mention the realm requirement, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "wrong-password") {
+		t.Errorf("error must never contain the password, got: %v", err)
+	}
+}
+
+// emptyClusterOpts is the drill-mode BootstrapOptions used by the
+// full-sequence and dry-run tests below.
+func emptyClusterOpts() BootstrapOptions {
+	return BootstrapOptions{
+		UserID:    "restorelab@pve",
+		Comment:   "RestoreLab service account",
+		TokenName: "drills",
+		RoleName:  "RestoreLabDrill",
+		Pool:      "drillpool",
+		Node:      "",
+		Storages:  []string{"local-lvm"},
+	}
+}
+
+// mockEmptyClusterWrites registers canned responses for an empty cluster
+// (no pre-existing roles, pools, users or tokens) that accepts every write
+// Bootstrap needs to issue.
+func mockEmptyClusterReadsAndWrites(m *mockServer, userID, tokenName string) {
+	m.on("GET", "/api2/json/access/roles", 200, []map[string]any{})
+	m.on("POST", "/api2/json/access/roles", 200, nil)
+	m.on("GET", "/api2/json/pools", 200, []map[string]any{})
+	m.on("POST", "/api2/json/pools", 200, nil)
+	m.on("GET", "/api2/json/access/users", 200, []map[string]any{})
+	m.on("POST", "/api2/json/access/users", 200, nil)
+	m.on("PUT", "/api2/json/access/acl", 200, nil)
+	m.on("GET", "/api2/json/access/users/"+userID+"/token", 200, []map[string]any{})
+	m.on("POST", "/api2/json/access/users/"+userID+"/token/"+tokenName, 200, map[string]any{
+		"value":        "e4b6f0e2-secret-token-value",
+		"full-tokenid": userID + "!" + tokenName,
+	})
+}
+
+func TestBootstrapEmptyClusterExactWriteSequence(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-1", "csrf-1")
+	opts := emptyClusterOpts()
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	result, err := c.Bootstrap(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	if result.TokenID != "restorelab@pve!drills" {
+		t.Errorf("TokenID = %q, want %q", result.TokenID, "restorelab@pve!drills")
+	}
+	if result.Secret != "e4b6f0e2-secret-token-value" {
+		t.Errorf("Secret = %q, want %q", result.Secret, "e4b6f0e2-secret-token-value")
+	}
+
+	roPrivs := privsKey(ReadOnlyPrivileges)
+	drillPrivs := privsKey(DrillPrivileges)
+	storagePrivs := privsKey(storagePrivileges)
+
+	writes := writesOnly(m.recorded())
+	type want struct {
+		method, path string
+		form         map[string]string
+	}
+	wants := []want{
+		{"POST", "/api2/json/access/roles", map[string]string{"roleid": "RestoreLabRead", "privs": roPrivs}},
+		{"POST", "/api2/json/access/roles", map[string]string{"roleid": "RestoreLabDrill", "privs": drillPrivs}},
+		{"POST", "/api2/json/pools", map[string]string{"poolid": "drillpool"}},
+		{"POST", "/api2/json/access/users", map[string]string{"userid": "restorelab@pve", "enable": "1"}},
+		{"PUT", "/api2/json/access/acl", map[string]string{"path": "/vms", "roles": "RestoreLabRead", "propagate": "1"}},
+		{"PUT", "/api2/json/access/acl", map[string]string{"path": "/nodes", "roles": "RestoreLabRead"}},
+		{"PUT", "/api2/json/access/acl", map[string]string{"path": "/storage", "roles": "RestoreLabRead"}},
+		{"PUT", "/api2/json/access/acl", map[string]string{"path": "/pool/drillpool", "roles": "RestoreLabDrill"}},
+		{"POST", "/api2/json/access/roles", map[string]string{"roleid": "RestoreLabDrillStorage", "privs": storagePrivs}},
+		{"PUT", "/api2/json/access/acl", map[string]string{"path": "/storage/local-lvm", "roles": "RestoreLabDrillStorage"}},
+		{"POST", "/api2/json/access/users/restorelab@pve/token/drills", map[string]string{"privsep": "0"}},
+	}
+
+	if len(writes) != len(wants) {
+		t.Fatalf("got %d write requests, want %d:\n%+v", len(writes), len(wants), writes)
+	}
+	for i, w := range wants {
+		got := writes[i]
+		if got.Method != w.method || got.Path != w.path {
+			t.Errorf("write[%d] = %s %s, want %s %s", i, got.Method, got.Path, w.method, w.path)
+			continue
+		}
+		for k, v := range w.form {
+			if got.Form.Get(k) != v {
+				t.Errorf("write[%d] (%s %s) form[%q] = %q, want %q", i, w.method, w.path, k, got.Form.Get(k), v)
+			}
+		}
+	}
+
+	// Every write must carry the CSRF header.
+	for i, r := range writes {
+		if r.CSRFHeader != "csrf-1" {
+			t.Errorf("write[%d] missing/wrong CSRFPreventionToken: %q", i, r.CSRFHeader)
+		}
+	}
+
+	// Sanity-check a handful of step statuses.
+	wantStatuses := map[string]string{
+		"create role RestoreLabRead":         "created",
+		"create role RestoreLabDrill":        "created",
+		"create pool drillpool":              "created",
+		"create user restorelab@pve":         "created",
+		"create role RestoreLabDrillStorage": "created",
+		"create token restorelab@pve!drills": "created",
+	}
+	for _, step := range result.Steps {
+		if want, ok := wantStatuses[step.Description]; ok && step.Status != want {
+			t.Errorf("step %q status = %q, want %q", step.Description, step.Status, want)
+		}
+	}
+}
+
+func TestBootstrapIdempotentOnAlreadyProvisionedCluster(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-2", "csrf-2")
+	opts := emptyClusterOpts()
+	opts.Storages = nil // keep the storage-role path out of scope for this test
+
+	roPrivs := privsKey(ReadOnlyPrivileges)
+	drillPrivs := privsKey(DrillPrivileges)
+	m.on("GET", "/api2/json/access/roles", 200, []map[string]any{
+		{"roleid": "RestoreLabRead", "privs": roPrivs},
+		{"roleid": "RestoreLabDrill", "privs": drillPrivs},
+	})
+	m.on("GET", "/api2/json/pools", 200, []map[string]any{{"poolid": "drillpool"}})
+	m.on("GET", "/api2/json/access/users", 200, []map[string]any{{"userid": "restorelab@pve"}})
+	m.on("PUT", "/api2/json/access/acl", 200, nil)
+	m.on("GET", "/api2/json/access/users/"+opts.UserID+"/token", 200, []map[string]any{
+		{"tokenid": "drills"},
+	})
+	// Deliberately no POST handlers for /access/roles, /pools or
+	// /access/users: if Bootstrap issues any of them, the mock answers 501
+	// and the call fails loudly.
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	result, err := c.Bootstrap(context.Background(), opts)
+	if err == nil {
+		t.Fatal("expected an error from the pre-existing token name, got nil")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("expected error about the pre-existing token, got: %v", err)
+	}
+
+	for _, r := range m.recorded() {
+		if r.Method == "POST" && (r.Path == "/api2/json/access/roles" || r.Path == "/api2/json/pools" || r.Path == "/api2/json/access/users") {
+			t.Errorf("unexpected create request on an already-provisioned cluster: %s %s", r.Method, r.Path)
+		}
+	}
+
+	wantAlready := []string{"create role RestoreLabRead", "create role RestoreLabDrill", "create pool drillpool", "create user restorelab@pve"}
+	byDesc := map[string]string{}
+	for _, s := range result.Steps {
+		byDesc[s.Description] = s.Status
+	}
+	for _, d := range wantAlready {
+		if got := byDesc[d]; got != "already exists" {
+			t.Errorf("step %q status = %q, want %q", d, got, "already exists")
+		}
+	}
+	if last := result.Steps[len(result.Steps)-1]; last.Status != "skipped" {
+		t.Errorf("final (token) step status = %q, want %q", last.Status, "skipped")
+	}
+}
+
+func TestBootstrapReadOnlyGrantsNoWritePrivilege(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-3", "csrf-3")
+	opts := BootstrapOptions{
+		UserID:    "restorelab-ro@pve",
+		TokenName: "audit",
+		RoleName:  "RestoreLabRead",
+		ReadOnly:  true,
+	}
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	if _, err := c.Bootstrap(context.Background(), opts); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	for _, r := range m.recorded() {
+		blob := r.Form.Encode() + " " + r.Query.Encode()
+		if strings.Contains(blob, "VM.Allocate") {
+			t.Errorf("ReadOnly bootstrap must never send VM.Allocate: %s %s form=%v", r.Method, r.Path, r.Form)
+		}
+		if strings.Contains(blob, "Datastore.AllocateSpace") {
+			t.Errorf("ReadOnly bootstrap must never send Datastore.AllocateSpace: %s %s form=%v", r.Method, r.Path, r.Form)
+		}
+	}
+
+	// Only one role should ever be touched in ReadOnly mode.
+	for _, r := range m.recorded() {
+		if r.Method == "POST" && r.Path == "/api2/json/access/roles" {
+			if got := r.Form.Get("roleid"); got != "RestoreLabRead" {
+				t.Errorf("unexpected role created in ReadOnly mode: %q", got)
+			}
+		}
+	}
+}
+
+func TestBootstrapNoPoolRecordsWarningStep(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-4", "csrf-4")
+	opts := BootstrapOptions{
+		UserID:    "restorelab@pve",
+		TokenName: "drills",
+		RoleName:  "RestoreLabDrill",
+		// Pool intentionally left empty.
+	}
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	result, err := c.Bootstrap(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	var found bool
+	for _, s := range result.Steps {
+		if s.Description == "grant RestoreLabDrill on /vms" {
+			found = true
+			if !strings.Contains(strings.ToLower(s.Detail), "destroy") || !strings.Contains(s.Detail, "cluster") {
+				t.Errorf("warning step Detail does not read as a warning: %q", s.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a step granting the drill role directly on /vms with a warning Detail")
+	}
+}
+
+func TestBootstrapDryRunIssuesZeroWrites(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-5", "csrf-5")
+	opts := emptyClusterOpts()
+	opts.DryRun = true
+
+	m.on("GET", "/api2/json/access/roles", 200, []map[string]any{})
+	m.on("GET", "/api2/json/pools", 200, []map[string]any{})
+	m.on("GET", "/api2/json/access/users", 200, []map[string]any{})
+	m.on("GET", "/api2/json/access/users/"+opts.UserID+"/token", 200, []map[string]any{})
+	// No POST/PUT handlers registered at all: any write attempt 501s.
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	result, err := c.Bootstrap(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Bootstrap (dry run): %v", err)
+	}
+	if result.Secret != "" {
+		t.Errorf("dry run must not produce a real secret, got %q", result.Secret)
+	}
+	if want := opts.UserID + "!" + opts.TokenName; result.TokenID != want {
+		t.Errorf("dry run TokenID = %q, want %q", result.TokenID, want)
+	}
+	for _, r := range m.recorded() {
+		if r.Method == "POST" || r.Method == "PUT" {
+			if r.Path == "/api2/json/access/ticket" {
+				continue // Login itself is unavoidable and precedes DryRun
+			}
+			t.Errorf("dry run issued a write: %s %s", r.Method, r.Path)
+		}
+	}
+	for _, s := range result.Steps {
+		if s.Status != "would create" {
+			t.Errorf("step %q status = %q, want %q under DryRun", s.Description, s.Status, "would create")
+		}
+	}
+}
+
+func TestBootstrapNeverLeaksPasswordOrSecret(t *testing.T) {
+	const password = "s3cr3t-admin-pw-do-not-leak"
+
+	m := newMockServer(t)
+	mockTicket(m, "tkt-6", "csrf-6")
+	opts := emptyClusterOpts()
+	mockEmptyClusterReadsAndWrites(m, opts.UserID, opts.TokenName)
+
+	cfg := AdminConfig{Endpoint: m.url(), Username: "root@pam", Password: password, Timeout: 5 * time.Second}
+	c, err := NewAdminClient(cfg)
+	if err != nil {
+		t.Fatalf("NewAdminClient: %v", err)
+	}
+	if err := c.Login(context.Background()); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	result, err := c.Bootstrap(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	if strings.Contains(cfg.String(), password) {
+		t.Errorf("AdminConfig.String() leaked the password: %s", cfg.String())
+	}
+	if strings.Contains(result.String(), password) {
+		t.Errorf("BootstrapResult.String() leaked the password: %s", result.String())
+	}
+	if strings.Contains(result.String(), result.Secret) {
+		t.Errorf("BootstrapResult.String() leaked the token secret: %s", result.String())
+	}
+	for _, s := range result.Steps {
+		if strings.Contains(s.Description, password) || strings.Contains(s.Detail, password) {
+			t.Errorf("a BootstrapStep leaked the password: %+v", s)
+		}
+		if result.Secret != "" && (strings.Contains(s.Description, result.Secret) || strings.Contains(s.Detail, result.Secret)) {
+			t.Errorf("a BootstrapStep leaked the token secret: %+v", s)
+		}
+	}
+
+	// Also exercise an error path: a duplicate token name must not leak
+	// the password either.
+	m2 := newMockServer(t)
+	mockTicket(m2, "tkt-7", "csrf-7")
+	m2.on("GET", "/api2/json/access/roles", 200, []map[string]any{
+		{"roleid": "RestoreLabRead", "privs": privsKey(ReadOnlyPrivileges)},
+		{"roleid": "RestoreLabDrill", "privs": privsKey(DrillPrivileges)},
+	})
+	m2.on("GET", "/api2/json/pools", 200, []map[string]any{{"poolid": "drillpool"}})
+	m2.on("GET", "/api2/json/access/users", 200, []map[string]any{{"userid": opts.UserID}})
+	m2.on("PUT", "/api2/json/access/acl", 200, nil)
+	m2.on("GET", "/api2/json/access/users/"+opts.UserID+"/token", 200, []map[string]any{{"tokenid": "drills"}})
+
+	c2 := newTestAdminClient(t, m2, password, nil)
+	mustLogin(t, c2)
+	_, err = c2.Bootstrap(context.Background(), opts)
+	if err == nil {
+		t.Fatal("expected the duplicate-token error")
+	}
+	if strings.Contains(err.Error(), password) {
+		t.Errorf("bootstrap error leaked the password: %v", err)
+	}
+
+	// Close wipes the in-memory secrets; document (not strictly testable
+	// from outside the package) that the fields are reset.
+	c2.Close()
+	if c2.password != "" || c2.ticket != "" || c2.csrfToken != "" {
+		t.Error("Close did not clear password/ticket/csrfToken")
+	}
+}

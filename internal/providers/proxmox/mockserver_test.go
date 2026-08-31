@@ -19,6 +19,11 @@ type recordedRequest struct {
 	Query      url.Values
 	Form       url.Values
 	AuthHeader string
+	// CookieHeader and CSRFHeader capture the ticket-auth headers used by
+	// AdminClient (bootstrap.go), distinct from AuthHeader's API-token
+	// scheme used by Provider (client.go).
+	CookieHeader string
+	CSRFHeader   string
 }
 
 // mockRoute is a canned response for one "METHOD path" key.
@@ -114,10 +119,12 @@ func (m *mockServer) route(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 	}
 	rec := recordedRequest{
-		Method:     r.Method,
-		Path:       r.URL.Path,
-		Query:      r.URL.Query(),
-		AuthHeader: r.Header.Get("Authorization"),
+		Method:       r.Method,
+		Path:         r.URL.Path,
+		Query:        r.URL.Query(),
+		AuthHeader:   r.Header.Get("Authorization"),
+		CookieHeader: r.Header.Get("Cookie"),
+		CSRFHeader:   r.Header.Get("CSRFPreventionToken"),
 	}
 	if r.Method == http.MethodPost || r.Method == http.MethodPut {
 		rec.Form = r.PostForm
