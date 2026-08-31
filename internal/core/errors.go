@@ -24,6 +24,12 @@ var (
 	// ErrUnsupported is returned by providers for optional capabilities they
 	// do not implement.
 	ErrUnsupported = errors.New("unsupported operation")
+	// ErrGuestAgentUnavailable is returned when a command could not be run
+	// inside a guest: no agent installed, agent not started yet, or the API
+	// refused the call. It is deliberately distinct from a command that ran
+	// and failed - one means "your service is broken", the other means "I
+	// could not ask".
+	ErrGuestAgentUnavailable = errors.New("guest agent unavailable")
 	// ErrTimeout is returned when an operation exceeds its deadline.
 	ErrTimeout = errors.New("timeout")
 	// ErrCancelled is returned when a run was cancelled by a user.

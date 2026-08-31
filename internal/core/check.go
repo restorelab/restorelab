@@ -15,6 +15,11 @@ type Target struct {
 	Node       string
 	Name       string
 	Vars       map[string]string
+
+	// Exec runs commands inside the recovered guest, when the provider can.
+	// It is nil otherwise, and checks that need it must report that clearly
+	// rather than failing as if the service were down.
+	Exec GuestExecutor
 }
 
 // TemplateVars renders the variables exposed to check parameter templates.
