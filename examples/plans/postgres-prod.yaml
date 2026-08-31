@@ -1,0 +1,51 @@
+# A database recovery drill: restore last night's backup of VM 101 onto an
+# isolated bridge, boot it, prove PostgreSQL answers, then destroy it.
+#
+#   restorelab recovery run examples/plans/postgres-prod.yaml
+
+name: postgres-prod
+description: Nightly recovery drill for the primary PostgreSQL server
+tags: [production, database]
+
+workload:
+  provider: proxmox-main
+  id: "101"
+  name: postgres-prod
+
+backup:
+  provider: pbs-main
+  strategy: latest
+  # Fail the drill immediately if the newest backup is older than this.
+  # "Your last backup is 3 days old" is a finding, not a detail.
+  max_age: 26h
+
+restore:
+  node: pve02
+  storage: local-lvm
+  network: isolated
+  cpu_limit: 2
+  memory_limit: 4096
+  # Cap restore throughput so a drill never starves production I/O (KiB/s).
+  bandwidth_limit: 200000
+
+startup:
+  timeout: 180s
+
+checks:
+  - type: ping
+
+  - type: tcp
+    name: SSH
+    port: 22
+    timeout: 60s
+
+  - type: tcp
+    name: PostgreSQL
+    port: 5432
+    retries: 5
+    retry_interval: 5s
+
+cleanup:
+  always: true
+
+rto_target: 5m

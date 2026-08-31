@@ -1,0 +1,23 @@
+# The minimum useful drill: prove the backup restores at all, without booting
+# the guest. Useful for workloads you cannot safely start even in isolation,
+# and as a first step when onboarding a new workload.
+
+name: legacy-app-restore-only
+
+workload:
+  provider: proxmox-main
+  id: "203"
+
+backup:
+  strategy: latest
+
+restore:
+  network: isolated
+
+startup:
+  skip: true
+
+cleanup:
+  always: true
+
+rto_target: 30m

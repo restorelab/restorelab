@@ -1,0 +1,47 @@
+# An application recovery drill: booting is not enough — the API has to answer
+# with the right status and the right body.
+
+name: web-api
+description: Recovery drill for the public API server
+
+workload:
+  provider: proxmox-main
+  id: "142"
+
+backup:
+  strategy: latest
+  max_age: 26h
+
+restore:
+  network: isolated
+  cpu_limit: 4
+  memory_limit: 8192
+
+startup:
+  timeout: 240s
+
+checks:
+  - type: tcp
+    port: 22
+
+  - type: http
+    name: health endpoint
+    url: http://{{ .ip }}:8080/health
+    expected_status: 200
+    json_path: status
+    json_equals: ok
+    retries: 10
+    retry_interval: 6s
+
+  - type: http
+    name: homepage
+    url: http://{{ .ip }}/
+    expected_status: 200
+    body_contains: "<title>"
+    # Cosmetic: a failure here degrades the run, it does not fail it.
+    critical: false
+
+cleanup:
+  always: true
+
+rto_target: 10m
