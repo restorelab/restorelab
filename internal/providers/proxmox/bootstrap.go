@@ -323,7 +323,7 @@ var DrillPrivileges = append(append([]string{}, ReadOnlyPrivileges...), []string
 // something is wrong enough to stop rather than silently create a role that
 // cannot do its job.
 var optionalPrivileges = map[string]string{
-	"VM.Monitor":                 "runtime state reads (removed in Proxmox VE 9)",
+	"VM.Monitor":                 "runtime state reads, removed in Proxmox VE 9",
 	"VM.GuestAgent.Audit":        "guest agent queries, used to discover the restored guest's address",
 	"VM.GuestAgent.Unrestricted": "in-guest command checks",
 }
@@ -367,7 +367,7 @@ func describeDropped(dropped []string) (string, error) {
 	var required, optional []string
 	for _, p := range dropped {
 		if why, ok := optionalPrivileges[p]; ok {
-			optional = append(optional, fmt.Sprintf("%s (%s)", p, why))
+			optional = append(optional, p+" — "+why)
 			continue
 		}
 		required = append(required, p)
