@@ -24,6 +24,7 @@ providers:
     token_id: restorelab@pve!drills
     token_secret: rlsec:v1:8Kx2...          # sealed, never plaintext
     backup_storage: pbs-main
+    pool: restorelab
     temp_id_min: 9000
     temp_id_max: 9999
 
@@ -77,11 +78,18 @@ defaults:
 | `ca_cert_path` | all | PEM file for a private CA. |
 | `node` | proxmox | Default node for API calls that need one. |
 | `backup_storage` | proxmox | Storage holding backups. When empty, every backup-capable storage is scanned. |
+| `pool` | proxmox | Resource pool temporary workloads are created in. Required when the token's destructive rights are scoped to a pool, which is what `restorelab connect` sets up. |
 | `temp_id_min` / `temp_id_max` | proxmox | Reserved VMID range for temporary workloads. Default 9000–9999. |
 | `datastore` | pbs | PBS datastore name. |
 | `pve_storage` | pbs | The name that datastore is attached under in PVE — used to build the restore volid. Defaults to `datastore`. |
 
-Add a provider without editing YAML by hand:
+The fastest way to create all of this, including the service account itself:
+
+```bash
+restorelab connect https://pve.example.com:8006
+```
+
+Or add a provider from an existing token:
 
 ```bash
 restorelab provider add proxmox \

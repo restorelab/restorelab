@@ -1,11 +1,37 @@
 # Proxmox permissions
 
 RestoreLab restores, boots and destroys virtual machines. That is exactly the
-set of capabilities you do **not** want to hand out as `Administrator`. This
-document defines the minimal privilege set, scoped so that the token can create
-and destroy workloads in a reserved area while only ever *reading* production.
+set of capabilities you do **not** want to hand out as `Administrator`.
 
-Everything below is run on the Proxmox VE node as `root@pam`.
+## The short version
+
+```bash
+restorelab connect https://pve.example.com:8006
+```
+
+It asks for a Proxmox administrator's credentials **once**, uses them in memory
+to create a dedicated service account with the minimal privilege set below, and
+throws them away. Nothing is stored but the resulting API token, sealed.
+
+That is the recommended path, and not only because it is shorter: faced with a
+long permissions document, most people grant `Administrator` and move on. When
+least privilege is also the easiest option, it is what people actually deploy.
+
+Start read-only, which is enough for discovery and `--dry-run`:
+
+```bash
+restorelab connect https://pve.example.com:8006 --read-only
+```
+
+Then widen it when you are ready to run a real drill:
+
+```bash
+restorelab connect https://pve.example.com:8006 --token-name drills-rw
+```
+
+The rest of this document is what `connect` does on your behalf — read it if you
+would rather do it by hand, if your security policy requires reviewing it, or if
+you need to explain it to whoever owns the cluster.
 
 ## 1. A dedicated pool for recovery drills
 

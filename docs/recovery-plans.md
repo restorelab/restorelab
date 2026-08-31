@@ -31,6 +31,7 @@ backup:
 restore:
   node: pve02                       # default: the provider's default node
   storage: local-lvm                # default: the provider's default storage
+  pool: restorelab                  # default: the provider's configured pool
   network: isolated                 # a network profile name from the config
   bridge: vmbr99                    # overrides the profile's bridge
   cpu_limit: 2                      # cores given to the temporary workload

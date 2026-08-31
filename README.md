@@ -59,6 +59,7 @@ after it has been proven against real clusters.
 | In-guest checks through the QEMU guest agent (no network path needed) | done |
 | CLI (`init`, `provider`, `workloads`, `backups`, `recovery`, `cleanup`) | done |
 | Reports: terminal, JSON, self-contained HTML | done |
+| One-command setup (`connect`) creating a least-privilege service account | done |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
 | REST API + PostgreSQL + workers + web dashboard | planned |
 
@@ -69,22 +70,21 @@ after it has been proven against real clusters.
 ```bash
 go build -o bin/restorelab ./cmd/restorelab
 
-# create ~/.restorelab/config.yaml and a master key
-bin/restorelab init
-
-# register your hypervisor and your backup server
-bin/restorelab provider add proxmox \
-    --id proxmox-main \
-    --endpoint https://pve.example.com:8006 \
-    --token-id 'restorelab@pve!drills' \
-    --token-secret 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+# Connect your cluster. RestoreLab asks for an administrator's password once,
+# uses it in memory to create its own least-privilege service account, and
+# throws it away. Only the resulting token is stored, sealed.
+bin/restorelab connect https://pve.example.com:8006
 
 # see what can be recovery-tested
-bin/restorelab workloads list
+bin/restorelab workloads list --backups
 
 # run a drill on VM 101, from its latest backup
 bin/restorelab recovery test 101
 ```
+
+Start read-only if you would rather look before touching anything —
+`connect --read-only` produces a token that cannot create or destroy, and is
+enough for discovery and `recovery test --dry-run`.
 
 ```text
 [✓] Connected to Proxmox
@@ -165,6 +165,9 @@ built so that a bug cannot cost you production:
   run; a failed cleanup is a loud, named alert, never a silent orphan.
 - **No plaintext secrets** — API tokens are sealed with AES-256-GCM under a
   master key that is never stored in the config file.
+- **Least privilege by default** — `connect` creates a service account scoped to
+  a dedicated resource pool, because a safe setup that takes one command is the
+  one people actually deploy.
 
 See [docs/security.md](docs/security.md) and
 [docs/proxmox-permissions.md](docs/proxmox-permissions.md) for the minimal
