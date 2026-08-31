@@ -42,7 +42,7 @@ func TestRegistry_GetRegisterTypes(t *testing.T) {
 
 func TestDefault_RegistersBuiltins(t *testing.T) {
 	r := Default()
-	want := []string{"dns", "http", "https", "ping", "tcp"}
+	want := []string{"command", "dns", "http", "https", "ping", "tcp"}
 	got := r.Types()
 	if len(got) != len(want) {
 		t.Fatalf("Types() = %v, want %v", got, want)

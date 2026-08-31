@@ -52,6 +52,7 @@ func Default() *Registry {
 	r.Register(newHTTPCheck("http"))
 	r.Register(newHTTPCheck("https"))
 	r.Register(DNSCheck{})
+	r.Register(CommandCheck{})
 	return r
 }
 
