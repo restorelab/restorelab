@@ -13,7 +13,7 @@ protect against.
 | Production workloads | Deleted, modified or overwritten by a bug in RestoreLab | Delete requires ownership metadata; restores only ever create new workloads in a reserved ID range; no `force` flag is ever sent to Proxmox |
 | Production network | A restored clone takes traffic, sends mail, or claims an IP | Isolated bridge by default, network configuration rewritten before first boot, isolation verified on the node, runs refused otherwise |
 | Cluster capacity | Drills saturate the cluster and impact production | Concurrency limits, per-run CPU/RAM caps, capacity check before restore |
-| Backups | Pruned, deleted or overwritten | The PBS token is read-only (`DatastoreAudit`); RestoreLab never writes to a backup datastore |
+| Backups | Pruned, deleted or overwritten | The PBS token is read-only (`DatastoreAudit`); RestoreLab never writes to a backup datastore, and never asks for `Datastore.Allocate`, the privilege that would let it delete one |
 
 ## Secret handling
 

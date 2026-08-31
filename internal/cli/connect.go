@@ -94,7 +94,7 @@ The administrator password can be typed at the prompt, read from a file with
 	fs.StringVar(&f.node, "node", "", "restrict node access to this node (default: every node)")
 	fs.StringArrayVar(&f.storages, "storage", nil, "storage the restores write to (repeatable); needed for a real drill")
 
-	fs.BoolVar(&f.readOnly, "read-only", false, "create a read-only setup: discovery and --dry-run only, nothing destructive")
+	fs.BoolVar(&f.readOnly, "read-only", false, "discovery and --dry-run only: cannot restore, start or destroy anything")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "show what would be created, change nothing")
 	fs.BoolVarP(&f.yes, "yes", "y", false, "do not ask for confirmation")
 
@@ -275,7 +275,7 @@ func (a *app) ensureInitialised() (*config.Config, crypto.Key, error) {
 func (a *app) describeBootstrap(endpoint string, opts proxmox.BootstrapOptions) {
 	mode := "full recovery drills"
 	if opts.ReadOnly {
-		mode = "read-only (discovery and dry runs only)"
+		mode = "discovery and dry runs only: it cannot restore, start or destroy anything"
 	}
 
 	fmt.Fprintf(a.out, "%s\n", a.paint(colorBold, "RestoreLab will create, on "+endpoint+":"))
@@ -288,7 +288,8 @@ func (a *app) describeBootstrap(endpoint string, opts proxmox.BootstrapOptions) 
 
 	switch {
 	case opts.ReadOnly:
-		fmt.Fprintf(a.out, "  · read-only permissions on VMs, nodes and storages\n")
+		fmt.Fprintf(a.out, "  · read permissions on VMs, nodes and storages, plus the ability to allocate space,\n")
+		fmt.Fprintf(a.out, "    without which Proxmox hides backup volumes from the API entirely\n")
 	case opts.Pool != "":
 		fmt.Fprintf(a.out, "  · destructive permissions scoped to the pool only, read-only elsewhere\n")
 	default:
@@ -302,7 +303,7 @@ func (a *app) printConnectNextSteps(f *connectFlags) {
 	fmt.Fprintf(a.out, "  %s\n", a.paint(colorCyan, "restorelab workloads list --backups"))
 	if f.readOnly {
 		fmt.Fprintf(a.out, "  %s\n", a.paint(colorCyan, "restorelab recovery test <vmid> --dry-run"))
-		fmt.Fprintf(a.out, "\n%s this token is read-only. Re-run connect without --read-only when you want a real drill.\n",
+		fmt.Fprintf(a.out, "\n%s this token cannot restore, start or destroy anything. Re-run connect without --read-only for a real drill.\n",
 			a.paint(colorDim, "note:"))
 		return
 	}

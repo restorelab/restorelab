@@ -266,17 +266,33 @@ func (c *AdminClient) doRequest(ctx context.Context, method, path string, form u
 // ReadOnlyPrivileges is granted to a read-only RestoreLab service account:
 // enough to inspect cluster, VM/CT and backup state without being able to
 // change or destroy anything.
-//   - VM.Audit              view VM/CT configuration and status
-//   - VM.Backup             list and read backup snapshots (browse restore points)
-//   - VM.GuestAgent.Audit   query the QEMU guest agent (guest readiness, IP discovery)
-//   - Datastore.Audit       view storage contents and usage
-//   - Sys.Audit             view node/cluster health, bridges and capacity
-//   - VM.Monitor            read VM runtime state (Proxmox VE 8 and older only)
+//   - VM.Audit                view VM/CT configuration and status
+//   - VM.Backup               read a workload's backup catalogue
+//   - VM.GuestAgent.Audit     query the QEMU guest agent (guest readiness, IP discovery)
+//   - Datastore.Audit         view storage contents and usage
+//   - Datastore.AllocateSpace see backup volumes at all (see below)
+//   - Sys.Audit               view node/cluster health, bridges and capacity
+//   - VM.Monitor              read VM runtime state (Proxmox VE 8 and older only)
+//
+// Datastore.AllocateSpace is not an oversight and not read-only. Proxmox
+// filters the storage content listing per volume, and on a directory storage a
+// backup volume stays invisible with Datastore.Audit and VM.Backup alone -
+// verified against Proxmox VE 9.2.3, where the same request returned the ISOs
+// on that storage and silently omitted the backup. Datastore.AllocateSpace is
+// the narrowest privilege that reveals them; Datastore.Allocate also works but
+// additionally allows deleting volumes, which is exactly what a service
+// account pointed at your backups must never be able to do.
+//
+// So "read-only" here means: cannot restore, start, stop or destroy anything,
+// and cannot delete a backup. It can allocate space on a storage. Anyone who
+// needs a strictly read-only path to their backup catalogue should use a
+// Proxmox Backup Server, whose DatastoreAudit token really is read-only.
 var ReadOnlyPrivileges = []string{
 	"VM.Audit",
 	"VM.Backup",
 	"VM.GuestAgent.Audit",
 	"Datastore.Audit",
+	"Datastore.AllocateSpace",
 	"Sys.Audit",
 	"VM.Monitor",
 }
@@ -384,6 +400,12 @@ func describeDropped(dropped []string) (string, error) {
 // It is intentionally narrower than DrillPrivileges applied wholesale to
 // /storage: a token should be able to audit and allocate on the storages it
 // restores into, nothing more.
+//
+// It must carry EVERY privilege needed at that path, including Datastore.Audit
+// which the broader /storage grant already provides. Proxmox ACLs do not
+// accumulate down a path: an ACL on /storage/local replaces the one inherited
+// from /storage rather than adding to it, so a narrower grant that omits a
+// privilege silently takes it away.
 var storagePrivileges = []string{"Datastore.Audit", "Datastore.AllocateSpace"}
 
 // readOnlyRoleName is the fixed role name used for the cluster-wide,

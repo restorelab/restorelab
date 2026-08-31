@@ -25,6 +25,7 @@ type app struct {
 	keyPath    string
 	noColor    bool
 	verbose    bool
+	rawAPI     bool
 
 	out io.Writer
 	err io.Writer

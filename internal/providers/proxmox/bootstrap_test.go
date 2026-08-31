@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -318,13 +319,29 @@ func TestBootstrapReadOnlyGrantsNoWritePrivilege(t *testing.T) {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 
+	// Datastore.AllocateSpace is deliberately absent from this list: Proxmox
+	// will not show a backup volume without it, so read-only discovery is
+	// impossible without it. See the comment on ReadOnlyPrivileges. What must
+	// never appear is anything that can restore, power, reconfigure or delete.
+	forbidden := []string{
+		"VM.Allocate",
+		"VM.PowerMgmt",
+		"VM.Config.",
+		"VM.GuestAgent.Unrestricted",
+		"Datastore.Allocate,", // the volume-deleting one, not AllocateSpace
+		"Sys.Modify",
+		"Permissions.Modify",
+	}
 	for _, r := range m.recorded() {
 		blob := r.Form.Encode() + " " + r.Query.Encode()
-		if strings.Contains(blob, "VM.Allocate") {
-			t.Errorf("ReadOnly bootstrap must never send VM.Allocate: %s %s form=%v", r.Method, r.Path, r.Form)
+		decoded, err := url.QueryUnescape(blob)
+		if err == nil {
+			blob = decoded
 		}
-		if strings.Contains(blob, "Datastore.AllocateSpace") {
-			t.Errorf("ReadOnly bootstrap must never send Datastore.AllocateSpace: %s %s form=%v", r.Method, r.Path, r.Form)
+		for _, priv := range forbidden {
+			if strings.Contains(blob, priv) {
+				t.Errorf("ReadOnly bootstrap must never send %s: %s %s form=%v", priv, r.Method, r.Path, r.Form)
+			}
 		}
 	}
 
@@ -569,6 +586,48 @@ func TestBootstrapFailsWhenARequiredPrivilegeIsUnknown(t *testing.T) {
 	for _, r := range writesOnly(m.recorded()) {
 		if r.Path == "/api2/json/access/users" {
 			t.Error("nothing may be created once the privilege check has failed")
+		}
+	}
+}
+
+// Proxmox hides backup volumes from a storage content listing unless the
+// caller can allocate space on that storage: Datastore.Audit and VM.Backup are
+// not enough, verified against Proxmox VE 9.2.3. Discovery is the whole point
+// of the read-only mode, so losing this privilege would make it useless.
+func TestReadOnlyPrivilegesCanSeeBackupVolumes(t *testing.T) {
+	var hasAudit, hasAllocateSpace, hasBackup bool
+	for _, p := range ReadOnlyPrivileges {
+		switch p {
+		case "Datastore.Audit":
+			hasAudit = true
+		case "Datastore.AllocateSpace":
+			hasAllocateSpace = true
+		case "VM.Backup":
+			hasBackup = true
+		case "Datastore.Allocate":
+			t.Error("Datastore.Allocate allows deleting volumes and must never be granted to RestoreLab")
+		}
+	}
+	if !hasAudit || !hasAllocateSpace || !hasBackup {
+		t.Errorf("read-only privileges cannot list backups: audit=%v allocateSpace=%v backup=%v",
+			hasAudit, hasAllocateSpace, hasBackup)
+	}
+}
+
+// Proxmox ACLs do not accumulate down a path: a grant on /storage/local
+// replaces the one inherited from /storage. The per-storage role must
+// therefore carry everything needed there, or the narrower grant silently
+// removes privileges the broader one provided.
+func TestStorageRoleIsSelfSufficient(t *testing.T) {
+	needed := map[string]bool{"Datastore.Audit": false, "Datastore.AllocateSpace": false}
+	for _, p := range storagePrivileges {
+		if _, ok := needed[p]; ok {
+			needed[p] = true
+		}
+	}
+	for priv, present := range needed {
+		if !present {
+			t.Errorf("the per-storage role omits %q, which the inherited /storage grant will not make up for", priv)
 		}
 	}
 }

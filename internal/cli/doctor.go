@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -27,12 +29,16 @@ to restore onto, and whether workloads have a guest agent and recent backups.
 It changes nothing.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if a.rawAPI {
+				a.verbose = true
+			}
 			return a.doctor(cmd.Context(), providerID, workloadID)
 		},
 	}
 
 	cmd.Flags().StringVar(&providerID, "provider", "", "provider to inspect")
 	cmd.Flags().StringVar(&workloadID, "workload", "", "also inspect one workload in detail")
+	cmd.Flags().BoolVar(&a.rawAPI, "raw", false, "print raw API responses (implies --verbose); for reporting a discovery bug")
 	return cmd
 }
 
@@ -79,6 +85,15 @@ func (a *app) doctor(ctx context.Context, providerID, workloadID string) error {
 			}
 		}
 		ok("%d node(s), %d online", len(nodes), online)
+	}
+
+	// --- effective permissions ---
+	if isPVEProvider(hv) && a.verbose {
+		probes := []string{"/storage"}
+		if workloadID != "" {
+			probes = append(probes, "/vms/"+workloadID)
+		}
+		a.doctorPermissions(ctx, hv.(*proxmox.Provider), probes)
 	}
 
 	// --- storages holding backups ---
@@ -145,6 +160,25 @@ func (a *app) doctorStorages(ctx context.Context, pve *proxmox.Provider, node, w
 			backupStorages = append(backupStorages, s)
 		}
 	}
+
+	// Every storage, not only the backup-capable ones: when a backup seems to
+	// be missing, the first thing to rule out is that it landed somewhere
+	// RestoreLab is not looking.
+	if a.verbose || len(backupStorages) == 0 {
+		for _, s := range storages {
+			role := "no backup content"
+			if s.HoldsBackups() {
+				role = "holds backups"
+			}
+			state := "active"
+			if !s.Active {
+				state = a.paint(colorYellow, "inactive")
+			}
+			fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
+				fmt.Sprintf("storage %-16s %-10s %-18s %s", s.ID, s.Type, role, state)))
+		}
+	}
+
 	if len(backupStorages) == 0 {
 		fail("no storage on this cluster advertises backup content")
 		fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
@@ -171,6 +205,29 @@ func (a *app) doctorStorages(ctx context.Context, pve *proxmox.Provider, node, w
 			warn("storage %q (%s): cannot read contents: %v", s.ID, s.Type, err)
 		case !s.Active:
 			warn("storage %q (%s) is not active", s.ID, s.Type)
+		case a.verbose:
+			total += count
+			if a.rawAPI {
+				if raw, rawErr := pve.Raw(ctx, "/nodes/"+node+"/storage/"+s.ID+"/content", nil); rawErr == nil {
+					body := string(raw)
+					if len(body) > 2000 {
+						body = body[:2000] + "..."
+					}
+					fmt.Fprintf(a.out, "      raw %s\n", a.paint(colorDim, body))
+				}
+			}
+			all, allErr := pve.ListContentIDs(ctx, node, s.ID, "", "")
+			if allErr != nil {
+				warn("storage %q: unfiltered content listing failed: %v", s.ID, allErr)
+			} else {
+				ok("storage %q (%s): %d backup(s), %d volume(s) of any kind", s.ID, s.Type, count, len(all))
+				for i, v := range all {
+					if i >= 10 {
+						break
+					}
+					fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim, "volume "+v))
+				}
+			}
 		default:
 			total += count
 			scope := "backup(s)"
@@ -182,6 +239,7 @@ func (a *app) doctorStorages(ctx context.Context, pve *proxmox.Provider, node, w
 	}
 	if total == 0 {
 		fail("no backups found on any storage — there is nothing to recovery-test yet")
+		a.reportRunningBackups(ctx, pve, node)
 	}
 }
 
@@ -218,10 +276,136 @@ func (a *app) doctorWorkload(ctx context.Context, hv core.HypervisorProvider, pr
 	switch {
 	case errors.Is(err, core.ErrNoBackup):
 		fail("workload %s has no backup to restore", id)
+		a.explainMissingBackup(ctx, hv, id)
 	case err != nil:
 		fail("cannot look up backups of %s: %v", id, err)
 	default:
 		ok("latest backup of %s: %s (%s old, %s)", id,
 			backup.CreatedAt.Local().Format("2006-01-02 15:04"), humanAge(backup.Age()), humanBytes(backup.SizeBytes))
+	}
+}
+
+// reportRunningBackups turns "you have no backups" into "your backup is still
+// running", which is a very different thing to tell someone who just started
+// one.
+func (a *app) reportRunningBackups(ctx context.Context, pve *proxmox.Provider, node string) {
+	tasks, err := pve.RunningTasks(ctx, node)
+	if err != nil {
+		return
+	}
+	for _, t := range tasks {
+		if t.Type != "vzdump" && t.Type != "qmbackup" {
+			continue
+		}
+		fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow,
+			fmt.Sprintf("a backup task is running right now (%s %s), wait for it to finish and run doctor again", t.Type, t.ID)))
+		return
+	}
+}
+
+// explainMissingBackup answers the question the operator is about to ask:
+// "but I made one". The two usual answers are that they took a snapshot, or
+// that the backup task failed - and both are visible through the API.
+func (a *app) explainMissingBackup(ctx context.Context, hv core.HypervisorProvider, id string) {
+	pve, ok := hv.(*proxmox.Provider)
+	if !ok {
+		return
+	}
+	hint := func(format string, args ...any) {
+		fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow, fmt.Sprintf(format, args...)))
+	}
+
+	snaps, err := pve.ListSnapshots(ctx, id)
+	if err != nil && a.verbose {
+		hint("could not list snapshots: %v", err)
+	}
+	if err == nil {
+		var real []string
+		for _, s := range snaps {
+			if !s.Current {
+				real = append(real, s.Name)
+			}
+		}
+		if len(real) > 0 {
+			hint("this workload has %d snapshot(s) (%s) but no backup", len(real), strings.Join(real, ", "))
+			hint("a snapshot is not a backup: it lives on the same storage as the workload and dies with it")
+			hint("take a real backup instead:  vzdump %s --storage local --mode snapshot --compress zstd", id)
+			return
+		}
+	}
+
+	w, err := hv.GetWorkload(ctx, id)
+	if err != nil {
+		return
+	}
+	tasks, err := pve.RecentBackupTasks(ctx, w.Node, 20)
+	if err != nil {
+		if a.verbose {
+			hint("could not list backup tasks: %v", err)
+		}
+		return
+	}
+	if a.verbose {
+		hint("%d recent backup task(s) on %s", len(tasks), w.Node)
+		for _, t := range tasks {
+			hint("  task %s id=%q status=%q", t.Type, t.ID, t.Status)
+		}
+	}
+	for _, t := range tasks {
+		if t.Running {
+			hint("a backup task for %s is still running, wait for it to finish", t.ID)
+			return
+		}
+		if !t.OK() {
+			hint("the last backup task on this node failed: %s", t.Status)
+			hint("check it in the Proxmox task log before blaming RestoreLab")
+			return
+		}
+	}
+}
+
+func isPVEProvider(hv core.HypervisorProvider) bool {
+	_, ok := hv.(*proxmox.Provider)
+	return ok
+}
+
+// doctorPermissions prints what Proxmox says this token can do, which is the
+// only reliable way to tell a missing ACL from a missing privilege.
+func (a *app) doctorPermissions(ctx context.Context, pve *proxmox.Provider, probePaths []string) {
+	perms, err := pve.EffectivePermissions(ctx, "")
+	if err != nil {
+		fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow, fmt.Sprintf("cannot read effective permissions: %v", err)))
+		return
+	}
+	// Also probe the exact paths Proxmox checks when it decides whether to
+	// show a backup volume: an ACL on /vms only reaches /vms/<id> when it was
+	// created with propagation.
+	for _, probe := range probePaths {
+		if sub, err := pve.EffectivePermissions(ctx, probe); err == nil {
+			for path, privs := range sub {
+				key := path
+				if key == "" {
+					key = probe
+				}
+				perms[key] = privs
+			}
+		}
+	}
+
+	paths := make([]string, 0, len(perms))
+	for path := range perms {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		granted := make([]string, 0, len(perms[path]))
+		for priv, on := range perms[path] {
+			if on {
+				granted = append(granted, priv)
+			}
+		}
+		sort.Strings(granted)
+		fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
+			fmt.Sprintf("perm %-24s %s", path, strings.Join(granted, ","))))
 	}
 }

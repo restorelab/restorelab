@@ -64,7 +64,7 @@ VM.Monitor,\
 VM.PowerMgmt"
 
 # Read-only discovery of production workloads and their backups
-pveum role add RestoreLabRead --privs "VM.Audit,VM.Backup,Datastore.Audit,Sys.Audit"
+pveum role add RestoreLabRead --privs "VM.Audit,VM.Backup,VM.GuestAgent.Audit,Datastore.Audit,Datastore.AllocateSpace,Sys.Audit"
 
 # Writing restored disks onto the target storage
 pveum role add RestoreLabStorage --privs "Datastore.Audit,Datastore.AllocateSpace"
@@ -75,15 +75,44 @@ pveum role add RestoreLabStorage --privs "Datastore.Audit,Datastore.AllocateSpac
 | `VM.Allocate` | Create the temporary workload, and destroy it during cleanup |
 | `VM.Config.*` | Rewrite the network onto the isolated bridge, cap CPU/RAM, stamp ownership metadata |
 | `VM.PowerMgmt` | Start and stop the temporary workload |
-| `VM.Monitor`, `VM.GuestAgent.Audit` | Read the guest agent to learn the restored IP address |
+| `VM.GuestAgent.Audit` | Read the guest agent to learn the restored IP address |
+| `VM.GuestAgent.Unrestricted` | Run in-guest validation commands (`command` checks) |
 | `VM.Audit` | List workloads and read their configuration |
 | `VM.Backup` | Read the backup catalogue of a production workload (no write access to it) |
-| `Datastore.Audit` | List backup snapshots on the backup storage |
-| `Datastore.AllocateSpace` | Write the restored disks onto the target storage |
+| `Datastore.Audit` | List storages and their contents |
+| `Datastore.AllocateSpace` | Write the restored disks onto the target storage — **and see backup volumes at all**, see below |
 | `Sys.Audit` | Read node capacity and the bridge list, to verify isolation and free RAM |
 
 RestoreLab never needs `VM.Console`, `VM.Clone`, `Sys.Modify`, `Realm.*`,
-`User.Modify` or `Permissions.Modify`. If your token has them, remove them.
+`User.Modify`, `Permissions.Modify` or `Datastore.Allocate`. If your token has
+them, remove them.
+
+### Why a read-only role needs `Datastore.AllocateSpace`
+
+Because Proxmox will not show you a backup without it.
+
+Proxmox filters the storage content listing volume by volume. On a directory
+storage, a backup stays invisible to a token holding only `Datastore.Audit` and
+`VM.Backup`: the same API request returns the ISOs on that storage and silently
+omits the backup, with no error. This was verified against Proxmox VE 9.2.3.
+
+`Datastore.AllocateSpace` is the narrowest privilege that reveals them.
+`Datastore.Allocate` also works, but it additionally allows **deleting
+volumes** — never grant it to an account pointed at your backups.
+
+So "read-only" in RestoreLab means: cannot restore, start, stop or destroy a
+workload, and cannot delete a backup. It can allocate space on a storage. If
+you need a strictly read-only path to a backup catalogue, use a Proxmox Backup
+Server: its `DatastoreAudit` token really is read-only.
+
+### Proxmox ACLs do not accumulate
+
+An ACL on a deeper path **replaces** the one inherited from above rather than
+adding to it. Granting a storage-specific role on `/storage/local` removes,
+for that path, whatever `/storage` was providing. Any narrower grant must
+therefore repeat every privilege that path still needs — which is why the
+storage role below includes `Datastore.Audit` even though `/storage` already
+granted it.
 
 ## 3. Service account and API token
 
