@@ -85,8 +85,14 @@ networks:
 
 ## Getting an IP address inside the isolation
 
-An isolated bridge has no DHCP, so a restored guest that expects DHCP will boot
-without an address — and checks need somewhere to connect. Pick one of:
+**Or don't.** If your plan uses `command` checks, the validation runs inside the
+guest through the agent and never needs an address at all — no DHCP, no route,
+nothing on this bridge but the workload under test. That is the simplest
+answer and usually the right one; see [recovery-plans.md](recovery-plans.md#command)
+and [deployment.md](deployment.md).
+
+For network checks (`tcp`, `http`, `ping`), the guest does need an address, and
+an isolated bridge has no DHCP. Pick one of:
 
 **a. QEMU guest agent (recommended, no extra infrastructure).**
 The agent reports the interfaces the guest configured itself, including static

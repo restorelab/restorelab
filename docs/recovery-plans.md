@@ -42,6 +42,7 @@ startup:
   skip: false                       # true: restore only, never boot the guest
   timeout: 180s                     # how long to wait for the guest
   wait_for_ip: true                 # require an address before running checks
+  wait_for_agent: true              # require the guest agent to answer
   ip: 10.99.0.14                    # pin the address instead of discovering it
 
 checks:                             # see below
@@ -68,6 +69,21 @@ loud, immediate failure instead of a detail buried in a report.
 Names a network profile from the configuration. `isolated` is the default and
 must stay so: see [network-isolation.md](network-isolation.md) for why booting a
 restored production clone on a production network is an incident, not a test.
+
+### `startup.wait_for_ip` and `startup.wait_for_agent`
+
+Both default to what the checks actually need, so most plans never set them:
+
+| Plan contains | Waits for an address | Waits for the agent |
+| --- | --- | --- |
+| network checks (`tcp`, `http`, `ping`, `dns`) | yes | no |
+| only in-guest checks (`command`) | **no** | yes |
+| both | yes | yes |
+| no checks at all | yes | no |
+
+That default is what makes an in-guest drill work with no DHCP on the isolated
+bridge: there is no address to wait for, so the run waits for the guest agent
+instead. An explicit value in the plan always wins over the default.
 
 ### `startup.skip`
 
@@ -179,6 +195,55 @@ Does the application answer, and answer correctly?
 
 Reports `status_code`, `latency_ms`, `body_size` and a truncated `body_snippet`.
 
+### `command`
+
+Runs a command **inside** the restored guest through the hypervisor's guest
+agent. It travels over the Proxmox API, so it needs no network path into the
+recovery network at all — no route, no DHCP on the isolated bridge, no runner
+beside it. It also sees things a network probe never could: a systemd unit's
+real state, a file's contents, a local socket, a database query over a Unix
+socket.
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `run` | — | Command line, executed through a shell in the guest |
+| `argv` | — | List of strings, executed directly with no shell |
+| `shell` | `/bin/sh` | Interpreter for `run`: a path, or `sh`, `bash`, `cmd`, `powershell` |
+| `expect` | — | Trimmed stdout must equal this exactly |
+| `stdout_contains` | — | Substring stdout must contain |
+| `stdout_matches` | — | Regular expression stdout must match |
+| `expect_exit_code` | `0` | Required exit code |
+| `input` | — | Written to the command's standard input |
+| `max_output_bytes` | `65536` | Cap on captured output |
+
+Exactly one of `run` and `argv` is required. Assertions are evaluated in
+order: exit code, `expect`, `stdout_contains`, `stdout_matches`.
+
+```yaml
+- type: command
+  name: PostgreSQL
+  run: systemctl is-active postgresql
+  expect: active
+  retries: 10
+  retry_interval: 6s
+
+- type: command
+  name: production database queryable
+  run: psql -U postgres -d production -tAc 'select 1'
+  expect: "1"
+```
+
+Requires `qemu-guest-agent` installed and running in the guest, and the agent
+enabled on the VM (*VM → Options → QEMU Guest Agent*) — which is also what
+gives you filesystem-consistent backups, so it is worth having anyway.
+
+A command that runs and gives the wrong answer is a **failure**. A guest with
+no agent, or an API that refuses the call, is an **error** — the report says
+"I could not ask", never "your service is broken". See
+[deployment.md](deployment.md) for when to prefer in-guest over network checks.
+
+Reports `exit_code`, `stdout`, `stderr`, `truncated` and the resolved `argv`.
+
 ### `dns`
 
 Does the restored resolver answer — or does a name resolve from inside the
@@ -203,8 +268,10 @@ recovery network?
 
 ## Writing a good plan
 
-1. **Start with `tcp` on SSH.** It proves the guest booted, configured its
-   network and started a service. Add application checks after that works.
+1. **Start with `tcp` on SSH, or a `command` check.** Either proves the guest
+   booted and started a service. Prefer `command` when you have no route into
+   the recovery network — which is the common case. Add application checks
+   after that works.
 2. **Check the thing that matters, not the thing that is easy.** "Port 5432 is
    open" is weaker than "the health endpoint reports the database is
    reachable". The whole point of RestoreLab is the difference between the two.

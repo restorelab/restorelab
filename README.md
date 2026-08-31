@@ -56,6 +56,7 @@ after it has been proven against real clusters.
 | Proxmox Backup Server discovery | done |
 | Recovery engine (isolation, capacity, cleanup, RTO, grading) | done |
 | Checks: ping, tcp, http/https, dns | done |
+| In-guest checks through the QEMU guest agent (no network path needed) | done |
 | CLI (`init`, `provider`, `workloads`, `backups`, `recovery`, `cleanup`) | done |
 | Reports: terminal, JSON, self-contained HTML | done |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
@@ -124,6 +125,12 @@ startup:
   timeout: 180s
 
 checks:
+  # Runs inside the guest through the QEMU guest agent: no route into the
+  # isolated recovery network required.
+  - type: command
+    run: systemctl is-active postgresql
+    expect: active
+
   - type: tcp
     port: 22
 
@@ -168,6 +175,7 @@ global administrator rights.
 
 | Document | Contents |
 | --- | --- |
+| [docs/deployment.md](docs/deployment.md) | Where to run RestoreLab, and how checks reach the guest |
 | [docs/configuration.md](docs/configuration.md) | Config file, providers, network profiles, limits |
 | [docs/recovery-plans.md](docs/recovery-plans.md) | Plan reference and every check type |
 | [docs/network-isolation.md](docs/network-isolation.md) | Building the isolated bridge, why it matters |

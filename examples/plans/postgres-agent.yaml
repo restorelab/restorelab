@@ -1,0 +1,67 @@
+# The same database drill as postgres-prod.yaml, validated entirely from
+# inside the guest through the QEMU guest agent.
+#
+# Nothing here needs a network path into the isolated recovery network: no
+# route, no DHCP on vmbr99, no runner next to the bridge. RestoreLab can run
+# from a laptop and still prove PostgreSQL actually came back.
+#
+# Requires qemu-guest-agent installed in the guest and the agent enabled on
+# the VM (VM -> Options -> QEMU Guest Agent).
+
+name: postgres-prod-agent
+description: Recovery drill validated in-guest, with no network path required
+
+workload:
+  provider: proxmox-main
+  id: "101"
+
+backup:
+  strategy: latest
+  max_age: 26h
+
+restore:
+  node: pve02
+  network: isolated
+  cpu_limit: 2
+  memory_limit: 4096
+
+startup:
+  timeout: 180s
+  # wait_for_ip defaults to false here: every check runs in the guest, so the
+  # run waits for the agent to answer instead of for an address.
+
+checks:
+  - type: command
+    name: system booted
+    run: systemctl is-system-running --wait
+    # A recovered server often boots "degraded" for reasons that have nothing
+    # to do with the service under test, so this one only downgrades the run.
+    critical: false
+
+  - type: command
+    name: PostgreSQL running
+    run: systemctl is-active postgresql
+    expect: active
+    retries: 10
+    retry_interval: 6s
+
+  - type: command
+    name: PostgreSQL accepting connections
+    run: pg_isready -h /var/run/postgresql
+    retries: 10
+    retry_interval: 6s
+
+  - type: command
+    name: production database queryable
+    run: psql -U postgres -d production -tAc 'select 1'
+    expect: "1"
+
+  - type: command
+    name: recent data present
+    run: psql -U postgres -d production -tAc 'select count(*) > 0 from users'
+    expect: t
+
+cleanup:
+  always: true
+
+rto_target: 5m
