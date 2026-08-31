@@ -290,13 +290,15 @@ func checkSafeToReuse(name string, existing *networkInterface) error {
 // omitted) so PVE never falls back to an implicit default: the created
 // bridge is unambiguously portless from the moment it exists.
 func (c *AdminClient) createIsolatedBridge(ctx context.Context, node, iface, comment string) error {
+	// bridge_stp and bridge_fd are NOT API parameters: Proxmox rejects them
+	// with "property is not defined in schema" (verified on PVE 9.2.3). They
+	// are /etc/network/interfaces options that Proxmox writes itself, with
+	// exactly the values we would have asked for - STP off, forward delay 0.
 	if _, err := c.doRequest(ctx, http.MethodPost, "/nodes/"+node+"/network", url.Values{
 		"iface":        {iface},
 		"type":         {"bridge"},
 		"autostart":    {"1"},
 		"bridge_ports": {""},
-		"bridge_stp":   {"off"},
-		"bridge_fd":    {"0"},
 		"comments":     {comment},
 	}); err != nil {
 		return fmt.Errorf("proxmox: create bridge %s on %s: %w", iface, node, err)

@@ -41,12 +41,10 @@ func TestEnsureIsolatedBridgeCreatesAndApplies(t *testing.T) {
 		t.Errorf("create write = %s %s, want POST /api2/json/nodes/pve1/network", create.Method, create.Path)
 	}
 	wantForm := map[string]string{
-		"iface":      "vmbr99",
-		"type":       "bridge",
-		"autostart":  "1",
-		"bridge_stp": "off",
-		"bridge_fd":  "0",
-		"comments":   defaultBridgeComment,
+		"iface":     "vmbr99",
+		"type":      "bridge",
+		"autostart": "1",
+		"comments":  defaultBridgeComment,
 	}
 	for k, v := range wantForm {
 		if got := create.Form.Get(k); got != v {
@@ -297,5 +295,41 @@ func TestRevertPendingNetworkIssuesDelete(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected a DELETE /api2/json/nodes/pve1/network request")
+	}
+}
+
+// Proxmox rejects the whole request when it is handed a parameter its schema
+// does not define, and bridge_stp / bridge_fd are interfaces-file options
+// rather than API parameters. Sending them cost a failed bridge creation on
+// PVE 9.2.3; the omission must not be quietly reintroduced.
+func TestCreateBridgeSendsNoParameterOutsideTheAPISchema(t *testing.T) {
+	m := newMockServer(t)
+	mockTicket(m, "tkt-1", "csrf-1")
+	m.on("GET", "/api2/json/nodes/pve1/network", 200, []map[string]any{})
+	m.on("POST", "/api2/json/nodes/pve1/network", 200, nil)
+	m.on("PUT", "/api2/json/nodes/pve1/network", 200, nil)
+
+	c := newTestAdminClient(t, m, "admin-pw", nil)
+	mustLogin(t, c)
+
+	if _, err := c.EnsureIsolatedBridge(context.Background(), BridgeOptions{
+		Node: "pve1", Bridge: "vmbr99", Apply: true,
+	}); err != nil {
+		t.Fatalf("EnsureIsolatedBridge: %v", err)
+	}
+
+	allowed := map[string]bool{
+		"iface": true, "type": true, "autostart": true,
+		"bridge_ports": true, "comments": true,
+	}
+	for _, r := range m.recorded() {
+		if r.Method != "POST" || r.Path != "/api2/json/nodes/pve1/network" {
+			continue
+		}
+		for key := range r.Form {
+			if !allowed[key] {
+				t.Errorf("form field %q is not part of the Proxmox network schema", key)
+			}
+		}
 	}
 }
