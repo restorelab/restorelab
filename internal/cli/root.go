@@ -84,6 +84,7 @@ cleans everything up.`,
 	cmd.AddCommand(
 		newInitCmd(a),
 		newConnectCmd(a),
+		newDoctorCmd(a),
 		newKeyCmd(a),
 		newProviderCmd(a),
 		newWorkloadsCmd(a),
