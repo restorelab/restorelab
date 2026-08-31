@@ -316,6 +316,29 @@ func (p *Provider) Restore(ctx context.Context, backup core.Backup, opts core.Re
 		// on /pool/restorelab.
 		form.Set("pool", opts.Pool)
 	}
+
+	// Override the network in the create call rather than fixing it up
+	// afterwards. Two reasons, both learned from a real cluster:
+	//
+	//   - the workload never exists, not even for an instant, attached to the
+	//     bridge it had in production;
+	//   - Proxmox validates the restored configuration as it creates it, so a
+	//     backup referencing an SDN-managed bridge is refused outright with
+	//     403 SDN.Use unless the caller holds that privilege on the production
+	//     network - which RestoreLab must never need.
+	if opts.Network.Bridge != "" {
+		form.Set("net0", renderNetConfig(opts.Network))
+	}
+
+	// Stamp ownership at creation for a related reason: a workload that exists
+	// without this metadata is one cleanup will refuse to touch, so a failure
+	// between creating and hardening would leave an orphan only a human could
+	// remove. That happened once; it must not be possible again.
+	if desc := renderMetadata(opts.Metadata); desc != "" {
+		form.Set("description", desc)
+	}
+	form.Set("tags", managedTag)
+
 	form.Set("unique", "1")
 	form.Set("start", "0")
 	if opts.BandwidthKiBps > 0 {
@@ -447,19 +470,10 @@ func (p *Provider) FinalizeRestore(ctx context.Context, opts core.RestoreOptions
 		form.Set("memory", strconv.Itoa(opts.MemoryLimitMB))
 	}
 
-	if len(opts.Metadata) > 0 {
-		keys := make([]string, 0, len(opts.Metadata))
-		for k := range opts.Metadata {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		lines := make([]string, 0, len(keys))
-		for _, k := range keys {
-			lines = append(lines, k+"="+opts.Metadata[k])
-		}
-		form.Set("description", strings.Join(lines, "\n"))
+	if desc := renderMetadata(opts.Metadata); desc != "" {
+		form.Set("description", desc)
 	}
-	form.Set("tags", "restorelab")
+	form.Set("tags", managedTag)
 
 	_, err = p.post(ctx, fmt.Sprintf("/nodes/%s/qemu/%s/config", node, id), form)
 	return err
@@ -661,4 +675,46 @@ func (p *Provider) ValidateIsolation(ctx context.Context, node string, network c
 			node, len(entries), core.ErrIsolationUnverified)
 	}
 	return fmt.Errorf("proxmox: bridge %q not found on node %q: %w", network.Bridge, node, core.ErrNetworkNotIsolated)
+}
+
+// managedTag marks every workload RestoreLab creates. It is a filtering aid,
+// never proof of ownership - see isManaged.
+const managedTag = "restorelab"
+
+// renderNetConfig builds a Proxmox network device string pointing at the
+// isolated bridge. No MAC address is given, so Proxmox generates a fresh one:
+// putting a running production workload's MAC on a second machine would be its
+// own kind of incident.
+func renderNetConfig(network core.NetworkConfig) string {
+	model := network.Model
+	if model == "" {
+		model = "virtio"
+	}
+	cfg := model + ",bridge=" + network.Bridge
+	if network.VLANTag > 0 {
+		cfg += fmt.Sprintf(",tag=%d", network.VLANTag)
+	}
+	if network.Firewall {
+		cfg += ",firewall=1"
+	}
+	return cfg
+}
+
+// renderMetadata renders RestoreLab's ownership metadata as the key=value
+// lines stored in a workload's description, sorted so the value is stable.
+func renderMetadata(metadata map[string]string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(metadata))
+	for k := range metadata {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	lines := make([]string, 0, len(keys))
+	for _, k := range keys {
+		lines = append(lines, k+"="+metadata[k])
+	}
+	return strings.Join(lines, "\n")
 }

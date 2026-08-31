@@ -94,7 +94,12 @@ func (e *Engine) resolveBackup(ctx context.Context, p *plan.Plan) (*core.Backup,
 // instead calls checkNetworkIsolation/checkCapacity directly.
 func (e *Engine) prepareEnvironment(ctx context.Context, run *core.RecoveryRun, p *plan.Plan, opts RunOptions) (tempID, tempName string, metadata map[string]string, node string, err error) {
 	idx := e.beginStep(run, StepPrepareEnvironment, core.RunPreparing)
-	node = firstNonEmpty(opts.Node, p.Restore.Node)
+
+	node, err = resolveNode(run, p, opts)
+	if err != nil {
+		e.endStep(run, idx, core.StepFailed, "no target node", err)
+		return "", "", nil, node, err
+	}
 
 	if err = e.checkNetworkIsolation(ctx, node, opts.Network); err != nil {
 		e.endStep(run, idx, core.StepFailed, "network isolation check failed", err)
@@ -452,7 +457,12 @@ func (e *Engine) runDryRun(ctx context.Context, run *core.RecoveryRun, p *plan.P
 	}
 
 	idx := e.beginStep(run, StepPrepareEnvironment, core.RunPreparing)
-	node := firstNonEmpty(opts.Node, p.Restore.Node)
+	node, err := resolveNode(run, p, opts)
+	if err != nil {
+		e.endStep(run, idx, core.StepFailed, "no target node", err)
+		e.markFailed(run, err)
+		return err
+	}
 
 	if err := e.checkNetworkIsolation(ctx, node, opts.Network); err != nil {
 		e.endStep(run, idx, core.StepFailed, "network isolation check failed", err)
@@ -472,4 +482,20 @@ func (e *Engine) runDryRun(ctx context.Context, run *core.RecoveryRun, p *plan.P
 	run.Result = core.ResultSuccess
 	run.CleanupDone = true
 	return nil
+}
+
+// resolveNode decides which node the restore lands on. run.Node was filled
+// from the source workload during backup discovery, so restoring beside the
+// original is the default: the storages and the bridge it needs are the ones
+// that node already has.
+func resolveNode(run *core.RecoveryRun, p *plan.Plan, opts RunOptions) (string, error) {
+	node := firstNonEmpty(opts.Node, p.Restore.Node, run.Node)
+	if node == "" && run.Backup != nil {
+		node = run.Backup.Node
+	}
+	if node == "" {
+		return "", errors.New("no node to restore onto: set restore.node in the plan, --node, or defaults.node in the config")
+	}
+	run.Node = node
+	return node, nil
 }

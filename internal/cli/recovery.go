@@ -15,6 +15,7 @@ import (
 	"github.com/restorelab/restorelab/internal/checks"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/plan"
+	"github.com/restorelab/restorelab/internal/providers"
 	"github.com/restorelab/restorelab/internal/recovery"
 	"github.com/restorelab/restorelab/internal/report"
 )
@@ -90,7 +91,15 @@ With no --check, a TCP check on port 22 is used: it proves the guest booted,
 configured its network, and started a service.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := adHocPlan(args[0], f)
+			// Resolve the provider up front: an ad-hoc plan has to name one,
+			// and failing here says "no provider configured" instead of
+			// "workload.provider is required", which is our vocabulary, not
+			// the user's.
+			entry, err := a.providerEntry(f.providerID, providers.RoleHypervisor)
+			if err != nil {
+				return err
+			}
+			p, err := adHocPlan(args[0], entry.ID, f)
 			if err != nil {
 				return err
 			}
@@ -132,11 +141,11 @@ func newRecoveryRunCmd(a *app) *cobra.Command {
 
 // adHocPlan turns `recovery test` flags into a plan, so both entry points run
 // exactly the same engine over exactly the same structure.
-func adHocPlan(workloadID string, f *runFlags) (*plan.Plan, error) {
+func adHocPlan(workloadID, providerID string, f *runFlags) (*plan.Plan, error) {
 	p := &plan.Plan{
 		Name: "adhoc-" + workloadID,
 		Workload: plan.WorkloadRef{
-			Provider: f.providerID,
+			Provider: providerID,
 			ID:       workloadID,
 		},
 		Backup: plan.BackupSpec{Provider: f.backupID, Strategy: plan.StrategyLatest},

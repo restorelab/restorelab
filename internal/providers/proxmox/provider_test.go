@@ -635,3 +635,72 @@ func TestRestoreSendsThePoolOnlyWhenSet(t *testing.T) {
 		}
 	})
 }
+
+// A restore must be isolated and owned from the instant the workload exists,
+// not from the moment hardening happens to run afterwards.
+//
+// Both properties were learned from a real cluster: Proxmox validates the
+// restored configuration as it creates the workload, so a backup referencing
+// an SDN-managed bridge is refused outright (403 SDN.Use) unless the network
+// is overridden in the create call; and when that create failed, the workload
+// Proxmox had already made carried no ownership metadata, so cleanup refused
+// to remove it and only a human could.
+func TestRestoreIsolatesAndStampsAtCreation(t *testing.T) {
+	m := newMockServer(t)
+	m.on("POST", "/api2/json/nodes/pve1/qemu", 200, "UPID:pve1:qmrestore:9000:root@pam:")
+	p := newTestProvider(t, m, nil)
+
+	_, err := p.Restore(context.Background(),
+		core.Backup{ID: "local:backup/vzdump-qemu-104.vma.zst", Node: "pve1"},
+		core.RestoreOptions{
+			TargetWorkloadID: "9000",
+			Node:             "pve1",
+			Network:          core.NetworkConfig{Bridge: "vmbr99", Isolated: true},
+			Metadata: map[string]string{
+				core.MetadataManaged:       "true",
+				core.MetadataRecoveryRunID: "run-7",
+				core.MetadataSourceID:      "104",
+			},
+		})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	form := m.recorded()[0].Form
+
+	net0 := form.Get("net0")
+	if !strings.Contains(net0, "bridge=vmbr99") {
+		t.Errorf("net0 = %q, want the isolated bridge in the create call itself", net0)
+	}
+	if strings.Contains(net0, ":") {
+		t.Errorf("net0 = %q, no MAC may be pinned: Proxmox must generate a fresh one", net0)
+	}
+
+	desc := form.Get("description")
+	for _, want := range []string{core.MetadataManaged + "=true", core.MetadataRecoveryRunID + "=run-7"} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("description = %q, want it to carry %q from the start", desc, want)
+		}
+	}
+	if got := form.Get("tags"); got != "restorelab" {
+		t.Errorf("tags = %q, want restorelab", got)
+	}
+}
+
+// A restore with no network configured must not invent one: that is the
+// restore-onto-whatever-the-backup-had path, and it has to stay explicit.
+func TestRestoreOmitsNetworkWhenNoneIsConfigured(t *testing.T) {
+	m := newMockServer(t)
+	m.on("POST", "/api2/json/nodes/pve1/qemu", 200, "UPID:pve1:qmrestore:9000:root@pam:")
+	p := newTestProvider(t, m, nil)
+
+	if _, err := p.Restore(context.Background(),
+		core.Backup{ID: "local:backup/x.vma.zst", Node: "pve1"},
+		core.RestoreOptions{TargetWorkloadID: "9000", Node: "pve1"},
+	); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if m.recorded()[0].Form.Has("net0") {
+		t.Error("net0 must not be sent when no network was configured")
+	}
+}
