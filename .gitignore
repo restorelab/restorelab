@@ -29,6 +29,9 @@ node_modules/
 web/dist/
 web/.vite/
 
+# Session handover notes, local to this working copy
+/STATE.md
+
 # Editors / OS
 .DS_Store
 Thumbs.db
