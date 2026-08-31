@@ -83,6 +83,7 @@ cleans everything up.`,
 
 	cmd.AddCommand(
 		newInitCmd(a),
+		newConnectCmd(a),
 		newKeyCmd(a),
 		newProviderCmd(a),
 		newWorkloadsCmd(a),
