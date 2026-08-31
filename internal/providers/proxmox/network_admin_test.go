@@ -260,9 +260,11 @@ func TestEnsureIsolatedBridgeDryRunIssuesZeroWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureIsolatedBridge (dry run): %v", err)
 	}
+	// Every step must read as hypothetical: a status that looks like an
+	// accomplished action is how a dry run lies to someone.
 	for _, s := range result.Steps {
-		if s.Status != "would create" {
-			t.Errorf("step %q status = %q, want \"would create\" under DryRun", s.Description, s.Status)
+		if !strings.HasPrefix(s.Status, "would ") {
+			t.Errorf("step %q status = %q, want a \"would ...\" status under DryRun", s.Description, s.Status)
 		}
 	}
 	for _, r := range m.recorded() {

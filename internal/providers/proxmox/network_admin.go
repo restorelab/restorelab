@@ -157,12 +157,12 @@ func (c *AdminClient) EnsureIsolatedBridge(ctx context.Context, opts BridgeOptio
 	if opts.DryRun {
 		record(BootstrapStep{Description: createDesc, Status: "would create"})
 		if opts.Apply {
-			record(BootstrapStep{Description: applyDesc, Status: "would create"})
+			record(BootstrapStep{Description: applyDesc, Status: "would apply"})
 		} else {
 			result.PendingApply = true
 			record(BootstrapStep{
 				Description: applyDesc,
-				Status:      "would create",
+				Status:      "would apply",
 				Detail:      fmt.Sprintf("%s would exist only in %s's pending network configuration; it would take effect on the next reboot or apply", opts.Bridge, opts.Node),
 			})
 		}
@@ -191,7 +191,7 @@ func (c *AdminClient) EnsureIsolatedBridge(ctx context.Context, opts BridgeOptio
 		return result, err
 	}
 	result.Applied = true
-	record(BootstrapStep{Description: applyDesc, Status: "created"})
+	record(BootstrapStep{Description: applyDesc, Status: "applied"})
 	return result, nil
 }
 

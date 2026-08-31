@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -103,9 +104,12 @@ effect at the next reboot.`,
 			fmt.Fprintf(a.out, "\n%s\n", a.paint(colorBold,
 				fmt.Sprintf("RestoreLab will create bridge %s on node %s:", bridge, node)))
 			fmt.Fprintf(a.out, "  · a Linux bridge with no ports, no address and no gateway\n")
-			if noApply {
+			switch {
+			case dryRun:
+				fmt.Fprintf(a.out, "  %s\n", a.paint(colorDim, "dry run: nothing will be changed"))
+			case noApply:
 				fmt.Fprintf(a.out, "  · written to the pending configuration, active after the next reboot\n")
-			} else {
+			default:
 				fmt.Fprintf(a.out, "  %s applied immediately, which reloads the node's networking\n", a.warn())
 			}
 			fmt.Fprintln(a.out)
@@ -149,10 +153,14 @@ effect at the next reboot.`,
 func (a *app) printBridgeResult(result *proxmox.BridgeResult, dryRun bool) {
 	for _, step := range result.Steps {
 		glyph := a.ok()
-		if step.Status == "already exists" || step.Status == "skipped" {
+		switch {
+		case strings.HasPrefix(step.Status, "would"):
+			// Nothing happened; a tick would claim otherwise.
+			glyph = a.paint(colorDim, "·")
+		case step.Status == "already exists", step.Status == "skipped":
 			glyph = a.paint(colorDim, "·")
 		}
-		fmt.Fprintf(a.out, "  %s %-40s %s\n", glyph, step.Description, a.paint(colorDim, step.Status))
+		fmt.Fprintf(a.out, "  %s %-52s %s\n", glyph, step.Description, a.paint(colorDim, step.Status))
 		if step.Detail != "" {
 			fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow, step.Detail))
 		}
