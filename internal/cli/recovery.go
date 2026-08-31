@@ -25,6 +25,7 @@ type runFlags struct {
 	backupID   string
 	node       string
 	storage    string
+	pool       string
 	network    string
 	reportPath string
 	dryRun     bool
@@ -46,6 +47,7 @@ func (f *runFlags) bind(cmd *cobra.Command) {
 	fs.StringVar(&f.backupID, "backup-provider", "", "backup provider to search for restore points")
 	fs.StringVar(&f.node, "node", "", "node to restore on (overrides the plan)")
 	fs.StringVar(&f.storage, "storage", "", "storage for the restored disks (overrides the plan)")
+	fs.StringVar(&f.pool, "pool", "", "resource pool the temporary workload is created in (overrides the plan)")
 	fs.StringVar(&f.network, "network", "", "network profile for the temporary workload (overrides the plan)")
 	fs.StringVar(&f.reportPath, "report", "", "write the report to a file (.json, .html or .txt by extension)")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "resolve the backup and validate the plan without restoring anything")
@@ -141,6 +143,7 @@ func adHocPlan(workloadID string, f *runFlags) (*plan.Plan, error) {
 		Restore: plan.RestoreSpec{
 			Node:          f.node,
 			Storage:       f.storage,
+			Pool:          f.pool,
 			Network:       f.network,
 			CPULimit:      f.cpuLimit,
 			MemoryLimitMB: f.memoryLimitMB,
@@ -265,6 +268,7 @@ func (a *app) runPlan(ctx context.Context, p *plan.Plan, f *runFlags) error {
 		Network:      network,
 		Node:         firstNonEmpty(f.node, p.Restore.Node, cfg.Defaults.Node),
 		Storage:      firstNonEmpty(f.storage, p.Restore.Storage, cfg.Defaults.Storage),
+		Pool:         firstNonEmpty(f.pool, p.Restore.Pool, hvEntry.Pool),
 		DryRun:       f.dryRun,
 		KeepWorkload: f.keep,
 	})

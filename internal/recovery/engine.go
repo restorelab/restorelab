@@ -65,6 +65,7 @@ type RunOptions struct {
 	Network core.NetworkConfig // resolved by the caller from config; the engine only validates it
 	Node    string             // overrides plan.Restore.Node
 	Storage string             // overrides plan.Restore.Storage
+	Pool    string             // overrides plan.Restore.Pool
 	DryRun  bool               // resolve backup + validate the plan; change nothing
 	// KeepWorkload skips cleanup entirely for debugging. Every run that sets
 	// it logs loudly, because it leaves a live workload on the cluster.

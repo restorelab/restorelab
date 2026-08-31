@@ -40,8 +40,11 @@ type Provider struct {
 	// proxmox-only
 	Node          string `yaml:"node,omitempty"`
 	BackupStorage string `yaml:"backup_storage,omitempty"`
-	TempIDMin     int    `yaml:"temp_id_min,omitempty"`
-	TempIDMax     int    `yaml:"temp_id_max,omitempty"`
+	// Pool is the resource pool temporary workloads are created in. It is what
+	// keeps the service account's destructive rights scoped to the drill area.
+	Pool      string `yaml:"pool,omitempty"`
+	TempIDMin int    `yaml:"temp_id_min,omitempty"`
+	TempIDMax int    `yaml:"temp_id_max,omitempty"`
 
 	// pbs-only
 	Datastore  string `yaml:"datastore,omitempty"`

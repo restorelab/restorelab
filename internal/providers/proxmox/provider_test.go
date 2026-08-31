@@ -553,3 +553,44 @@ func TestValidateIsolationFailsWhenBridgeMissing(t *testing.T) {
 		t.Errorf("expected core.ErrNetworkNotIsolated, got %v", err)
 	}
 }
+
+func TestRestoreSendsThePoolOnlyWhenSet(t *testing.T) {
+	newRestoreServer := func(t *testing.T) *mockServer {
+		t.Helper()
+		m := newMockServer(t)
+		m.on("POST", "/api2/json/nodes/pve1/qemu", 200, "UPID:pve1:qmrestore:9000:root@pam:")
+		return m
+	}
+
+	t.Run("scoped to a pool", func(t *testing.T) {
+		m := newRestoreServer(t)
+		p := newTestProvider(t, m, nil)
+
+		if _, err := p.Restore(context.Background(),
+			core.Backup{ID: "pbs:backup/vm/101/2026-08-31T03:00:00Z", Node: "pve1"},
+			core.RestoreOptions{TargetWorkloadID: "9000", Node: "pve1", Pool: "restorelab"},
+		); err != nil {
+			t.Fatalf("Restore: %v", err)
+		}
+
+		form := m.recorded()[0].Form
+		assertForm(t, form, "pool", "restorelab")
+	})
+
+	t.Run("no pool configured", func(t *testing.T) {
+		m := newRestoreServer(t)
+		p := newTestProvider(t, m, nil)
+
+		if _, err := p.Restore(context.Background(),
+			core.Backup{ID: "pbs:backup/vm/101/2026-08-31T03:00:00Z", Node: "pve1"},
+			core.RestoreOptions{TargetWorkloadID: "9000", Node: "pve1"},
+		); err != nil {
+			t.Fatalf("Restore: %v", err)
+		}
+
+		form := m.recorded()[0].Form
+		if form.Has("pool") {
+			t.Errorf("pool must not be sent when none is configured, got %q", form.Get("pool"))
+		}
+	})
+}

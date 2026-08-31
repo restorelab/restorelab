@@ -76,6 +76,9 @@ type BackupSpec struct {
 type RestoreSpec struct {
 	Node    string `yaml:"node,omitempty"`
 	Storage string `yaml:"storage,omitempty"`
+	// Pool places the temporary workload in a provider resource pool.
+	// Defaults to the provider's configured pool.
+	Pool string `yaml:"pool,omitempty"`
 
 	// Network is either a named network profile declared in the RestoreLab
 	// config, or the keyword "isolated" to use the configured isolated bridge.

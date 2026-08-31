@@ -192,6 +192,7 @@ func (e *Engine) restoreWorkload(ctx context.Context, run *core.RecoveryRun, p *
 		Name:             tempName,
 		Node:             node,
 		Storage:          firstNonEmpty(opts.Storage, p.Restore.Storage),
+		Pool:             firstNonEmpty(opts.Pool, p.Restore.Pool),
 		Network:          opts.Network,
 		CPULimit:         p.Restore.CPULimit,
 		MemoryLimitMB:    p.Restore.MemoryLimitMB,

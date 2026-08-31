@@ -310,6 +310,12 @@ func (p *Provider) Restore(ctx context.Context, backup core.Backup, opts core.Re
 	if opts.Storage != "" {
 		form.Set("storage", opts.Storage)
 	}
+	if opts.Pool != "" {
+		// The pool is what a least-privilege token is scoped to: without it,
+		// PVE refuses the create for an account that only holds VM.Allocate
+		// on /pool/restorelab.
+		form.Set("pool", opts.Pool)
+	}
 	form.Set("unique", "1")
 	form.Set("start", "0")
 	if opts.BandwidthKiBps > 0 {

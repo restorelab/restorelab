@@ -117,12 +117,16 @@ type RestoreOptions struct {
 	Name             string
 	Node             string
 	Storage          string // target storage for restored disks; empty means provider default
-	Network          NetworkConfig
-	CPULimit         int
-	MemoryLimitMB    int
-	BandwidthKiBps   int
-	Start            bool              // start the workload as part of the restore
-	Metadata         map[string]string // stamped onto the workload (restorelab_managed, run id, ...)
+	// Pool places the temporary workload in a provider resource pool. It is
+	// what lets a service account hold destructive rights over the drill area
+	// only, instead of over every workload on the cluster.
+	Pool           string
+	Network        NetworkConfig
+	CPULimit       int
+	MemoryLimitMB  int
+	BandwidthKiBps int
+	Start          bool              // start the workload as part of the restore
+	Metadata       map[string]string // stamped onto the workload (restorelab_managed, run id, ...)
 }
 
 // RestoreJob is a handle on a restore running asynchronously on the provider.
