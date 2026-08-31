@@ -267,6 +267,35 @@ recovery network?
 | `FAILED` | A workflow step failed, or a critical check failed |
 | `CLEANUP_FAILED` | The drill finished but the temporary workload could not be destroyed — needs manual attention, with the node and VMID named in the error |
 
+### Choosing checks for an isolated drill
+
+A guest booted on a network that goes nowhere does not behave like one on your
+production network, and that changes what a good check looks like.
+
+`systemctl is-system-running` is the tempting one, and it is usually the wrong
+one: on an isolated bridge it can stay `starting` indefinitely, because units
+like `cloud-init` or `systemd-networkd-wait-online` are waiting for a network
+that will never answer. The recovery is fine; the check is asking the wrong
+question. Verified on a Debian cloud image, which never left `starting`.
+
+Check the service you actually care about instead:
+
+```yaml
+- type: command
+  name: SSH
+  run: systemctl is-active ssh
+  expect: active
+
+- type: command
+  name: PostgreSQL accepting connections
+  run: pg_isready -h /var/run/postgresql
+```
+
+The same applies to anything that reaches outward: a health endpoint that
+calls a payment API or a message broker will fail in isolation for reasons
+that have nothing to do with your backup. Test what the workload *is*, not
+what it can reach.
+
 ## Writing a good plan
 
 1. **Start with `tcp` on SSH, or a `command` check.** Either proves the guest

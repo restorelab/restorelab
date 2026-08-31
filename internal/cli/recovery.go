@@ -35,6 +35,8 @@ type runFlags struct {
 	// `recovery test` only: the ad-hoc plan is built from these.
 	backup         string
 	checkSpecs     []string
+	checkRetries   int
+	checkInterval  time.Duration
 	startupTimeout time.Duration
 	rtoTarget      time.Duration
 	cpuLimit       int
@@ -111,6 +113,8 @@ configured its network, and started a service.`,
 	fs := cmd.Flags()
 	fs.StringVar(&f.backup, "backup", "latest", `restore point: "latest" or a backup id`)
 	fs.StringArrayVar(&f.checkSpecs, "check", nil, "check to run (repeatable): ping, tcp:PORT, http://..., dns:NAME, cmd:COMMAND")
+	fs.IntVar(&f.checkRetries, "check-retries", defaultAdHocRetries, "how many times to retry a check that has not passed yet")
+	fs.DurationVar(&f.checkInterval, "check-interval", defaultAdHocRetryInterval, "wait between check attempts")
 	fs.DurationVar(&f.startupTimeout, "startup-timeout", plan.DefaultStartupTimeout, "how long to wait for the guest to become reachable")
 	fs.DurationVar(&f.rtoTarget, "rto", 0, "recovery time objective the run is graded against")
 	fs.IntVar(&f.cpuLimit, "cpu", 0, "cap the temporary workload's cores")
@@ -138,6 +142,13 @@ func newRecoveryRunCmd(a *app) *cobra.Command {
 	f.bind(cmd)
 	return cmd
 }
+
+// Defaults for an ad-hoc drill's checks: a freshly restored guest is still
+// starting when the first attempt runs.
+const (
+	defaultAdHocRetries       = 10
+	defaultAdHocRetryInterval = 6 * time.Second
+)
 
 // adHocPlan turns `recovery test` flags into a plan, so both entry points run
 // exactly the same engine over exactly the same structure.
@@ -176,6 +187,12 @@ func adHocPlan(workloadID, providerID string, f *runFlags) (*plan.Plan, error) {
 			if err != nil {
 				return nil, err
 			}
+			// A drill's checks always run against a guest that booted seconds
+			// ago, so retrying is the normal case, not the exception. Without
+			// this a perfectly good recovery fails because systemd had not
+			// finished starting yet.
+			c.Retries = f.checkRetries
+			c.RetryInterval = plan.Duration(f.checkInterval)
 			p.Checks = append(p.Checks, c)
 		}
 	}
