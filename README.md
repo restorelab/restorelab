@@ -48,16 +48,24 @@ it did not create.
 
 Alpha, under active development. The Proxmox recovery drill pipeline works
 end to end behind the CLI and has been proven against a real cluster, drill
-history is kept automatically, and the HTTP API both serves that history and
-triggers new drills through a worker that drains a queue. What is still
-ahead: the scheduler and the web dashboard.
+history is kept automatically, recovery plans live in the database, and the
+HTTP API both serves that history and triggers new drills through a worker
+that drains a queue. What is still ahead: the web dashboard's own interface
+and the scheduler.
+
+Two things in the list below are implemented and unit-tested but have never
+run against real infrastructure, because the cluster this was built on has
+neither: **Proxmox Backup Server**, and the **network checks**, which need a
+route to the isolated bridge (see
+[docs/network-isolation.md](docs/network-isolation.md)). Everything else has
+been driven against a live Proxmox VE 9 cluster.
 
 | Area | State |
 | --- | --- |
 | Proxmox VE provider (restore / harden / start / status / delete) | done |
-| Proxmox Backup Server discovery | done |
+| Proxmox Backup Server discovery | done, never run against a real PBS |
 | Recovery engine (isolation, capacity, cleanup, RTO, grading) | done |
-| Checks: ping, tcp, http/https, dns | done |
+| Checks: ping, tcp, http/https, dns | done, never run against a real isolated bridge |
 | In-guest checks through the QEMU guest agent (no network path needed) | done |
 | CLI (`init`, `provider`, `workloads`, `backups`, `recovery`, `cleanup`) | done |
 | Reports: terminal, JSON, self-contained HTML | done |
@@ -67,9 +75,11 @@ ahead: the scheduler and the web dashboard.
 | HTTP API + token auth and scopes (`serve`, `token`) | done |
 | Recovery confidence score, computed from the stored history | done |
 | Triggering and cancelling drills over HTTP, worker, queue, live event stream | done |
-| Recovery plans stored in the database | next |
+| Recovery plans stored in the database, edited over HTTP or with `plan` | done |
+| Browser session cookie, so a dashboard can authenticate and read the event stream | done |
+| Web dashboard, served from the binary | backend done, interface next |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
-| Web dashboard | planned |
+| Remote probes, RBAC, OIDC | planned |
 
 ## Quick start
 
@@ -179,10 +189,18 @@ curl -N -H "Authorization: Bearer rl_..." -H "Accept: text/event-stream" \
      http://127.0.0.1:8080/api/v1/recovery-runs/<id>/events
 ```
 
-A token is read-only unless it was created with `--operate`; a write attempted
-without that scope is a 403. See [docs/api.md](docs/api.md) for the full
-surface, scopes, the event stream, and what cancelling a drill does and does
-not do.
+A token is read-only unless it was created with `--operate`, or `--manage` to
+write the plan catalogue; a write attempted without the scope is a 403. No
+scope implies another.
+
+A browser cannot put an `Authorization` header on an `EventSource`, so
+`POST /api/v1/session` exchanges a token for an `HttpOnly` cookie that expires
+twelve hours later and is never extended. The cookie names the token and
+carries no authority of its own: revoking the token ends every session opened
+with it, on the next request.
+
+See [docs/api.md](docs/api.md) for the full surface, scopes, the event stream,
+and what cancelling a drill does and does not do.
 
 ## Safety model
 
