@@ -152,7 +152,7 @@ func (s *Server) handleUnknown(w http.ResponseWriter, r *http.Request) {
 // It says nothing about the deployment: no database location, no provider
 // name, no configuration. Anyone who can reach the port can read this.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, r, http.StatusOK, map[string]string{
+	writeJSON(w, r, map[string]string{
 		"status":  "ok",
 		"version": version.String(),
 	})
@@ -163,14 +163,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // It marshals before writing anything: encoding straight into the
 // ResponseWriter would emit a 200 header and then fail halfway through the
 // body, which a client cannot tell from a truncated network read.
-func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
+func writeJSON(w http.ResponseWriter, r *http.Request, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
 		writeProblem(w, r, problemFor(err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
+	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }
 
@@ -203,8 +203,12 @@ func Serve(ctx context.Context, addr string, h http.Handler, logf func(string, .
 		return err
 	case <-ctx.Done():
 		logf("shutting down, finishing in-flight requests (%s)", shutdownGrace)
+		// Detached from ctx on purpose: we are here *because* ctx is done, so
+		// a context derived from it would already be cancelled and Shutdown
+		// would drop every in-flight request instead of letting it finish.
 		stopCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 		defer cancel()
+		//nolint:contextcheck // the grace period cannot inherit the cancelled ctx, see above
 		if err := srv.Shutdown(stopCtx); err != nil {
 			return err
 		}

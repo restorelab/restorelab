@@ -50,7 +50,7 @@ func (TCPCheck) Run(ctx context.Context, target core.Target, cfg core.CheckConfi
 			Details: map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)},
 		}
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	details := map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)}
 

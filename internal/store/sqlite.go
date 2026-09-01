@@ -30,7 +30,7 @@ func OpenSQLite(ctx context.Context, dbPath string) (Store, error) {
 		return nil, fmt.Errorf("store: open %s: %w", dbPath, err)
 	}
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: open %s: %w", dbPath, err)
 	}
 
@@ -40,7 +40,7 @@ func OpenSQLite(ctx context.Context, dbPath string) (Store, error) {
 
 	pending, err := pendingMigrations(ctx, db, string(dialectSQLite))
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: inspect schema of %s: %w", dbPath, err)
 	}
 	if len(pending) > 0 {
@@ -51,17 +51,17 @@ func OpenSQLite(ctx context.Context, dbPath string) (Store, error) {
 		// looks alarming for nothing.
 		applied, err := appliedNumbers(ctx, db)
 		if err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, fmt.Errorf("store: inspect schema of %s: %w", dbPath, err)
 		}
 		if len(applied) > 0 {
 			if err := backupBeforeMigrate(dbPath); err != nil {
-				db.Close()
+				_ = db.Close()
 				return nil, fmt.Errorf("store: back up %s before migrating: %w", dbPath, err)
 			}
 		}
 		if _, err := applyMigrations(ctx, db, string(dialectSQLite)); err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, err
 		}
 	}

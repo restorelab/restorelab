@@ -48,8 +48,11 @@ func (f *fakeHistory) ListRuns(_ context.Context, filter store.Filter) ([]store.
 		}
 		if filter.After != nil {
 			after := filter.After
-			if !(r.StartedAt.Before(after.StartedAt) ||
-				(r.StartedAt.Equal(after.StartedAt) && r.ID < after.ID)) {
+			// Runs come back newest first, so "after the cursor" means
+			// strictly older, with the id breaking ties.
+			isAfterCursor := r.StartedAt.Before(after.StartedAt) ||
+				(r.StartedAt.Equal(after.StartedAt) && r.ID < after.ID)
+			if !isAfterCursor {
 				continue
 			}
 		}

@@ -68,7 +68,7 @@ func (s *sqlStore) ListRuns(ctx context.Context, f Filter) ([]RunSummary, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []RunSummary
 	for rows.Next() {

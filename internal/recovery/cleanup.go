@@ -37,6 +37,16 @@ const cleanupTimeout = 10 * time.Minute
 // an error wrapping the provider's error (for errors.Is/As) — the loud,
 // VMID-naming message is recorded on run.Err and run.State regardless, so
 // the report carries it even for callers that only look at the run.
+//
+// The nolint below is that invariant stated to the linter, not a waiver.
+// contextcheck is right that this ignores the run's ctx and builds its own
+// from context.Background(); that is precisely the point. Rebinding the Stop
+// and Delete calls to the run's ctx would make Ctrl-C on a drill a reliable
+// way to leak a temporary VM onto a cluster, which is the failure mode this
+// whole function exists to prevent. The 10-minute timeout is what keeps the
+// detached context from being unbounded.
+//
+//nolint:contextcheck // detached cleanup context is a safety invariant, see above
 func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan, opts RunOptions, tempID, node string, needsCleanup bool) error {
 	if !needsCleanup {
 		run.CleanupDone = true

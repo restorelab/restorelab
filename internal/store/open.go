@@ -58,7 +58,7 @@ func Migrate(ctx context.Context, cfg Config) ([]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("store: open database: %w", redactDSNError(dsn, err))
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("store: reach database: %w", redactDSNError(dsn, err))

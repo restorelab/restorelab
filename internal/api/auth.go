@@ -88,7 +88,7 @@ const rejection = "this request needs a valid API token: send `Authorization: Be
 func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	secret, ok := bearerToken(r.Header.Get("Authorization"))
 	if !ok {
-		writeUnauthorized(w, r, rejection)
+		writeUnauthorized(w, r)
 		return false
 	}
 
@@ -96,7 +96,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	rec, err := s.tokens.TokenByHash(r.Context(), hash)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
-		writeUnauthorized(w, r, rejection)
+		writeUnauthorized(w, r)
 		return false
 	case err != nil:
 		// Not a 401: the caller's token may be perfect and our database
@@ -104,7 +104,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 		writeProblem(w, r, problemFor(err))
 		return false
 	case rec == nil:
-		writeUnauthorized(w, r, rejection)
+		writeUnauthorized(w, r)
 		return false
 	}
 
@@ -112,7 +112,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	// braces. It is constant time so that no comparison in the path leaks how
 	// many bytes matched.
 	if subtle.ConstantTimeCompare([]byte(rec.Hash), []byte(hash)) != 1 {
-		writeUnauthorized(w, r, rejection)
+		writeUnauthorized(w, r)
 		return false
 	}
 

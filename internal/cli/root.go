@@ -44,6 +44,14 @@ type app struct {
 // Execute runs the root command. It returns the process exit code.
 func Execute(ctx context.Context) int {
 	a := &app{out: os.Stdout, err: os.Stderr}
+	// The command tree is built before the run context exists, and cobra is
+	// what delivers it: ExecuteContext below stores ctx on the root command,
+	// and every RunE reads it back with cmd.Context() and plumbs it down.
+	// contextcheck cannot see through that indirection and asks for ctx to be
+	// threaded through the constructors instead; doing so would mean every
+	// newXxxCmd carrying a context it must not capture, which is the bug
+	// cobra's design avoids.
+	//nolint:contextcheck // cobra delivers ctx at execution time, see above
 	root := newRootCmd(a)
 
 	if err := root.ExecuteContext(ctx); err != nil {

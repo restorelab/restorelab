@@ -55,7 +55,7 @@ func (s *sqlStore) ListTokens(ctx context.Context) ([]APIToken, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []APIToken
 	for rows.Next() {

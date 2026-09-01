@@ -162,7 +162,7 @@ func (s *Server) handleListWorkloads(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Items = append(out.Items, newWorkloadDTO(workload))
 	}
-	writeJSON(w, r, http.StatusOK, out)
+	writeJSON(w, r, out)
 }
 
 // handleGetWorkload serves GET /api/v1/workloads/{id}.
@@ -184,7 +184,7 @@ func (s *Server) handleGetWorkload(w http.ResponseWriter, r *http.Request) {
 	if status, err := hv.GetStatus(r.Context(), workload.ID); err == nil {
 		dto.Status = newWorkloadStatusDTO(status)
 	}
-	writeJSON(w, r, http.StatusOK, dto)
+	writeJSON(w, r, dto)
 }
 
 // handleWorkloadBackups serves GET /api/v1/workloads/{id}/backups.
@@ -206,7 +206,7 @@ func (s *Server) handleWorkloadBackups(w http.ResponseWriter, r *http.Request) {
 	for i := range backups {
 		out.Items = append(out.Items, report.NewBackupDTO(&backups[i]))
 	}
-	writeJSON(w, r, http.StatusOK, out)
+	writeJSON(w, r, out)
 }
 
 // handleWorkloadConfidence serves GET /api/v1/workloads/{id}/confidence.
@@ -258,7 +258,7 @@ func (s *Server) handleWorkloadConfidence(w http.ResponseWriter, r *http.Request
 	if dto.Reasons == nil {
 		dto.Reasons = []string{}
 	}
-	writeJSON(w, r, http.StatusOK, dto)
+	writeJSON(w, r, dto)
 }
 
 // runFromSummary rebuilds exactly as much of a run as report.Score reads:

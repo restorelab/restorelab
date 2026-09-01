@@ -61,6 +61,11 @@ func mapAgentError(err error) error {
 		return nil
 	}
 	if errors.Is(err, core.ErrUnauthorized) {
+		// %v, not %w, on err: this function deliberately re-labels the API
+		// error rather than extending its chain. See the agentDown branch
+		// below for why that matters; keeping both branches consistent is
+		// what stops someone "fixing" only the harmless one.
+		//nolint:errorlint // err is flattened on purpose, see above
 		return fmt.Errorf("%w: guest agent exec requires the VM.Monitor privilege on this VM, and some PVE versions restrict it to root@pam: %v", core.ErrUnauthorized, err)
 	}
 
@@ -78,6 +83,15 @@ func mapAgentError(err error) error {
 		// The advice is a hypothesis, not a diagnosis: PVE answers a genuine
 		// server fault and a missing agent with the same untyped 500. The
 		// original API error is appended so the operator can see which it is.
+		//
+		// %v, not %w, and that is load-bearing. The 5xx we are re-labelling
+		// arrived wrapped in core.RetryableError; wrapping it with %w would
+		// put that marker back in the chain and core.IsRetryable would start
+		// returning true, so the engine would spend the caller's whole
+		// deadline re-asking a guest agent that is not there. The contract
+		// above says agent-unavailable is terminal: the text is carried over,
+		// the retryable marker is not.
+		//nolint:errorlint // err is flattened on purpose, see above
 		return fmt.Errorf("%w: the guest agent did not answer - install and start qemu-guest-agent inside the guest, and enable \"QEMU Guest Agent\" under the VM's Options in Proxmox; if it is already running, the API error is the real cause: %v", core.ErrGuestAgentUnavailable, err)
 	}
 	return err

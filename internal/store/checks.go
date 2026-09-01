@@ -40,7 +40,7 @@ func (s *sqlStore) loadChecks(ctx context.Context, runID string) ([]core.CheckRe
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var checks []core.CheckResult
 	for rows.Next() {

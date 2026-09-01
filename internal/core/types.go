@@ -9,6 +9,7 @@ import "time"
 // own vocabulary onto these values (Proxmox "qemu"/"lxc", VMware "vm", ...).
 type WorkloadKind string
 
+// The workload technologies RestoreLab distinguishes.
 const (
 	WorkloadKindVM        WorkloadKind = "vm"
 	WorkloadKindContainer WorkloadKind = "container"
@@ -18,6 +19,7 @@ const (
 // PowerState is the coarse run state of a workload, normalised across providers.
 type PowerState string
 
+// The power states a workload can report.
 const (
 	PowerStateRunning PowerState = "running"
 	PowerStateStopped PowerState = "stopped"
@@ -73,6 +75,8 @@ type Workload struct {
 // backup provider, when it exposes one.
 type VerificationState string
 
+// The verification outcomes a backup can carry. VerificationNone means the
+// provider verified nothing; VerificationUnknown means it did not say.
 const (
 	VerificationOK      VerificationState = "ok"
 	VerificationFailed  VerificationState = "failed"

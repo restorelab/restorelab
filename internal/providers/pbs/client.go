@@ -1,3 +1,9 @@
+// Package pbs implements RestoreLab's core.BackupProvider contract against
+// the Proxmox Backup Server REST API. It reads the backup catalogue directly
+// from PBS, which knows the snapshot's real size, age and verification state
+// - things PVE's own storage listing either flattens or does not report at
+// all. Restoring is still PVE's job; this package only answers "what is
+// there, and can it be trusted".
 package pbs
 
 import (
@@ -217,7 +223,7 @@ func (p *Provider) get(ctx context.Context, path string, query url.Values, out a
 		// (http.Client.Timeout surfaces as a *url.Error wrapping this err).
 		return core.Retryable(fmt.Errorf("pbs: request to %s failed: %w", path, err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

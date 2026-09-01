@@ -107,7 +107,7 @@ func (c *httpCheck) Run(ctx context.Context, target core.Target, cfg core.CheckC
 			Details: map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)},
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	limited := io.LimitReader(resp.Body, int64(maxBodyBytes))
 	data, err := io.ReadAll(limited)

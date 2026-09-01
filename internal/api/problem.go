@@ -112,10 +112,17 @@ func problemForUpstream(err error) Problem {
 
 // writeUnauthorized is the only 401 this API emits: it always means the
 // caller's own bearer token.
-func writeUnauthorized(w http.ResponseWriter, r *http.Request, detail string) {
+//
+// It takes no detail argument on purpose. Every failed authentication must
+// answer with the same words - see the `rejection` constant - and a
+// parameter here would be an invitation to say "malformed" to one caller and
+// "unknown token" to another, which is exactly the distinction a guesser
+// wants. Making the message unreachable from outside makes the rule
+// unbreakable rather than merely documented.
+func writeUnauthorized(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="restorelab"`)
 	writeProblem(w, r, newProblem("unauthorized", "Authentication required",
-		http.StatusUnauthorized, detail))
+		http.StatusUnauthorized, rejection))
 }
 
 // writeBadRequest answers a malformed query parameter.

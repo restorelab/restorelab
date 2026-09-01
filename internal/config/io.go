@@ -112,12 +112,12 @@ func Save(path string, c *Config) error {
 	cleanup := true
 	defer func() {
 		if cleanup {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath) // best effort: the write already failed
 		}
 	}()
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("write temp config file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {

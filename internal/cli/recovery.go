@@ -287,6 +287,13 @@ func (a *app) runPlan(ctx context.Context, p *plan.Plan, f *runFlags) error {
 		// Both consumers see every event: the terminal renders it, the
 		// recorder files it. The printer runs first so that writing history
 		// never delays what the user is watching.
+		//
+		// recorder.Emit writes on its own context.Background(), not on ctx,
+		// for the same reason the cleanup does: a drill interrupted with
+		// Ctrl-C is exactly the one whose trace is worth the most, and
+		// plumbing ctx in here would silently stop recording the moment the
+		// user cancels.
+		//nolint:contextcheck // history writes must outlive cancellation, see above
 		Emit: func(e recovery.Event) {
 			printer(e)
 			rec.Emit(e)
@@ -382,7 +389,7 @@ func (a *app) writeReport(path string, run *core.RecoveryRun) error {
 	if err != nil {
 		return fmt.Errorf("create report: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // safety net; the success path closes explicitly below
 
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".json":

@@ -236,7 +236,7 @@ func (c *AdminClient) doRequest(ctx context.Context, method, path string, form u
 		}
 		return nil, core.Retryable(fmt.Errorf("proxmox: %s %s: %w", method, path, err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if readErr != nil {

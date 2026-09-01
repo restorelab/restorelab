@@ -29,17 +29,17 @@ func OpenPostgres(ctx context.Context, dsn string) (Store, error) {
 		return nil, fmt.Errorf("store: open postgres: %w", redactDSNError(dsn, err))
 	}
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: reach postgres: %w", redactDSNError(dsn, err))
 	}
 
 	pending, err := pendingMigrations(ctx, db, string(dialectPostgres))
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("store: inspect postgres schema: %w", redactDSNError(dsn, err))
 	}
 	if len(pending) > 0 {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("%w: %d migration(s) pending, run `restorelab db migrate`", ErrSchemaBehind, len(pending))
 	}
 

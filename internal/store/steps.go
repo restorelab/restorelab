@@ -43,7 +43,7 @@ func (s *sqlStore) loadSteps(ctx context.Context, runID string) ([]core.Step, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var steps []core.Step
 	for rows.Next() {

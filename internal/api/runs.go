@@ -143,7 +143,7 @@ func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	for _, run := range runs {
 		out.Items = append(out.Items, newRunSummaryDTO(run))
 	}
-	writeJSON(w, r, http.StatusOK, out)
+	writeJSON(w, r, out)
 }
 
 // resolveRun loads the run a path variable names, answering the request when
@@ -174,7 +174,7 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, r, http.StatusOK, report.NewDocument(run))
+	writeJSON(w, r, report.NewDocument(run))
 }
 
 // handleRunEvents serves GET /api/v1/recovery-runs/{id}/events.
@@ -207,7 +207,7 @@ func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 	for _, e := range events {
 		out.Items = append(out.Items, newEventDTO(e))
 	}
-	writeJSON(w, r, http.StatusOK, out)
+	writeJSON(w, r, out)
 }
 
 // handleRunReport serves GET /api/v1/recovery-runs/{id}/report?format=json|html.
@@ -227,7 +227,7 @@ func (s *Server) handleRunReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if format == "json" {
-		writeJSON(w, r, http.StatusOK, report.NewDocument(run))
+		writeJSON(w, r, report.NewDocument(run))
 		return
 	}
 

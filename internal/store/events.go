@@ -44,7 +44,7 @@ func (s *sqlStore) Events(ctx context.Context, runID string, afterSeq int64) ([]
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var events []Event
 	for rows.Next() {

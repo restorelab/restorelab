@@ -72,7 +72,7 @@ func appliedNumbers(ctx context.Context, db *sql.DB) (map[int]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	applied := map[int]bool{}
 	for rows.Next() {
@@ -132,7 +132,8 @@ func applyOne(ctx context.Context, db *sql.DB, dialect Dialect, m Migration) err
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	// No-op once Commit has succeeded; it only matters on the error returns.
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
 		return err

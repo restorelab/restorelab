@@ -52,6 +52,8 @@ type CheckConfig struct {
 // CheckStatus is the outcome of a single check.
 type CheckStatus string
 
+// The four outcomes a check can report. CheckError is not a failure of the
+// service under test: it means the check itself could not run.
 const (
 	CheckPass    CheckStatus = "pass"
 	CheckFail    CheckStatus = "fail"

@@ -46,7 +46,7 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 	for _, p := range s.providers.Entries() {
 		out.Items = append(out.Items, s.newProviderDTO(p))
 	}
-	writeJSON(w, r, http.StatusOK, out)
+	writeJSON(w, r, out)
 }
 
 // findingDTO is one line of the diagnostic.
@@ -114,7 +114,7 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 			Detail: scrubSecrets(f.Detail),
 		})
 	}
-	writeJSON(w, r, http.StatusOK, dto)
+	writeJSON(w, r, dto)
 }
 
 // providerEntry finds the configuration entry behind a live provider.

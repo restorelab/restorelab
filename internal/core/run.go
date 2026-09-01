@@ -5,6 +5,7 @@ import "time"
 // RunState is the lifecycle state of a recovery run.
 type RunState string
 
+// The stages a drill moves through, in order, followed by the terminal ones.
 const (
 	RunQueued            RunState = "QUEUED"
 	RunDiscoveringBackup RunState = "DISCOVERING_BACKUP"
@@ -33,6 +34,8 @@ func (s RunState) Terminal() bool {
 // StepStatus is the outcome of a single workflow step.
 type StepStatus string
 
+// The states a step passes through. A step that never ran is pending or
+// skipped; done and failed are terminal.
 const (
 	StepPending StepStatus = "pending"
 	StepRunning StepStatus = "running"
@@ -58,6 +61,7 @@ type Step struct {
 // RunResult is the overall verdict of a recovery run.
 type RunResult string
 
+// The three verdicts a finished run can carry.
 const (
 	ResultSuccess  RunResult = "SUCCESS"
 	ResultDegraded RunResult = "DEGRADED" // recovered, but a non-critical check failed or RTO was exceeded
