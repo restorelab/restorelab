@@ -17,6 +17,20 @@ type Config struct {
 	Networks  map[string]Network `yaml:"networks"`
 	Limits    Limits             `yaml:"limits"`
 	Defaults  Defaults           `yaml:"defaults"`
+	Database  Database           `yaml:"database,omitempty"`
+}
+
+// Database says where the drill history is kept.
+//
+// An empty URL means the embedded SQLite file in the RestoreLab directory,
+// which is the default and needs no configuration at all: history has to work
+// without anyone installing anything.
+//
+// A PostgreSQL URL can carry a password, so it is treated as a secret - never
+// rendered in an error, a log, or doctor. Use store.RedactDSN before showing
+// it to anyone.
+type Database struct {
+	URL string `yaml:"url,omitempty"`
 }
 
 // Provider is one Proxmox VE or Proxmox Backup Server endpoint RestoreLab can

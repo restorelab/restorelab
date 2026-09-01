@@ -136,6 +136,39 @@ Values used when a plan or a CLI flag does not specify them: `provider`,
 `backup_provider`, `network`, `node`, `storage`. `defaults.network` must name an
 isolated profile.
 
+## `database` — drill history
+
+RestoreLab records every drill so you can see whether an RTO is degrading,
+when a workload was last validated, and whether a check has been failing for
+weeks.
+
+**It needs no setup.** The first drill creates `~/.restorelab/history.db`, an
+embedded SQLite file, and `restorelab runs list` works from there. There is no
+service to install and nothing to configure.
+
+To keep the history in PostgreSQL instead — for a shared or server deployment
+— point `database.url` at it and run `restorelab db migrate` once:
+
+```yaml
+database:
+  url: postgres://restorelab@db.internal:5432/restorelab
+```
+
+The scheme picks the engine. `sqlite:///path/to/history.db` puts the embedded
+database somewhere other than the default.
+
+PostgreSQL migrations are never applied automatically: a shared database may
+serve several instances, and migrating someone else's schema as a side effect
+of running a command would be rude. The SQLite file belongs to RestoreLab, so
+it migrates itself — after copying the file aside first.
+
+A PostgreSQL URL may carry a password. It is treated as a secret: never
+printed back, never in an error, never in `doctor`.
+
+**A broken history never fails a drill.** Database unreachable, schema behind,
+file corrupt — RestoreLab says so once and carries on without recording. The
+journal does not command the operation.
+
 ## The master key
 
 Provider secrets are sealed with AES-256-GCM. The key is resolved in this order:
@@ -161,4 +194,5 @@ stored token has to be re-entered. Details in [security.md](security.md).
 | --- | --- |
 | `RESTORELAB_CONFIG` | Path to the configuration file. |
 | `RESTORELAB_MASTER_KEY` | Master key (base64 or hex), takes precedence over any key file. |
+| `RESTORELAB_DATABASE_URL` | Drill history database, overrides `database.url`. |
 | `NO_COLOR` | Disable coloured terminal output. |
