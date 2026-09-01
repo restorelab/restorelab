@@ -47,8 +47,10 @@ it did not create.
 ## Status
 
 Alpha, under active development. The Proxmox recovery drill pipeline works
-end to end behind the CLI; the API, the scheduler and the web dashboard come
-after it has been proven against real clusters.
+end to end behind the CLI and has been proven against a real cluster, drill
+history is kept automatically, and the read-only HTTP API serves it. What is
+still ahead: triggering drills over HTTP, the scheduler and the web
+dashboard.
 
 | Area | State |
 | --- | --- |
@@ -61,8 +63,12 @@ after it has been proven against real clusters.
 | Reports: terminal, JSON, self-contained HTML | done |
 | One-command setup (`connect`) creating a least-privilege service account | done |
 | `doctor` diagnostics and `network create` for the isolated bridge | done |
+| Drill history, SQLite by default, PostgreSQL optional (`runs`, `db`) | done |
+| Read-only HTTP API + token auth (`serve`, `token`) | done |
+| Recovery confidence score, computed from the stored history | done |
+| Triggering and cancelling drills over HTTP, workers, queue | next |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
-| REST API + PostgreSQL + workers + web dashboard | planned |
+| Web dashboard | planned |
 
 ## Quick start
 
@@ -149,6 +155,19 @@ rto_target: 5m
 restorelab recovery run examples/plans/postgres-prod.yaml
 ```
 
+## API
+
+Drill history and fleet state are also reachable over HTTP, read-only:
+
+```bash
+bin/restorelab token create dashboard   # prints a token once
+bin/restorelab serve                    # binds 127.0.0.1:8080
+curl http://127.0.0.1:8080/api/v1/health
+```
+
+See [docs/api.md](docs/api.md) for the full surface, authentication and
+pagination.
+
 ## Safety model
 
 RestoreLab holds credentials that can restore, start and delete workloads. It is
@@ -179,6 +198,7 @@ global administrator rights.
 
 | Document | Contents |
 | --- | --- |
+| [docs/api.md](docs/api.md) | The read-only HTTP API: auth, endpoints, pagination, errors |
 | [docs/deployment.md](docs/deployment.md) | Where to run RestoreLab, and how checks reach the guest |
 | [docs/configuration.md](docs/configuration.md) | Config file, providers, network profiles, limits |
 | [docs/recovery-plans.md](docs/recovery-plans.md) | Plan reference and every check type |

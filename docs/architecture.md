@@ -23,6 +23,15 @@ plan        checks        providers/{proxmox,pbs}
               core
 ```
 
+`api` sits beside `cli` rather than under it: both are entry points into the
+same domain, not one wrapping the other. `api` imports `core`, `store`,
+`report`, `config`, `diag` and `version`, and deliberately **not**
+`internal/providers` and **not** `crypto` — unsealing a provider secret needs
+the master key, and keeping that on the CLI's side of an interface
+(`api.ProviderSet`, implemented in `internal/cli/serve.go`) is what stops the
+API package from ever being able to import them. A provider client is
+something the CLI hands the API, not something the API knows how to build.
+
 **Everything points at `core`, `core` points at nothing.** `core` holds the
 domain model (`Workload`, `Backup`, `RecoveryRun`, `CheckResult`) and the four
 interfaces that make the rest replaceable:
@@ -51,12 +60,16 @@ internal/
     checks              check registry, retries, timeouts + ping/tcp/http/dns
     recovery            the engine: workflow, isolation, cleanup, RTO, grading
     report              text / JSON / HTML reports, recovery confidence score
+    diag                doctor's readiness checks, as data (Level, Finding, Report)
+    api                 the read-only HTTP API: routing, auth, pagination, problem+json
     cli                 cobra commands
     version             build metadata
 ```
 
-Planned, not yet present: `api` (REST + SSE), `store` (PostgreSQL via sqlc),
-`jobs` (Asynq workers), `scheduler`, `notifications`, `audit`, `probe`.
+Planned, not yet present: the write paths of `api` — triggering and
+cancelling a drill, cleanup, Server-Sent Events (phase B2) — plans stored in
+the database (phase B3), `jobs` (Asynq workers), `scheduler`,
+`notifications`, `audit`, `probe`.
 
 ## The recovery workflow
 
@@ -132,4 +145,8 @@ cluster it is supposed to protect.
 | v0.3 | Multi-workload plans, dependencies, restore ordering, parallel restores |
 | v0.4 | Remote probes, RBAC, OIDC, PDF reports |
 | v0.5 | LXC, multi-cluster, multiple PBS, recovery confidence, capacity checks |
-| v1.0 | REST API, PostgreSQL persistence, workers, web dashboard, audit, notifications |
+| v1.0 | Write paths on the API (trigger, cancel, queue, workers), web dashboard, audit, notifications |
+
+Delivered ahead of that order: persistence (SQLite and PostgreSQL) and the
+read-only HTTP API, because the confidence score and any dashboard need a
+history to read before anything else can be built on them.
