@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -84,6 +85,45 @@ func TestParseFullPlan(t *testing.T) {
 	}
 	if len(p.Checks) != 2 {
 		t.Fatalf("len(Checks) = %d, want 2", len(p.Checks))
+	}
+}
+
+// A plan must survive being written and read back, because that is exactly
+// what happens to it: the API stores the plan a drill was queued against, and
+// the worker parses that snapshot to execute it. A check whose params did not
+// survive the trip would reach the engine empty - a tcp check with no port, a
+// command check with nothing to run - and fail every drill triggered over
+// HTTP. That defect existed and was caught end to end; this is its home.
+func TestPlanSurvivesAYAMLRoundTrip(t *testing.T) {
+	original, err := Parse([]byte(fullPlan))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	encoded, err := yaml.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	reparsed, err := Parse(encoded)
+	if err != nil {
+		t.Fatalf("Parse() of a marshalled plan failed: %v\n%s", err, encoded)
+	}
+
+	if !reflect.DeepEqual(original, reparsed) {
+		t.Errorf("the plan changed on the way through YAML:\noriginal = %+v\nreparsed = %+v\nencoded:\n%s",
+			original, reparsed, encoded)
+	}
+
+	// Spelled out for the two that matter, so a failure says which check lost
+	// what rather than dumping two structs.
+	if got := reparsed.Checks[0].Params["port"]; got != 22 {
+		t.Errorf("the tcp check lost its port: Params = %+v", reparsed.Checks[0].Params)
+	}
+	if _, ok := reparsed.Checks[0].Params["params"]; ok {
+		t.Error("params were nested under a params key instead of being inlined")
+	}
+	if _, ok := reparsed.Checks[0].Params["retryinterval"]; ok {
+		t.Error("an untagged retryinterval leaked into the params")
 	}
 }
 

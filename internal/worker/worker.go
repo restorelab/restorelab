@@ -64,6 +64,13 @@ type Options struct {
 	Lease time.Duration
 	// Poll is how often an idle worker asks for work. Zero means DefaultPoll.
 	Poll time.Duration
+	// RenewEvery is how often a running drill renews its lease and looks for
+	// a cancellation request. Zero means renewEvery, which is what `serve`
+	// leaves it at. It is settable because it is also the latency of a
+	// cancellation: a test outside this package cannot observe a drill being
+	// stopped mid-flight without waiting a quarter of a minute for it, and a
+	// test that waits a quarter of a minute is a test nobody runs.
+	RenewEvery time.Duration
 
 	Now func() time.Time
 }
@@ -82,10 +89,10 @@ type Worker struct {
 	now         func() time.Time
 
 	// renew is the renewal-and-cancellation tick, renewEvery in production.
-	// It is a field rather than the constant itself so that the tests can
-	// observe a cancellation without waiting a quarter of a minute for it;
-	// nothing outside this package can set it, and nothing production-side
-	// changes it.
+	// It comes from Options.RenewEvery, which exists so that a test can
+	// observe a cancellation without waiting a quarter of a minute for it.
+	// Nothing production-side sets it: `serve` leaves it zero and gets the
+	// constant.
 	renew time.Duration
 
 	// mu guards inFlight, and nothing else: every other field is written
@@ -117,8 +124,11 @@ func New(opts Options) (*Worker, error) {
 		lease:       opts.Lease,
 		poll:        opts.Poll,
 		now:         opts.Now,
-		renew:       renewEvery,
+		renew:       opts.RenewEvery,
 		inFlight:    map[string]bool{},
+	}
+	if w.renew <= 0 {
+		w.renew = renewEvery
 	}
 	if w.log == nil {
 		w.log = slog.Default()

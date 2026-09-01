@@ -184,6 +184,46 @@ func (c *CheckSpec) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// MarshalYAML writes a check back in the flat shape UnmarshalYAML reads.
+//
+// It exists because CheckSpec's params are inlined on the way in, and struct
+// marshalling would put them back under a nested `params:` key alongside a
+// `retryinterval` nobody reads. That asymmetry is invisible while a plan is
+// only ever written for a human to look at - and fatal the moment one is
+// written to be read back. The API stores the plan a drill was queued
+// against and the worker parses that snapshot to execute it: a check whose
+// params did not survive the round trip would reach the engine with nothing
+// in it - a tcp check with no port, a command check with nothing to run -
+// and fail every drill triggered over HTTP.
+//
+// Params are written first so the typed fields always win: a param that
+// collides with a reserved key could not survive a parse anyway, because
+// UnmarshalYAML never puts one into Params.
+func (c CheckSpec) MarshalYAML() (any, error) {
+	out := make(map[string]any, len(c.Params)+len(reservedCheckKeys))
+	for k, v := range c.Params {
+		out[k] = v
+	}
+
+	out["type"] = c.Type
+	if c.Name != "" {
+		out["name"] = c.Name
+	}
+	if c.Timeout != 0 {
+		out["timeout"] = c.Timeout
+	}
+	if c.Retries != 0 {
+		out["retries"] = c.Retries
+	}
+	if c.RetryInterval != 0 {
+		out["retry_interval"] = c.RetryInterval
+	}
+	if c.Critical != nil {
+		out["critical"] = *c.Critical
+	}
+	return out, nil
+}
+
 // IsCritical reports whether a failure of this check fails the whole run.
 // Checks are critical unless explicitly marked otherwise.
 func (c CheckSpec) IsCritical() bool { return c.Critical == nil || *c.Critical }
