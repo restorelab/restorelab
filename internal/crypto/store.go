@@ -108,9 +108,17 @@ func SaveKey(path string, k Key) error {
 		}
 		return fmt.Errorf("create master key file %s: %w", path, err)
 	}
-	defer f.Close()
+	// Safety net for the error path below; the success path closes explicitly.
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.WriteString(Encode(k)); err != nil {
+		return fmt.Errorf("write master key file %s: %w", path, err)
+	}
+	// The close is checked, not deferred away. This is the master key: if the
+	// final flush fails (full disk, I/O error) the file on disk is short or
+	// empty, and returning nil here would tell the user their key is stored
+	// when every secret sealed under it is already unrecoverable.
+	if err := f.Close(); err != nil {
 		return fmt.Errorf("write master key file %s: %w", path, err)
 	}
 	return nil
