@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/restorelab/restorelab/internal/catalog"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/store"
 )
@@ -81,6 +82,19 @@ func problemFor(err error) Problem {
 			"this RestoreLab has no usable history database; see `restorelab db status`")
 	case errors.Is(err, store.ErrAlreadySettled):
 		return newProblem("already-settled", "This drill is already over", http.StatusConflict, err.Error())
+	case errors.Is(err, store.ErrDuplicate):
+		return newProblem("name-taken", "That name is already used by another plan",
+			http.StatusConflict, err.Error())
+	case errors.Is(err, store.ErrVersionConflict):
+		return newProblem("version-conflict", "The plan changed since you read it",
+			http.StatusConflict,
+			"reload the plan, apply your change to the current version, and send it again")
+	// Last of the recognised refusals rather than first: a document that is
+	// invalid is the caller's mistake, and saying so must not shadow a store
+	// error that happens to travel alongside it.
+	case errors.Is(err, catalog.ErrInvalid):
+		return newProblem("invalid-plan", "This document is not a valid recovery plan",
+			http.StatusBadRequest, err.Error())
 	case errors.Is(err, core.ErrNotFound):
 		return newProblem("not-found", "Not found", http.StatusNotFound, err.Error())
 	case errors.Is(err, core.ErrNoBackup):

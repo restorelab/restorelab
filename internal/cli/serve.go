@@ -193,6 +193,7 @@ func (a *app) serve(ctx context.Context, opts serveOptions) error {
 	srv := api.New(api.Options{
 		History:   history,
 		Tokens:    history,
+		Plans:     history,
 		Providers: provs,
 		Config:    cfg,
 		Weights:   report.DefaultWeights(),

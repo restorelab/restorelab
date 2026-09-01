@@ -62,6 +62,7 @@ func (f *fakeHistory) add(run core.RecoveryRun) {
 	f.runs = append([]store.RunSummary{{
 		ID:               run.ID,
 		PlanName:         run.PlanName,
+		PlanID:           run.PlanID,
 		SourceWorkloadID: run.SourceWorkloadID,
 		SourceName:       run.SourceName,
 		State:            run.State,

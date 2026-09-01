@@ -39,6 +39,21 @@ type History interface {
 	RunLease(ctx context.Context, runID string) (owner string, expires time.Time, err error)
 }
 
+// Plans is the catalogue slice of the store this API uses.
+//
+// Narrow on purpose, like History: a handler cannot reach a run through it,
+// and the tests run against a map. It is the same set of methods catalog.Store
+// declares, because the handlers reach the store only through that package -
+// declaring it here rather than aliasing keeps this package's dependency on
+// catalog to the calls themselves.
+type Plans interface {
+	CreatePlan(ctx context.Context, p store.Plan) error
+	UpdatePlan(ctx context.Context, p store.Plan, expected int) error
+	GetPlan(ctx context.Context, ref string) (*store.Plan, error)
+	ListPlans(ctx context.Context, f store.PlanFilter) ([]store.Plan, error)
+	DeletePlan(ctx context.Context, ref string) error
+}
+
 // TokenStore is what authentication needs, and nothing more: it cannot create
 // or revoke a token, only recognise one.
 type TokenStore interface {
@@ -76,6 +91,13 @@ type Options struct {
 	Providers ProviderSet
 	Config    *config.Config
 
+	// Plans is the stored-plan catalogue. It is separate from History because
+	// it is a different table with a different scope guarding it: a
+	// deployment can serve drills without ever letting anyone write a plan
+	// over HTTP simply by leaving this nil, and the routes then answer 503
+	// rather than pretending the catalogue is empty.
+	Plans Plans
+
 	// Weights tunes the confidence score. The zero value means
 	// report.DefaultWeights().
 	Weights report.ConfidenceWeights
@@ -92,6 +114,7 @@ type Server struct {
 	history   History
 	tokens    TokenStore
 	providers ProviderSet
+	plans     Plans
 	cfg       *config.Config
 	weights   report.ConfidenceWeights
 	now       func() time.Time
@@ -120,6 +143,7 @@ func New(opts Options) *Server {
 		history:   opts.History,
 		tokens:    opts.Tokens,
 		providers: opts.Providers,
+		plans:     opts.Plans,
 		cfg:       opts.Config,
 		weights:   opts.Weights,
 		now:       opts.Now,
@@ -130,6 +154,13 @@ func New(opts Options) *Server {
 	}
 	if s.now == nil {
 		s.now = time.Now
+	}
+	// A nil catalogue is a deployment with no usable history database, not a
+	// reason to panic inside a handler. store.Noop answers ErrNoHistory on
+	// all five methods, which problemFor already turns into the 503 the rest
+	// of the API gives in the same situation.
+	if s.plans == nil {
+		s.plans = store.Noop{}
 	}
 	if s.weights == (report.ConfidenceWeights{}) {
 		s.weights = report.DefaultWeights()
@@ -191,6 +222,15 @@ func (s *Server) routes() *http.ServeMux {
 	mux.Handle("GET /api/v1/workloads/{id}", s.authed(s.handleGetWorkload))
 	mux.Handle("GET /api/v1/workloads/{id}/backups", s.authed(s.handleWorkloadBackups))
 	mux.Handle("GET /api/v1/workloads/{id}/confidence", s.authed(s.handleWorkloadConfidence))
+
+	// The catalogue. Reading it is a read; writing it needs `manage`, which
+	// no other scope implies: deciding what a drill is and launching one are
+	// two different powers.
+	mux.Handle("GET /api/v1/plans", s.authed(s.handleListPlans))
+	mux.Handle("GET /api/v1/plans/{ref}", s.authed(s.handleGetPlan))
+	mux.Handle("POST /api/v1/plans", s.requireScope(store.ScopeManage, s.handleCreatePlan))
+	mux.Handle("PUT /api/v1/plans/{ref}", s.requireScope(store.ScopeManage, s.handleUpdatePlan))
+	mux.Handle("DELETE /api/v1/plans/{ref}", s.requireScope(store.ScopeManage, s.handleDeletePlan))
 
 	mux.Handle("GET /api/v1/providers", s.authed(s.handleProviders))
 	mux.Handle("GET /api/v1/doctor", s.authed(s.handleDoctor))
