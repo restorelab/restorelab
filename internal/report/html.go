@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/restorelab/restorelab/internal/core"
@@ -15,14 +16,29 @@ import (
 // plain string so html/template's contextual auto-escaping applies. Nothing
 // in this file bypasses escaping via template.HTML.
 type htmlView struct {
-	Doc          Document
+	Doc Document
+
+	// PageTitle is the browser-tab title and Heading the page's <h1>. The
+	// run ID alone answered neither: a tab reading "94bce70d-..." tells the
+	// reader nothing about which drill they are looking at.
+	PageTitle string
+	Heading   string
+
 	VerdictClass string
 	VerdictLabel string
 	GeneratedAt  string
 	HasBackup    bool
 	HasTemp      bool
-	Steps        []htmlStep
-	Checks       []htmlCheck
+
+	// BackupVerification is Backup.Verified rendered as a phrase instead of
+	// the bare state word, and BackupVerificationClass emphasises it when it
+	// is a genuine failure rather than an absence. See
+	// backupVerificationLabel.
+	BackupVerification      string
+	BackupVerificationClass string
+
+	Steps  []htmlStep
+	Checks []htmlCheck
 }
 
 type htmlStep struct {
@@ -34,6 +50,14 @@ type htmlStep struct {
 
 type htmlCheck struct {
 	CheckDTO
+
+	// Label is what the "Check" column shows. It is CheckDTO.Name whenever
+	// the plan actually named the check, and otherwise whatever the check
+	// recorded about what it tested -- never a restatement of Type, which
+	// has its own column. Empty means "this check has no name and recorded
+	// nothing to identify it"; the template renders a dash.
+	Label string
+
 	StatusClass string
 }
 
@@ -48,12 +72,18 @@ func HTML(w io.Writer, run *core.RecoveryRun) error {
 	doc := NewDocument(run)
 
 	view := htmlView{
-		Doc:          doc,
-		VerdictClass: verdictClass(run.Result),
-		VerdictLabel: string(run.Result),
-		GeneratedAt:  time.Now().UTC().Format("2006-01-02 15:04:05") + " UTC",
-		HasBackup:    doc.Backup != nil,
-		HasTemp:      doc.TempWorkloadID != "",
+		Doc:                doc,
+		PageTitle:          pageTitle(doc),
+		Heading:            heading(doc),
+		VerdictClass:       verdictClass(run.Result),
+		VerdictLabel:       string(run.Result),
+		GeneratedAt:        time.Now().UTC().Format("2006-01-02 15:04:05") + " UTC",
+		HasBackup:          doc.Backup != nil,
+		HasTemp:            doc.TempWorkloadID != "",
+		BackupVerification: backupVerificationLabel(doc.Backup),
+	}
+	if doc.Backup != nil && doc.Backup.Verified == string(core.VerificationFailed) {
+		view.BackupVerificationClass = "bad"
 	}
 
 	maxDur := 0.0
@@ -81,11 +111,168 @@ func HTML(w io.Writer, run *core.RecoveryRun) error {
 	for _, c := range doc.Checks {
 		view.Checks = append(view.Checks, htmlCheck{
 			CheckDTO:    c,
+			Label:       checkLabel(c),
 			StatusClass: statusClass(c.Status),
 		})
 	}
 
 	return htmlTemplate.Execute(w, view)
+}
+
+// workloadLabel names the workload a reader recognises: the source name when
+// there is one, its id otherwise.
+func workloadLabel(doc Document) string {
+	if doc.SourceName != "" {
+		return doc.SourceName
+	}
+	if doc.SourceWorkloadID != "" {
+		return doc.SourceWorkloadID
+	}
+	if doc.PlanName != "" {
+		return doc.PlanName
+	}
+	return "recovery drill"
+}
+
+// pageTitle is the <title>, i.e. what a browser tab, a bookmark and an
+// archived file name show. The run ID is a UUID and identifies nothing to a
+// human, so the title answers the three questions somebody scanning a folder
+// of reports actually has: which workload, when, and did it pass. The ID
+// stays on the page itself (header and footer).
+func pageTitle(doc Document) string {
+	parts := []string{workloadLabel(doc)}
+	if !doc.StartedAt.IsZero() {
+		parts = append(parts, doc.StartedAt.UTC().Format("2006-01-02"))
+	}
+	if doc.Result != "" {
+		parts = append(parts, doc.Result)
+	}
+	return strings.Join(parts, " · ") + " · RestoreLab"
+}
+
+// heading is the page's <h1>. It leaves the verdict out because the verdict
+// badge sits right next to it.
+func heading(doc Document) string {
+	return "Recovery drill · " + workloadLabel(doc)
+}
+
+// backupVerificationLabel renders BackupDTO.Verified as a phrase rather than
+// the bare state word, which read as a stray "none" in the middle of the
+// backup line.
+//
+// Verified carries core.VerificationState as a string, so it is one of "ok",
+// "failed", "none" or "unknown" -- plus "" for a backup whose provider never
+// set the field at all.
+//
+// "none" is the state that needed the most care. It means "the provider
+// reported no verification", which covers two very different situations: a
+// PBS snapshot that PBS could have verified and never did (worth flagging),
+// and a vzdump backup, whose format has no verification concept at all
+// (nothing to flag). Both providers map an absent verification onto
+// VerificationNone, so the state alone cannot tell them apart -- but the
+// document also carries the backup format, which can: the PBS provider
+// always sets Format to "pbs", and PVE reports a PBS-backed storage as
+// "pbs-vm"/"pbs-ct". Anything else is a vzdump-style backup that simply does
+// not carry the information.
+func backupVerificationLabel(b *BackupDTO) string {
+	if b == nil {
+		return ""
+	}
+	switch b.Verified {
+	case string(core.VerificationOK):
+		return "verified"
+	case string(core.VerificationFailed):
+		return "verification failed"
+	case string(core.VerificationNone):
+		if isPBSFormat(b.Format) {
+			return "never verified"
+		}
+		return "verification not applicable to this backup format"
+	case "":
+		return "verification not reported"
+	default:
+		return "verification state unknown"
+	}
+}
+
+// isPBSFormat reports whether a backup format string denotes a Proxmox Backup
+// Server snapshot, the only kind of backup RestoreLab reads that carries a
+// verification state.
+func isPBSFormat(format string) bool {
+	return format == "pbs" || strings.HasPrefix(format, "pbs-")
+}
+
+// checkLabel is what the "Check" column shows.
+//
+// A check the plan did not name is named by plan.CheckSpec.DisplayName, which
+// falls back to the type in capitals: an ad-hoc `--check cmd:...` reaches the
+// report as name "COMMAND", type "command", so the Check column shouted back
+// the Type column and said nothing about what actually ran. When the name is
+// nothing but the type, fall back to the evidence the check itself recorded.
+func checkLabel(c CheckDTO) string {
+	if c.Name != "" && !strings.EqualFold(c.Name, c.Type) {
+		return c.Name
+	}
+	return commandLine(c.Details)
+}
+
+// commandLine recovers the command a "command" check ran from the argv it
+// records in its details, unwrapping the shell that internal/checks wraps a
+// plain `run:` line in ("/bin/sh -c systemctl is-active postgresql" is
+// reported as "systemctl is-active postgresql").
+//
+// Details survives a store round-trip as JSON, so argv arrives either as the
+// []string it was built as or as the []any that came back out of a database
+// row; both are handled.
+func commandLine(details map[string]any) string {
+	argv := stringSlice(details["argv"])
+	if len(argv) == 0 {
+		return ""
+	}
+	if len(argv) >= 3 && isShellFlag(argv[len(argv)-2]) {
+		argv = argv[len(argv)-1:]
+	}
+	return truncateLabel(strings.Join(argv, " "), 120)
+}
+
+// isShellFlag reports whether flag is the "run this line" flag of one of the
+// interpreters internal/checks knows how to drive.
+func isShellFlag(flag string) bool {
+	switch flag {
+	case "-c", "/c", "-Command":
+		return true
+	default:
+		return false
+	}
+}
+
+func stringSlice(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return t
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, e := range t {
+			s, ok := e.(string)
+			if !ok {
+				return nil
+			}
+			out = append(out, s)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// truncateLabel keeps a derived label from stretching the table out of shape.
+// It counts runes, not bytes, so it never cuts a multi-byte character in half.
+func truncateLabel(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return strings.TrimRight(string(r[:max]), " ") + "..."
 }
 
 func verdictClass(result core.RunResult) string {
@@ -130,7 +317,7 @@ const htmlTemplateSource = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Recovery Run {{.Doc.RunID}}</title>
+<title>{{.PageTitle}}</title>
 <style>
   :root{
     --bg:#f5f6f8; --panel:#ffffff; --border:#dde1e6; --text:#1b1f24; --muted:#5b6470;
@@ -165,6 +352,8 @@ const htmlTemplateSource = `<!doctype html>
   .grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(200px,1fr)); gap:16px;}
   .field .k{color:var(--muted); font-size:12px; margin-bottom:2px;}
   .field .v{font-size:14px;}
+  .field .note{color:var(--muted); font-size:12px; margin-top:2px;}
+  .field .note.bad{color:var(--bad); font-weight:600;}
   .steps{display:flex; flex-direction:column; gap:10px;}
   .step{display:grid; grid-template-columns:22px 1fr auto; align-items:center; gap:10px;}
   .step .name{font-size:13px;}
@@ -201,8 +390,8 @@ const htmlTemplateSource = `<!doctype html>
 <div class="wrap">
   <header>
     <div>
-      <h1>Recovery Run {{.Doc.RunID}}</h1>
-      <div class="sub">Plan {{.Doc.PlanName}} &middot; generated {{.GeneratedAt}}</div>
+      <h1>{{.Heading}}</h1>
+      <div class="sub">Plan {{.Doc.PlanName}} &middot; run {{.Doc.RunID}} &middot; generated {{.GeneratedAt}}</div>
     </div>
     <span class="badge {{.VerdictClass}}">{{.VerdictLabel}}</span>
   </header>
@@ -223,7 +412,8 @@ const htmlTemplateSource = `<!doctype html>
       <div class="field">
         <div class="k">Backup</div>
         {{if .HasBackup}}
-        <div class="v">{{.Doc.Backup.CreatedAt.Format "2006-01-02 15:04:05"}} UTC ({{.Doc.Backup.Age}}, {{.Doc.Backup.Size}}, {{.Doc.Backup.Verified}})</div>
+        <div class="v">{{.Doc.Backup.CreatedAt.Format "2006-01-02 15:04:05"}} UTC ({{.Doc.Backup.Age}}, {{.Doc.Backup.Size}})</div>
+        <div class="note{{if .BackupVerificationClass}} {{.BackupVerificationClass}}{{end}}">{{.BackupVerification}}</div>
         {{else}}
         <div class="v empty">none</div>
         {{end}}
@@ -271,7 +461,7 @@ const htmlTemplateSource = `<!doctype html>
       <tbody>
         {{range .Checks}}
         <tr>
-          <td>{{.Name}}</td>
+          <td>{{if .Label}}{{.Label}}{{else}}<span class="empty">&mdash;</span>{{end}}</td>
           <td>{{.Type}}</td>
           <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
           <td>{{.Duration}}</td>
