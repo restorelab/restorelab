@@ -14,15 +14,30 @@ import (
 	"github.com/restorelab/restorelab/internal/store"
 )
 
-// newTestHistory gives a real, migrated SQLite history in a throwaway
-// directory — the same engine a user gets, with nothing installed.
-func newTestHistory(t *testing.T) store.Store {
+// newTestHistoryAt gives a real, migrated SQLite history in a throwaway
+// directory — the same engine a user gets, with nothing installed — and says
+// which file it lives in.
+//
+// The path is handed back because one caller needs to open the same database
+// a second time: a run's plan snapshot and its plan_version are columns no
+// endpoint renders, and a second handle on the file is the only way to read
+// them without claiming the run away from the worker that should execute it.
+func newTestHistoryAt(t *testing.T) (store.Store, string) {
 	t.Helper()
-	s, err := store.OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "history.db"))
+
+	path := filepath.Join(t.TempDir(), "history.db")
+	s, err := store.OpenSQLite(context.Background(), path)
 	if err != nil {
 		t.Fatalf("OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
+	return s, path
+}
+
+// newTestHistory is newTestHistoryAt for the tests that only need the store.
+func newTestHistory(t *testing.T) store.Store {
+	t.Helper()
+	s, _ := newTestHistoryAt(t)
 	return s
 }
 

@@ -56,19 +56,24 @@ var tempWorkloadPath = restorePath + "/" + tempVMID
 // --- the history -------------------------------------------------------------
 
 // newQueueStore returns a real, migrated drill history: SQLite by default,
-// and PostgreSQL when RESTORELAB_TEST_DATABASE_URL points at a server.
+// and PostgreSQL when RESTORELAB_TEST_DATABASE_URL points at a server. It
+// also reports how to open that same database a second time, which is what
+// rawHistory (plans_test.go) is for.
 //
 // The engine matters here more than anywhere else in this package. The claim
 // is the one query RestoreLab writes twice - SELECT ... FOR UPDATE SKIP
 // LOCKED on PostgreSQL, an immediate transaction on SQLite - and this file is
 // the only place where the complete assembly, API and worker and cluster,
 // ever meets it.
-func newQueueStore(t *testing.T) store.Store {
+func newQueueStore(t *testing.T) (store.Store, rawHistory) {
 	t.Helper()
 
 	dsn := os.Getenv("RESTORELAB_TEST_DATABASE_URL")
 	if dsn == "" {
-		return newTestHistory(t)
+		s, path := newTestHistoryAt(t)
+		// busy_timeout only: this second handle reads, and everything else
+		// sqliteDSN sets is a property of the file the store already opened.
+		return s, rawHistory{driver: "sqlite", dsn: path + "?_pragma=busy_timeout(5000)"}
 	}
 
 	ctx := context.Background()
@@ -109,7 +114,7 @@ func newQueueStore(t *testing.T) store.Store {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	return s
+	return s, rawHistory{driver: "pgx", dsn: scoped}
 }
 
 // sanitiseSchema turns a Go test name into a bare PostgreSQL identifier.
@@ -232,12 +237,16 @@ var (
 type queueFixture struct {
 	pve     *fakePVE
 	history store.Store
+	raw     rawHistory
 	cfg     *config.Config
 	server  *httptest.Server
 
-	// operate is a token that may trigger; read may not. Both are real
-	// tokens in the real store.
+	// operate is a token that may trigger; manage may write the catalogue;
+	// read may do neither. All three are real tokens in the real store, and
+	// none of them holds the other's scope - which is the separation the
+	// stored-plan phase introduced and the only way to prove it end to end.
 	operate string
+	manage  string
 	read    string
 }
 
@@ -278,15 +287,21 @@ func newQueueFixture(t *testing.T, gate *requestGate) *queueFixture {
 		TokenID:  leakProviderTokenID, TokenSecret: leakProviderSecret,
 	}}
 
-	history := newQueueStore(t)
+	history, raw := newQueueStore(t)
 
-	f := &queueFixture{pve: pve, history: history, cfg: cfg}
+	f := &queueFixture{pve: pve, history: history, raw: raw, cfg: cfg}
 	f.operate = mintToken(t, history, "e2e-operate", store.ScopeRead, store.ScopeOperate)
+	f.manage = mintToken(t, history, "e2e-manage", store.ScopeManage)
 	f.read = mintToken(t, history, "e2e-read", store.ScopeRead)
 
+	// Plans is the same store as History, wired separately because the API
+	// declares them as two interfaces: the catalogue is what an operator
+	// edits, the history is what the product wrote, and a deployment could
+	// legitimately grant different access to each.
 	f.server = httptest.NewServer(api.New(api.Options{
 		History:   history,
 		Tokens:    history,
+		Plans:     history,
 		Providers: queueProviders{provider: provider, entries: cfg.Providers},
 		Config:    cfg,
 	}))
