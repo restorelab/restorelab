@@ -20,8 +20,14 @@ import (
 // twice - a float to compare, a string to display - exactly as the report
 // document does.
 type runSummaryDTO struct {
-	ID               string `json:"id"`
-	PlanName         string `json:"plan_name"`
+	ID       string `json:"id"`
+	PlanName string `json:"plan_name"`
+	// PlanID is the stored plan this drill came from, absent when the drill
+	// was described in the request rather than named. It is omitempty rather
+	// than always present because "" would read as a plan whose id is empty,
+	// and because a plan deleted later leaves its runs with no id at all -
+	// they keep their name and their snapshot, which is what a report needs.
+	PlanID           string `json:"plan_id,omitempty"`
 	SourceWorkloadID string `json:"source_workload_id"`
 	SourceName       string `json:"source_name,omitempty"`
 
@@ -44,6 +50,7 @@ func newRunSummaryDTO(r store.RunSummary) runSummaryDTO {
 	dto := runSummaryDTO{
 		ID:               r.ID,
 		PlanName:         r.PlanName,
+		PlanID:           r.PlanID,
 		SourceWorkloadID: r.SourceWorkloadID,
 		SourceName:       r.SourceName,
 		State:            string(r.State),

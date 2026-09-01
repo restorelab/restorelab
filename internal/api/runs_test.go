@@ -235,3 +235,45 @@ func TestEventsComeBackInOrderAndCanBeResumed(t *testing.T) {
 		t.Fatalf("resuming after seq 2 gave %+v, want only seq 3", rest.Items)
 	}
 }
+
+// A listing carries the provenance too, not only the full run: a dashboard
+// grouping drills by plan reads the listing, and would otherwise have to
+// fetch every run to find out which plan produced it.
+func TestAListingCarriesThePlanItCameFrom(t *testing.T) {
+	h := newFakeHistory()
+	// add prepends, the way the real listing orders: the last one added is
+	// the most recent, and comes back first.
+	h.add(core.RecoveryRun{
+		ID: "adhoc-run", PlanName: "adhoc-104",
+		SourceWorkloadID: "104", State: core.RunSuccess,
+		StartedAt: time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC),
+	})
+	h.add(core.RecoveryRun{
+		ID: "run-from-a-plan", PlanName: "web-tier", PlanID: "plan-id", PlanVersion: 2,
+		SourceWorkloadID: "110", State: core.RunSuccess,
+		StartedAt: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC),
+	})
+	s, _ := newTestServer(t, Options{History: h})
+
+	rec := send(s, http.MethodGet, testSecret, "/api/v1/recovery-runs", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	var out page[runSummaryDTO]
+	decodePlan(t, rec, &out)
+	if len(out.Items) != 2 {
+		t.Fatalf("listed %d runs, want 2", len(out.Items))
+	}
+	if out.Items[0].PlanID != "plan-id" {
+		t.Errorf("PlanID = %q, want plan-id", out.Items[0].PlanID)
+	}
+	// An ad-hoc drill has no plan, and omitempty must leave the field out
+	// rather than report an empty one.
+	if out.Items[1].PlanID != "" {
+		t.Errorf("an ad-hoc run reports PlanID %q, want none", out.Items[1].PlanID)
+	}
+	if !strings.Contains(rec.Body.String(), `"plan_id":"plan-id"`) {
+		t.Errorf("the wire form does not carry plan_id:\n%s", rec.Body)
+	}
+}
