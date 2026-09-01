@@ -45,6 +45,12 @@ const maxLoginBody = 4 << 10
 // NewSession mints a session. It returns the secret - the only time it will
 // ever exist - and the record to store.
 func NewSession(tokenID, userAgent string, now time.Time) (string, store.Session, error) {
+	// UTC, because the response says so out loud. The store writes UTC and
+	// reads it back as UTC, so GET /session already answers in UTC; leaving
+	// this one as the process's local time would make the two routes render
+	// the same session with two different offsets.
+	now = now.UTC()
+
 	raw := make([]byte, tokenEntropyBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", store.Session{}, fmt.Errorf("api: read random bytes: %w", err)

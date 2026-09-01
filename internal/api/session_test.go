@@ -486,3 +486,73 @@ func (f *sessionFixture) loginCookie(t *testing.T) *http.Cookie {
 	t.Fatalf("no session cookie in the login response (status %d)", resp.StatusCode)
 	return nil
 }
+
+// POST /session and GET /session render the same session; they must render it
+// the same way.
+//
+// The store writes UTC and reads it back as UTC, so GET has always answered in
+// UTC. A login answering in the server's local offset made one session carry
+// two timestamps that only a careful reader would notice were the same
+// instant. The clock here is deliberately not UTC: with a UTC clock the bug
+// is invisible, which is how it survived the first pass.
+func TestBothSessionRoutesRenderTheSameInstant(t *testing.T) {
+	paris := time.FixedZone("CEST", 2*60*60)
+	now := time.Date(2026, 9, 1, 14, 0, 0, 0, paris)
+
+	sessions := newFakeSessions()
+	s, tokens := newTestServer(t, Options{
+		Sessions: sessions,
+		Now:      func() time.Time { return now },
+	})
+	tok := tokens.byHash[HashToken(testSecret)]
+	sessions.tokens[tok.ID] = tok
+
+	srv := httptest.NewServer(s)
+	t.Cleanup(srv.Close)
+
+	resp, err := srv.Client().Post(srv.URL+"/api/v1/session", "application/json",
+		strings.NewReader(`{"token":"`+testSecret+`"}`))
+	if err != nil {
+		t.Fatalf("POST /session: %v", err)
+	}
+	var posted struct {
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&posted); err != nil {
+		t.Fatalf("decode login: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	var cookie *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == SessionCookie {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("no session cookie in the login response")
+	}
+
+	if _, offset := posted.ExpiresAt.Zone(); offset != 0 {
+		t.Errorf("the login rendered expires_at with offset %d; every other timestamp this API serves is UTC", offset)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/session", nil)
+	req.AddCookie(cookie)
+	got, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /session: %v", err)
+	}
+	defer func() { _ = got.Body.Close() }()
+
+	var read struct {
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := json.NewDecoder(got.Body).Decode(&read); err != nil {
+		t.Fatalf("decode read: %v", err)
+	}
+	if read.ExpiresAt.Format(time.RFC3339Nano) != posted.ExpiresAt.Format(time.RFC3339Nano) {
+		t.Errorf("the two routes render one session two ways: POST %s, GET %s",
+			posted.ExpiresAt.Format(time.RFC3339Nano), read.ExpiresAt.Format(time.RFC3339Nano))
+	}
+}
