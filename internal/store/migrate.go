@@ -119,7 +119,7 @@ func applyMigrations(ctx context.Context, db *sql.DB, dialect string) ([]int, er
 
 	var applied []int
 	for _, m := range pending {
-		if err := applyOne(ctx, db, m); err != nil {
+		if err := applyOne(ctx, db, Dialect(dialect), m); err != nil {
 			return applied, fmt.Errorf("store: migration %04d_%s: %w", m.Number, m.Name, err)
 		}
 		applied = append(applied, m.Number)
@@ -127,7 +127,7 @@ func applyMigrations(ctx context.Context, db *sql.DB, dialect string) ([]int, er
 	return applied, nil
 }
 
-func applyOne(ctx context.Context, db *sql.DB, m Migration) error {
+func applyOne(ctx context.Context, db *sql.DB, dialect Dialect, m Migration) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -137,9 +137,8 @@ func applyOne(ctx context.Context, db *sql.DB, m Migration) error {
 	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
 		return err
 	}
-	// TODO(task 4): route this through rebind once the dialect shim exists.
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO schema_migrations (number, name, applied_at) VALUES (?, ?, ?)`,
+		rebind(dialect, `INSERT INTO schema_migrations (number, name, applied_at) VALUES (?, ?, ?)`),
 		m.Number, m.Name, formatTime(nowUTC()),
 	); err != nil {
 		return err

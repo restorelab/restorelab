@@ -2,23 +2,8 @@ package store
 
 import (
 	"context"
-	"database/sql"
-	"path/filepath"
 	"testing"
-
-	_ "modernc.org/sqlite"
 )
-
-// Temporary until Task 4 provides the real helper.
-func openTestSQLite(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
-}
 
 func TestMigrationsArePairedAcrossDialects(t *testing.T) {
 	sqlite, err := loadMigrations("sqlite")
