@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -121,5 +122,46 @@ func TestJSON_RTOTargetOmittedWhenUnset(t *testing.T) {
 	}
 	if _, ok := raw["rto_target"]; ok {
 		t.Errorf("expected rto_target to be omitted when RTOTarget is zero, got %v", raw["rto_target"])
+	}
+}
+
+func TestNewDocumentIsTheDocumentJSONWrites(t *testing.T) {
+	run := fixtureRunFailed()
+
+	doc := NewDocument(run)
+	if doc.Schema != SchemaVersion {
+		t.Errorf("Schema = %q, want %q", doc.Schema, SchemaVersion)
+	}
+	if doc.RunID != run.ID {
+		t.Errorf("RunID = %q, want %q", doc.RunID, run.ID)
+	}
+
+	// Ce que NewDocument construit et ce que JSON écrit doivent être le même
+	// document : deux chemins qui divergeraient, c'est un rapport qui ment
+	// selon la porte par laquelle on entre.
+	var buf bytes.Buffer
+	if err := JSON(&buf, run); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	direct, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var fromWriter, fromDoc map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &fromWriter); err != nil {
+		t.Fatalf("unmarshal writer output: %v", err)
+	}
+	if err := json.Unmarshal(direct, &fromDoc); err != nil {
+		t.Fatalf("unmarshal document: %v", err)
+	}
+	if !reflect.DeepEqual(fromWriter, fromDoc) {
+		t.Error("JSON() and NewDocument() produced different documents")
+	}
+}
+
+func TestNewBackupDTOOnNilIsNil(t *testing.T) {
+	if got := NewBackupDTO(nil); got != nil {
+		t.Fatalf("NewBackupDTO(nil) = %+v, want nil", got)
 	}
 }

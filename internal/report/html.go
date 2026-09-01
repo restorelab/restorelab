@@ -10,7 +10,7 @@ import (
 )
 
 // htmlView is what the HTML template renders. It is built entirely from
-// Document (report.toDocument), never from core types directly, and every
+// Document (report.NewDocument), never from core types directly, and every
 // free-text field (Message, Notes, names, ...) reaches the template as a
 // plain string so html/template's contextual auto-escaping applies. Nothing
 // in this file bypasses escaping via template.HTML.
@@ -45,7 +45,7 @@ func HTML(w io.Writer, run *core.RecoveryRun) error {
 		return fmt.Errorf("report: run is nil")
 	}
 
-	doc := toDocument(run)
+	doc := NewDocument(run)
 
 	view := htmlView{
 		Doc:          doc,

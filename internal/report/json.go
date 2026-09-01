@@ -131,13 +131,17 @@ type CheckDTO struct {
 // JSON writes run to w as the versioned Document described by this file's
 // doc comment. It never marshals core types directly.
 func JSON(w io.Writer, run *core.RecoveryRun) error {
-	doc := toDocument(run)
+	doc := NewDocument(run)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
 }
 
-func toDocument(run *core.RecoveryRun) Document {
+// NewDocument builds the stable JSON document for a run without writing it
+// anywhere. JSON writes exactly this; the HTTP API serialises it as the body
+// of GET /api/v1/recovery-runs/{id}, so both surfaces answer with the same
+// schema.
+func NewDocument(run *core.RecoveryRun) Document {
 	doc := Document{
 		Schema: SchemaVersion,
 
@@ -153,7 +157,7 @@ func toDocument(run *core.RecoveryRun) Document {
 		TempName:         run.TempName,
 		Node:             run.Node,
 
-		Backup: toBackupDTO(run.Backup),
+		Backup: NewBackupDTO(run.Backup),
 
 		State:  string(run.State),
 		Result: string(run.Result),
@@ -184,13 +188,16 @@ func toDocument(run *core.RecoveryRun) Document {
 		doc.Steps = append(doc.Steps, toStepDTO(s))
 	}
 	for _, c := range run.Checks {
-		doc.Checks = append(doc.Checks, toCheckDTO(c))
+		doc.Checks = append(doc.Checks, NewCheckDTO(c))
 	}
 
 	return doc
 }
 
-func toBackupDTO(b *core.Backup) *BackupDTO {
+// NewBackupDTO renders a backup in the wire form every RestoreLab surface
+// uses. It returns nil for a nil backup: "no backup" and "an empty backup"
+// must stay distinguishable to a consumer.
+func NewBackupDTO(b *core.Backup) *BackupDTO {
 	if b == nil {
 		return nil
 	}
@@ -234,7 +241,8 @@ func toStepDTO(s core.Step) StepDTO {
 	}
 }
 
-func toCheckDTO(c core.CheckResult) CheckDTO {
+// NewCheckDTO renders one check result in its wire form.
+func NewCheckDTO(c core.CheckResult) CheckDTO {
 	return CheckDTO{
 		Name: c.Name,
 		Type: c.Type,
