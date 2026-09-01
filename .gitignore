@@ -26,8 +26,14 @@ config.local.yaml
 
 # Frontend
 node_modules/
-web/dist/
 web/.vite/
+
+# The dashboard build lands in internal/ui/dist, where go:embed picks it up.
+# The .gitkeep is committed so that `go build ./...` stays green on a machine
+# that has never run the front-end build: go:embed fails at compile time on a
+# directory with nothing embeddable in it.
+internal/ui/dist/*
+!internal/ui/dist/.gitkeep
 
 # Session handover notes, local to this working copy
 /STATE.md
