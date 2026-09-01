@@ -101,6 +101,8 @@ cleans everything up.`,
 		newCleanupCmd(a),
 		newRunsCmd(a),
 		newDBCmd(a),
+		newServeCmd(a),
+		newTokenCmd(a),
 		newVersionCmd(a),
 	)
 	return cmd
