@@ -69,6 +69,23 @@ func HashToken(secret string) string {
 // tokenKey types the request-context key holding the authenticated token.
 type tokenKey struct{}
 
+// sessionKey types the request-context key holding the session a request came
+// in on, when it came in on one.
+type sessionKey struct{}
+
+// tokenFrom returns the token a request was authenticated with.
+func tokenFrom(r *http.Request) *store.APIToken {
+	tok, _ := r.Context().Value(tokenKey{}).(*store.APIToken)
+	return tok
+}
+
+// sessionFrom returns the session a request was authenticated with, or nil
+// when it arrived on a Bearer token.
+func sessionFrom(r *http.Request) *store.Session {
+	sess, _ := r.Context().Value(sessionKey{}).(*store.Session)
+	return sess
+}
+
 // authed wraps a handler so that it only runs for an authenticated caller.
 //
 // It is requireScope(read), which is why every read route reads exactly as it
@@ -84,7 +101,7 @@ func (s *Server) authed(h http.HandlerFunc) http.Handler {
 // caller ends up regenerating a token that was never the problem.
 func (s *Server) requireScope(scope string, h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		tok, ok := s.authenticate(w, r)
+		tok, sess, ok := s.authenticate(w, r)
 		if !ok {
 			return
 		}
@@ -94,7 +111,11 @@ func (s *Server) requireScope(scope string, h http.HandlerFunc) http.Handler {
 				fmt.Sprintf("this endpoint needs the %q scope; create a token with `restorelab token create <name> --operate`", scope)))
 			return
 		}
-		h(w, r.WithContext(context.WithValue(r.Context(), tokenKey{}, tok)))
+		ctx := context.WithValue(r.Context(), tokenKey{}, tok)
+		if sess != nil {
+			ctx = context.WithValue(ctx, sessionKey{}, sess)
+		}
+		h(w, r.WithContext(ctx))
 	})
 }
 
@@ -105,19 +126,32 @@ func (s *Server) requireScope(scope string, h http.HandlerFunc) http.Handler {
 // confirm to a guesser that the shape of their guess was right.
 const rejection = "this request needs a valid API token: send `Authorization: Bearer rl_...` (create one with `restorelab token create`)"
 
-// authenticate returns the live token the request carries, answering the
-// request itself when it carries none.
+// authenticate returns the live token the request carries, and the session it
+// came in on when it came in on one, answering the request itself when it
+// carries no usable credential.
 //
 // It returns the token rather than a bare bool because authorisation needs
 // it: the scopes are on the record, and a second lookup to read them would be
 // a second chance for the two answers to disagree.
-func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*store.APIToken, bool) {
-	secret, ok := bearerToken(r.Header.Get("Authorization"))
-	if !ok {
-		writeUnauthorized(w, r)
-		return nil, false
+//
+// The Authorization header always decides when it is present: a request
+// carrying both a header and a cookie is never ambiguous, and the CLI's
+// credential is never quietly overridden by a browser's.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*store.APIToken, *store.Session, bool) {
+	if secret, ok := bearerToken(r.Header.Get("Authorization")); ok {
+		tok, ok := s.authenticateToken(w, r, secret)
+		return tok, nil, ok
 	}
+	if c, err := r.Cookie(SessionCookie); err == nil && c.Value != "" {
+		return s.authenticateSession(w, r, c.Value)
+	}
+	writeUnauthorized(w, r)
+	return nil, nil, false
+}
 
+// authenticateToken resolves a Bearer credential. This is the body
+// authenticate had before sessions existed, unchanged.
+func (s *Server) authenticateToken(w http.ResponseWriter, r *http.Request, secret string) (*store.APIToken, bool) {
 	hash := HashToken(secret)
 	rec, err := s.tokens.TokenByHash(r.Context(), hash)
 	switch {
@@ -144,6 +178,38 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*store.AP
 
 	s.touch.record(r.Context(), s.tokens, rec.ID, s.now())
 	return rec, true
+}
+
+// authenticateSession resolves a session cookie, and guards it against being
+// used from another origin.
+func (s *Server) authenticateSession(w http.ResponseWriter, r *http.Request, secret string) (*store.APIToken, *store.Session, bool) {
+	sess, tok, err := s.sessions.SessionByHash(r.Context(), HashToken(secret), s.now())
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		writeUnauthorized(w, r)
+		return nil, nil, false
+	case err != nil:
+		writeProblem(w, r, problemFor(err))
+		return nil, nil, false
+	case sess == nil || tok == nil:
+		writeUnauthorized(w, r)
+		return nil, nil, false
+	}
+
+	// The CSRF guard belongs here: it is the presence of a cookie a browser
+	// attaches on its own that makes a cross-origin write possible, not the
+	// method and not the route. A Bearer request never reaches this function,
+	// so a CLI is never refused for a header browsers send and clients do not.
+	if !safeMethod(r.Method) && !sameOriginRequest(r) {
+		writeProblem(w, r, newProblem("cross-origin", "This request came from another origin",
+			http.StatusForbidden,
+			"a session cookie only writes from the dashboard it was issued to; "+
+				"an API client should send `Authorization: Bearer rl_...` instead"))
+		return nil, nil, false
+	}
+
+	s.touch.record(r.Context(), s.tokens, tok.ID, s.now())
+	return tok, sess, true
 }
 
 // bearerToken extracts the credential from an Authorization header.

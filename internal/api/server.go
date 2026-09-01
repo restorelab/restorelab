@@ -61,6 +61,16 @@ type TokenStore interface {
 	TouchToken(ctx context.Context, id string, at time.Time) error
 }
 
+// SessionStore is what the session routes need, and nothing more.
+//
+// DeleteExpiredSessions is deliberately absent: the sweep rides along with
+// CreateSession, so the API has no reason to be able to empty this table.
+type SessionStore interface {
+	CreateSession(ctx context.Context, s store.Session, now time.Time) error
+	SessionByHash(ctx context.Context, hash string, now time.Time) (*store.Session, *store.APIToken, error)
+	DeleteSession(ctx context.Context, hash string) error
+}
+
 // ProviderSet hands the API live provider clients.
 //
 // The CLI implements it. That is deliberate: unsealing a provider secret
@@ -98,6 +108,11 @@ type Options struct {
 	// rather than pretending the catalogue is empty.
 	Plans Plans
 
+	// Sessions backs the dashboard's cookie. Nil is a deployment with no
+	// usable history database: the session routes then answer 503, the same
+	// way the catalogue does, rather than pretending a login failed.
+	Sessions SessionStore
+
 	// Weights tunes the confidence score. The zero value means
 	// report.DefaultWeights().
 	Weights report.ConfidenceWeights
@@ -115,6 +130,7 @@ type Server struct {
 	tokens    TokenStore
 	providers ProviderSet
 	plans     Plans
+	sessions  SessionStore
 	cfg       *config.Config
 	weights   report.ConfidenceWeights
 	now       func() time.Time
@@ -144,6 +160,7 @@ func New(opts Options) *Server {
 		tokens:    opts.Tokens,
 		providers: opts.Providers,
 		plans:     opts.Plans,
+		sessions:  opts.Sessions,
 		cfg:       opts.Config,
 		weights:   opts.Weights,
 		now:       opts.Now,
@@ -161,6 +178,12 @@ func New(opts Options) *Server {
 	// of the API gives in the same situation.
 	if s.plans == nil {
 		s.plans = store.Noop{}
+	}
+	// Same reasoning for the session table, and the same double: a login
+	// against a deployment with no history database answers 503 rather than
+	// panicking inside the handler that was about to record the session.
+	if s.sessions == nil {
+		s.sessions = store.Noop{}
 	}
 	if s.weights == (report.ConfidenceWeights{}) {
 		s.weights = report.DefaultWeights()
@@ -222,6 +245,12 @@ func (s *Server) routes() *http.ServeMux {
 	mux.Handle("GET /api/v1/workloads/{id}", s.authed(s.handleGetWorkload))
 	mux.Handle("GET /api/v1/workloads/{id}/backups", s.authed(s.handleWorkloadBackups))
 	mux.Handle("GET /api/v1/workloads/{id}/confidence", s.authed(s.handleWorkloadConfidence))
+
+	// The session. POST authenticates nothing beforehand: it is what creates
+	// the credential every other route checks.
+	mux.HandleFunc("POST /api/v1/session", s.handleCreateSession)
+	mux.Handle("GET /api/v1/session", s.authed(s.handleGetSession))
+	mux.Handle("DELETE /api/v1/session", s.authed(s.handleDeleteSession))
 
 	// The catalogue. Reading it is a read; writing it needs `manage`, which
 	// no other scope implies: deciding what a drill is and launching one are
