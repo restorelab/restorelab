@@ -86,10 +86,55 @@ type APIToken struct {
 	CreatedAt  time.Time
 	LastUsedAt time.Time
 	RevokedAt  time.Time
+	// Scopes is what this token may do. Empty means read only: a token
+	// recorded before scopes existed must not gain a right by being read
+	// back after a migration.
+	Scopes []string
 }
 
 // Live reports whether the token has not been revoked.
 func (t APIToken) Live() bool { return t.RevokedAt.IsZero() }
+
+// Scopes an API token can hold.
+const (
+	// ScopeRead is everything the read-only API serves. It is the default,
+	// and the only scope a token created before scopes existed can have.
+	ScopeRead = "read"
+	// ScopeOperate triggers, cancels and cleans up. It is the difference
+	// between a dashboard that shows the fleet and one that can destroy and
+	// recreate machines in it.
+	ScopeOperate = "operate"
+)
+
+// Can reports whether the token holds a scope. Read is implied by every
+// token, including one that only holds operate: an operator that cannot see
+// what it just triggered would be a strange thing to build.
+func (t APIToken) Can(scope string) bool {
+	if scope == ScopeRead {
+		return true
+	}
+	for _, s := range t.Scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrNoWork is returned by ClaimRun when the queue holds nothing to run.
+var ErrNoWork = errors.New("store: no queued run to claim")
+
+// QueuedRun is what a worker needs to execute a run it just claimed: the id
+// to run under, and the plan exactly as it was when the run was queued.
+type QueuedRun struct {
+	ID               string
+	PlanName         string
+	ProviderID       string
+	BackupProviderID string
+	SourceWorkloadID string
+	PlanSnapshot     string
+	QueuedAt         time.Time
+}
 
 // Filter narrows a listing. A zero value lists the most recent runs.
 type Filter struct {
@@ -137,6 +182,41 @@ type Store interface {
 	SaveCheck(ctx context.Context, runID string, seq int, check core.CheckResult) error
 	// AppendEvent records one progress event. ev.Seq orders the stream.
 	AppendEvent(ctx context.Context, runID string, ev Event) error
+
+	// Enqueue records a run to be executed later, in state QUEUED. It is the
+	// only way a run enters the system without a worker having started it.
+	Enqueue(ctx context.Context, run *core.RecoveryRun, planYAML string, at time.Time) error
+	// SetState writes just the run's state, as the drill progresses.
+	SetState(ctx context.Context, runID string, state core.RunState) error
+	// RequestCancel asks for a run to stop. It returns true when the run was
+	// settled on the spot - a queued run nobody has claimed is cancelled
+	// here, because nothing exists to clean up.
+	RequestCancel(ctx context.Context, runID string, at time.Time) (bool, error)
+	// CancelRequested reports whether a cancellation was asked for. The
+	// worker polls it: the API and the worker may be different processes,
+	// and the database is the only channel they share.
+	CancelRequested(ctx context.Context, runID string) (bool, error)
+	// ActiveRunForWorkload returns the id of this workload's queued or
+	// running drill, or "" when it has none.
+	ActiveRunForWorkload(ctx context.Context, workloadID string) (string, error)
+
+	// ClaimRun takes ownership of the oldest queued run and returns what a
+	// worker needs to execute it, or ErrNoWork.
+	//
+	// A run that has ever been claimed is never claimable again - the query
+	// requires lease_owner to be null. That is the invariant that makes an
+	// interrupted drill impossible to replay: reconciliation fails it, and
+	// nothing can revive it.
+	ClaimRun(ctx context.Context, owner string, lease time.Duration, now time.Time) (*QueuedRun, error)
+	// RenewLease extends a lease held by owner. It fails when the caller is
+	// not the holder.
+	RenewLease(ctx context.Context, runID, owner string, until time.Time) error
+	// FinishLease clears the expiry of a run that has ended. The owner is
+	// kept: which worker ran a drill is part of its history.
+	FinishLease(ctx context.Context, runID string) error
+	// StaleRuns lists claimed runs that are not finished and whose lease has
+	// expired: their worker died. They are never re-run, only failed.
+	StaleRuns(ctx context.Context, now time.Time) ([]QueuedRun, error)
 
 	// GetRun loads a run with its steps and checks. idOrPrefix accepts a
 	// unique prefix of the id, the way git accepts a short sha. It returns

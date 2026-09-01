@@ -117,6 +117,14 @@ func TestPostgresTempWorkloadConformance(t *testing.T) {
 	TempWorkloadConformance(t, newTestPostgresStore)
 }
 
+func TestPostgresQueueWriteConformance(t *testing.T) {
+	QueueWriteConformance(t, newTestPostgresStore)
+}
+
+func TestPostgresQueueClaimConformance(t *testing.T) {
+	QueueClaimConformance(t, newTestPostgresStore)
+}
+
 // A PostgreSQL database is shared: RestoreLab must refuse to write into a
 // schema it does not fully recognise, rather than migrate it behind the
 // operator's back.

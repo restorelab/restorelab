@@ -55,3 +55,40 @@ func (Noop) RevokeToken(context.Context, string, time.Time) error { return ErrNo
 // TouchToken is the exception: it is bookkeeping about a token that was
 // already accepted, so failing silently is right.
 func (Noop) TouchToken(context.Context, string, time.Time) error { return nil }
+
+// The queue methods follow the same rule as the tokens: silence where a
+// missing database only costs history, an error where succeeding would be a
+// lie the caller acts on.
+
+// Enqueue refuses rather than pretending: a run that seems queued and that
+// no worker will ever see would leave a caller waiting for a drill that does
+// not exist.
+func (Noop) Enqueue(context.Context, *core.RecoveryRun, string, time.Time) error {
+	return ErrNoHistory
+}
+
+func (Noop) SetState(context.Context, string, core.RunState) error { return nil }
+
+func (Noop) RequestCancel(context.Context, string, time.Time) (bool, error) {
+	return false, ErrNoHistory
+}
+
+func (Noop) CancelRequested(context.Context, string) (bool, error) { return false, nil }
+
+func (Noop) ActiveRunForWorkload(context.Context, string) (string, error) {
+	return "", ErrNoHistory
+}
+
+// ClaimRun reports an empty queue rather than an error: a worker running
+// without a database has nothing to do, and should idle quietly rather than
+// log a failure every tick.
+func (Noop) ClaimRun(context.Context, string, time.Duration, time.Time) (*QueuedRun, error) {
+	return nil, ErrNoWork
+}
+
+func (Noop) RenewLease(context.Context, string, string, time.Time) error { return nil }
+
+func (Noop) FinishLease(context.Context, string) error { return nil }
+
+// StaleRuns reports nothing to reconcile, for the same reason as ClaimRun.
+func (Noop) StaleRuns(context.Context, time.Time) ([]QueuedRun, error) { return nil, nil }

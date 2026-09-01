@@ -46,6 +46,15 @@ func OpenPostgres(ctx context.Context, dsn string) (Store, error) {
 	return &sqlStore{db: db, dialect: dialectPostgres, describe: "postgres " + RedactDSN(dsn)}, nil
 }
 
+// postgresClaimSuffix is the PostgreSQL half of the only query this project
+// writes twice.
+//
+// FOR UPDATE SKIP LOCKED locks the row this transaction is about to take and
+// makes every other worker skip it rather than queue behind it. It is why
+// several workers can drain the queue at full speed without ever colliding,
+// and why the claim needs no advisory lock and no retry loop.
+const postgresClaimSuffix = " FOR UPDATE SKIP LOCKED"
+
 // RedactDSN strips the password from a connection string so it can be shown
 // to a user or written to a log.
 //

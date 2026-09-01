@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
 const insertTokenSQL = `
-INSERT INTO api_tokens (id, name, hash, created_at, last_used_at, revoked_at)
-VALUES (?, ?, ?, ?, NULL, NULL)`
+INSERT INTO api_tokens (id, name, hash, created_at, last_used_at, revoked_at, scopes)
+VALUES (?, ?, ?, ?, NULL, NULL, ?)`
 
 // CreateToken records a new API token. The caller has already hashed the
 // secret: this package never sees one.
@@ -18,10 +19,27 @@ func (s *sqlStore) CreateToken(ctx context.Context, t APIToken) error {
 	if t.Hash == "" {
 		return fmt.Errorf("store: refusing to record a token with no hash")
 	}
-	return s.exec(ctx, insertTokenSQL, t.ID, t.Name, t.Hash, formatTime(t.CreatedAt))
+	return s.exec(ctx, insertTokenSQL,
+		t.ID, t.Name, t.Hash, formatTime(t.CreatedAt), encodeScopes(t.Scopes))
 }
 
-const selectTokenColumns = `id, name, hash, created_at, last_used_at, revoked_at`
+// encodeScopes renders a token's scopes for storage. Empty means read only.
+func encodeScopes(scopes []string) string {
+	if len(scopes) == 0 {
+		return ScopeRead
+	}
+	return strings.Join(scopes, ",")
+}
+
+// decodeScopes parses what encodeScopes wrote.
+func decodeScopes(raw string) []string {
+	if raw == "" {
+		return []string{ScopeRead}
+	}
+	return strings.Split(raw, ",")
+}
+
+const selectTokenColumns = `id, name, hash, created_at, last_used_at, revoked_at, scopes`
 
 const selectTokenByHashSQL = `
 SELECT ` + selectTokenColumns + `
@@ -98,10 +116,12 @@ func scanToken(scan func(dest ...any) error) (APIToken, error) {
 		t                     APIToken
 		createdAt             string
 		lastUsedAt, revokedAt sql.NullString
+		scopes                sql.NullString
 	)
-	if err := scan(&t.ID, &t.Name, &t.Hash, &createdAt, &lastUsedAt, &revokedAt); err != nil {
+	if err := scan(&t.ID, &t.Name, &t.Hash, &createdAt, &lastUsedAt, &revokedAt, &scopes); err != nil {
 		return APIToken{}, err
 	}
+	t.Scopes = decodeScopes(scopes.String)
 
 	var err error
 	if t.CreatedAt, err = parseTime(createdAt); err != nil {

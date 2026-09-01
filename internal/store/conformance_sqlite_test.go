@@ -20,3 +20,9 @@ func TestSQLiteListConformance(t *testing.T) { ListConformance(t, newTestStore) 
 func TestSQLiteTokensConformance(t *testing.T) { TokensConformance(t, newTestStore) }
 
 func TestSQLiteTempWorkloadConformance(t *testing.T) { TempWorkloadConformance(t, newTestStore) }
+
+func TestSQLiteQueueWriteConformance(t *testing.T) { QueueWriteConformance(t, newTestStore) }
+
+func TestSQLiteQueueClaimConformance(t *testing.T) { QueueClaimConformance(t, newTestStore) }
+
+func TestQueueStatesMatchCoreTerminal(t *testing.T) { QueueStatesMatchCoreTerminal(t) }
