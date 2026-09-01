@@ -189,6 +189,123 @@ manage token can rewrite any plan in the catalogue. Finer-grained access
 control is a roadmap item (`v0.4`, with RBAC and OIDC), and until it exists a
 token should be scoped by *who holds it*, not by what it can reach.
 
+## The dashboard session
+
+A browser cannot hold a bearer token safely, and `EventSource` cannot send an
+`Authorization` header at all. So the dashboard trades a token for a session
+cookie once, at `POST /api/v1/session`, and carries that cookie afterwards.
+The cookie is a second way to present the same credential — never a second,
+larger credential.
+
+**A session names a token and carries no scope of its own.** The `api_sessions`
+row holds a hash, a `token_id` and an expiry, and nothing else. Every request
+that arrives on a cookie reads the scopes from the token row it joins to, in
+the same query that resolves the session. There is no copy to keep in sync and
+nothing to propagate, which has two consequences worth stating separately:
+
+- **Revocation is immediate.** `restorelab token revoke <name>` writes
+  `revoked_at`; the join requires `revoked_at IS NULL`, so the next request on
+  any session opened with that token is a `401`. Not in twelve hours — on the
+  next request. The check is in the SQL rather than in Go on purpose: a
+  caller left to verify it itself would eventually forget, and a revoked
+  credential would keep working for the rest of the day.
+- **A cookie can never widen anything.** A session on a `read` token cannot
+  trigger a drill, and there is no code path by which it could: the scope check
+  reads the token, and the token is the same row `token list` prints.
+
+**The expiry is absolute: twelve hours, never extended.** A sliding expiry
+would be more comfortable — nobody would be logged out mid-drill — but an open
+tab polling a listing would then hold a credential that can destroy machines
+indefinitely. Twelve hours covers a working day. Opening a session also
+deletes every expired session in the same transaction, so the table cleans
+itself at exactly the rate it fills, with no background job to own.
+
+The secret is 32 bytes from `crypto/rand`, prefixed `rls_`, and only its
+SHA-256 is stored — the same treatment, for the same reasons, as a token.
+
+### The cookie's attributes
+
+`__Host-restorelab_session`, `Path=/`, no `Domain`, `HttpOnly`, `Secure`,
+`SameSite=Strict`. Each of those is load-bearing:
+
+- **`__Host-` prefix.** A browser refuses to store a cookie with this prefix
+  unless it is `Secure`, is scoped to `Path=/`, and names no `Domain`. That
+  moves three invariants into the client, where no bug on this side can weaken
+  them. It also blocks cookie fixation from a sibling: a compromised
+  `other.example.com` cannot set a `__Host-` cookie that `app.example.com`
+  would read.
+- **`HttpOnly`.** `document.cookie` cannot see it, so an injected script cannot
+  copy the session out and replay it from elsewhere. It does not stop that
+  script from *using* the session in place — which is what the CSP below is
+  for.
+- **`Secure`.** The cookie never travels in clear, so a passive observer on the
+  path sees nothing to replay.
+- **`SameSite=Strict`.** The browser does not attach the cookie to a request
+  another site initiated. That closes ordinary CSRF at the client, before the
+  request is even sent.
+
+### The `Origin` guard, and what `SameSite` does not cover
+
+`SameSite=Strict` stops another *site*. It does not stop a sibling subdomain:
+`app.example.com` and `evil.example.com` are the same site to a cookie and two
+different origins to everything else. A compromised subdomain — a forgotten
+staging host, a wiki, anything sharing the registrable domain — could
+otherwise make authenticated writes with a user's session.
+
+So every unsafe method authenticated **by a cookie** must carry an `Origin`
+matching the request's own `Host`, or it is a `403`. A missing `Origin` is
+refused too: browsers send it on every write, so its absence on a cookie
+request is not the ordinary case.
+
+The reference is the request's `Host` rather than a configured origin, because
+the dashboard is served by this same binary: the legitimate origin is by
+construction the one just reached, and a value to configure is a value to get
+wrong. The deployment corollary is in `docs/deployment.md` and is not optional
+— a reverse proxy that does not forward the original `Host` turns every
+dashboard write into a `403`.
+
+The guard sits on the cookie path only. A bearer request never reaches it, so
+a CLI is never refused for a header browsers send and API clients do not.
+
+### Plain HTTP is refused off loopback
+
+Because the cookie is always `Secure`, a browser on `http://192.168.1.5:8080`
+stores nothing at all: the login appears to succeed, every request afterwards
+is anonymous, and nothing in any response explains it. `POST /session` refuses
+with a `400` naming TLS instead. Loopback is exempt, because browsers treat
+`localhost` as a trustworthy origin; `X-Forwarded-Proto: https` is believed,
+because this guard exists against a misconfiguration rather than an attacker —
+anyone able to forge that header is already speaking to the process directly.
+
+### The bundle's Content-Security-Policy
+
+Every dashboard response carries
+`default-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'; style-src 'self' 'unsafe-inline'`,
+plus `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+
+This is the header that matters most on this surface. `HttpOnly` stops a
+script from *reading* the session; it does not stop one from using it. The
+defence against an injected script is not letting one run, and everything the
+page needs is same-origin because the bundle is served by this binary.
+`'unsafe-inline'` is conceded on styles alone — a popover library positions
+with a `style` attribute — and opens no script execution.
+
+### No rate limit on the login, deliberately
+
+`POST /api/v1/session` is not rate-limited, and that is a decision rather than
+an omission. It is the same reasoning already written on `HashToken`: the
+credential being presented is 32 bytes from `crypto/rand`, so there is nothing
+to guess — brute force costs 2²⁵⁶ operations, and no counter changes that
+number. What a counter *would* buy is a denial of service: an unauthenticated
+caller who can trip a per-IP or per-token limit can lock the real operator out
+of a dashboard at the moment they most need it, which is during an incident.
+The one cost of a login attempt here is a single indexed SELECT on a hash.
+
+If a deployment wants a limiter anyway — because it is exposed to the open
+internet, or because a policy demands one — the right place for it is the
+reverse proxy already terminating TLS, where it can be tuned and disabled
+without a redeploy.
+
 ## Destructive-operation guardrails
 
 RestoreLab only ever destroys what it created. Concretely:

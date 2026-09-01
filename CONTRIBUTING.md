@@ -53,6 +53,55 @@ Implement `core.NetworkValidator` if the platform can prove network isolation,
 and `core.CapacityReporter` if it can report free capacity. Do not add
 provider-specific behaviour to the engine.
 
+## Running the dashboard in development
+
+The dashboard is compiled into the binary from `internal/ui/dist`, so
+`go build ./...` and `go test ./...` work with no Node installed: the embedded
+directory is allowed to be empty, and `/` then serves a page saying the
+dashboard was not built into this binary.
+
+The development loop runs the front-end dev server on `:5173` against
+`restorelab serve` on `:8080`, with the dev server proxying `/api`. **The proxy
+must rewrite the `Origin` header to the proxy target, not just the `Host`.**
+
+`changeOrigin: true` rewrites `Host` alone. The API compares `Origin` against
+`Host` — that is the CSRF guard on cookie-authenticated writes, and it has no
+configured origin to relax — so the dev server sends
+`Origin: http://localhost:5173` against `Host: localhost:8080` and **every
+write from the dev server is a 403**. Reads keep working, the login works, the
+cookie is stored, and nothing in the response explains why creating a plan
+fails. Rewrite the header:
+
+```js
+// vite.config.ts
+server: {
+  proxy: {
+    '/api': {
+      target: 'http://localhost:8080',
+      changeOrigin: true,
+      configure: (proxy) => {
+        // changeOrigin only fixes Host. The API's CSRF guard reads Origin.
+        proxy.on('proxyReq', (proxyReq) => {
+          proxyReq.setHeader('origin', 'http://localhost:8080')
+        })
+      },
+    },
+  },
+}
+```
+
+Two other things about the loop are worth knowing before they cost an hour:
+
+- The event stream must not be buffered by the proxy, or a drill's progress
+  arrives in one burst when it ends instead of as it happens.
+- If you write a Go test that drives a session with `net/http/cookiejar`, point
+  it at `localhost`, not at `127.0.0.1`. The jar applies the browser rule — a
+  `Secure` cookie goes back over https, or to localhost — and it spells that
+  exemption by the literal name, which `127.0.0.1` is not. The jar stores the
+  cookie and then never sends it, and the test fails for a reason that has
+  nothing to do with the server. `internal/e2e/session_test.go` has the
+  one-line helper.
+
 ## Commits and pull requests
 
 - Atomic commits, one logical change each.

@@ -15,6 +15,7 @@ import (
 	"github.com/restorelab/restorelab/internal/config"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/store"
+	"github.com/restorelab/restorelab/internal/ui"
 )
 
 // The secrets this test proves never reach a response body.
@@ -185,11 +186,18 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	cfg.Database.URL = "postgres://restorelab:" + leakDBPassword + "@db.internal:5432/history"
 	cfg.Defaults.Provider = "pve"
 
+	// Every dependency the server takes is wired here, on purpose. A nil one
+	// is not a compile error: it silently becomes store.Noop, and the routes
+	// behind it answer 503 in every test without a single one going red. The
+	// catalogue spent all of B3 that way.
 	srv := httptest.NewServer(api.New(api.Options{
 		History:   history,
 		Tokens:    history,
+		Sessions:  history,
+		Plans:     history,
 		Providers: readOnlyProviders{t: t},
 		Config:    cfg,
+		UI:        ui.FS(),
 	}))
 	t.Cleanup(srv.Close)
 

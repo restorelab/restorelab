@@ -128,6 +128,64 @@ runner is enough:
 0 3 * * 0  restorelab recovery run /etc/restorelab/plans/postgres-prod.yaml --report /var/log/restorelab/$(date +\%F).json
 ```
 
+## Serving the dashboard
+
+`restorelab serve` answers on `/` as well as on `/api/v1`. The web interface is
+compiled into the binary, so there is nothing to deploy beside it: no static
+directory to copy, no second web server, no path to keep in sync with a
+release. If a build carries no dashboard, `/` says so in a sentence instead of
+returning a puzzling 404.
+
+### TLS is no longer optional
+
+The bearer API could be run in the clear on a trusted LAN and only lose
+confidentiality. The dashboard cannot: its session cookie is `Secure`, so a
+browser reached over plain HTTP stores nothing, the login appears to succeed,
+and every request afterwards is silently anonymous. `POST /api/v1/session`
+therefore refuses with a `400` naming TLS on any host that is not loopback.
+
+Either put a TLS-terminating proxy in front of RestoreLab, or reach it on
+`localhost` (an SSH tunnel counts).
+
+### `proxy_set_header Host $host;` is mandatory
+
+Not a nicety. The CSRF guard on cookie-authenticated writes compares the
+request's `Origin` against its `Host`, and the reference is the request's own
+`Host` precisely so that there is no origin to configure and get wrong. A
+reverse proxy that rewrites `Host` to `127.0.0.1:8080` makes the browser's
+`Origin: https://restorelab.example.com` disagree with it, and **every write
+from the dashboard becomes a 403** — reads keep working, which makes it look
+like a permissions bug rather than a proxy one.
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name restorelab.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/restorelab.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/restorelab.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+
+        # Required. The API compares Origin against Host; without the original
+        # Host, every dashboard write is a 403.
+        proxy_set_header Host $host;
+
+        # Lets the login know TLS was terminated in front of it.
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The event stream is long-lived and must not be buffered.
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+Caddy's `reverse_proxy` preserves the original `Host` by default and needs no
+equivalent line; Traefik does too. nginx is the one that rewrites it unless
+told otherwise.
+
 ## What to give the process
 
 - Its own unprivileged user.

@@ -51,10 +51,18 @@ server {
 
     location / {
         proxy_pass http://127.0.0.1:8080;
+
+        # Required, not cosmetic: the dashboard's CSRF guard compares Origin
+        # against Host, so a proxy that rewrites Host makes every write a 403.
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
+
+The dashboard needs that TLS. A bearer client can talk to RestoreLab in the
+clear on a trusted network; a browser cannot, because the session cookie is
+`Secure`. See [deployment.md](deployment.md).
 
 Listening on anything but loopback requires at least one live API token.
 Without one, `serve` refuses to start rather than expose an unauthenticated
@@ -139,6 +147,157 @@ Www-Authenticate: Bearer realm="restorelab"
 would cost a database write on every single request for a field nobody reads
 to the second.
 
+## Session
+
+A browser cannot hold a bearer token safely, and `EventSource` cannot set an
+`Authorization` header at all. So the dashboard trades a token for a session
+cookie once, and the browser carries it from then on.
+
+A session **names a token and carries nothing of its own**. The scopes are
+read from the token row on every single request, never copied into the
+session, which is what makes `restorelab token revoke` close every session
+opened with that token on the next request rather than in twelve hours' time.
+A cookie is a different way to present the same credential, never a way to
+hold more of it.
+
+```
+POST   /api/v1/session    unauthenticated — trade a token for a cookie
+GET    /api/v1/session    describe the session this cookie carries
+DELETE /api/v1/session    log out
+```
+
+### `POST /api/v1/session`
+
+```
+$ curl -i -c cookies.txt -X POST https://restorelab.example.com/api/v1/session \
+    -H 'Content-Type: application/json' -d '{"token":"rl_..."}'
+HTTP/1.1 200 OK
+Set-Cookie: __Host-restorelab_session=rls_...; Path=/; Max-Age=43200; HttpOnly; Secure; SameSite=Strict
+Content-Type: application/json
+
+{"token_name":"dashboard","scopes":["read","operate"],"expires_at":"2026-09-02T00:00:00Z"}
+```
+
+This is the one route that authenticates nothing beforehand: it is what
+creates the credential every other route checks. It answers 200 rather than
+201, because a session has no URL that identifies *this* session rather than
+whoever's cookie arrives — there is no `Location` to give.
+
+`scopes` lists what the caller can actually do, with `read` spelled out even
+though no token stores it: it is implied by every token, and a UI deciding
+which screens to offer needs the answer it will get, not the row as it
+happens to be written.
+
+An unknown or revoked token is **401 and no cookie**, the same rejection every
+other route gives. A body that is not `{"token":"rl_..."}` is a 400. A
+deployment with no history database is a 503 — the session table is a table,
+and saying so beats pretending the login failed.
+
+The secret in the cookie is `rls_` followed by 32 bytes of `crypto/rand`,
+base64url. The prefix is there for the reason `rl_` is: a secret that lands in
+a log should be recognisable as one, so it can be revoked instead of puzzled
+over. Only its SHA-256 is stored.
+
+### The cookie, attribute by attribute
+
+| Attribute | Why |
+| --- | --- |
+| `__Host-` prefix | A browser refuses to store the cookie unless it is `Secure`, is scoped to `Path=/`, and names no `Domain`. Those three properties are then enforced by the client, where no bug on this side can weaken them and no sibling subdomain can set a cookie that shadows them. |
+| `HttpOnly` | A session readable from JavaScript is one an injected script can copy out and use from anywhere. This one can trigger drills. |
+| `Secure` | The cookie never travels in clear. |
+| `SameSite=Strict` | The browser does not attach it to a request another site started, which is the ordinary CSRF case closed at the client. |
+| `Path=/` | Required by `__Host-`, and correct anyway: the dashboard and the API are the same origin. |
+| no `Domain` | Required by `__Host-`. A cookie without a `Domain` is not sent to any other host. |
+| `Max-Age=43200` | Twelve hours, absolute. |
+
+### Plain HTTP is refused, off loopback
+
+Because the cookie is always `Secure`, a browser on `http://192.168.1.5:8080`
+stores nothing: the login appears to succeed, every request afterwards is
+anonymous, and no error anywhere explains it. So the route refuses first, and
+names the cause:
+
+```
+$ curl -i -X POST http://restorelab.lan:8080/api/v1/session -d '{"token":"rl_..."}'
+HTTP/1.1 400 Bad Request
+
+{"type":"https://restorelab.dev/problems/invalid-parameter","title":"Invalid parameter","status":400,"detail":"the dashboard session cookie is Secure, so a browser would never send it back over plain HTTP: put TLS in front of RestoreLab, or reach it on localhost"}
+```
+
+Loopback is exempt, because browsers treat `localhost` as a trustworthy
+origin. `X-Forwarded-Proto: https` is believed — the guard exists against a
+misconfiguration, not an attacker, and anyone able to forge that header is
+already speaking to the process directly.
+
+### The `Origin` guard on cookie writes
+
+`SameSite=Strict` stops another *site*. What it does not stop is a sibling
+subdomain: `app.example.com` and `evil.example.com` are the same site to a
+cookie and two different origins to everything else. So every unsafe method
+authenticated **by a cookie** must carry an `Origin` matching the request's
+own `Host`:
+
+```
+$ curl -i -b cookies.txt -X POST https://restorelab.example.com/api/v1/recovery-runs \
+    -H 'Origin: https://evil.example' -d '{"workload":"110"}'
+HTTP/1.1 403 Forbidden
+
+{"type":"https://restorelab.dev/problems/cross-origin","title":"This request came from another origin","status":403,"detail":"a session cookie only writes from the dashboard it was issued to; an API client should send `Authorization: Bearer rl_...` instead"}
+```
+
+A missing `Origin` is refused too: browsers send it on every write, so its
+absence on a cookie request is not the ordinary case.
+
+The reference is the request's own `Host`, not a configured origin — the
+dashboard is served by this same binary, so the legitimate origin is by
+construction the one just reached, and a value to configure is a value to get
+wrong. **This is a deployment requirement**: a reverse proxy that does not
+pass the original `Host` makes every dashboard write a 403. See
+`docs/deployment.md`.
+
+The guard never applies to a bearer request. `GET`, `HEAD` and `OPTIONS` are
+exempt whatever the credential.
+
+### Expiry
+
+Twelve hours from the moment the session is opened, absolute, never extended.
+A sliding expiry would be more comfortable — nobody would be logged out
+mid-drill — but an open tab polling a listing would then hold a session
+forever, and this one can destroy machines. Twelve hours covers a working day;
+coming back tomorrow means logging in.
+
+An expired session is a 401, exactly like an unknown one. So is a session
+whose token has been revoked, from the next request onwards. Opening a session
+also sweeps every session that has already expired, in the same transaction —
+the table cleans itself at exactly the rate it fills.
+
+### `GET /api/v1/session`
+
+```
+$ curl -b cookies.txt https://restorelab.example.com/api/v1/session
+{"token_name":"dashboard","scopes":["read","operate"],"expires_at":"2026-09-02T00:00:00Z"}
+```
+
+What a dashboard calls on load to decide between its login screen and its
+application, and what tells it which actions to offer at all. No cookie and no
+token is a 401. A request authenticated with a **bearer token** is a 400: this
+route describes a cookie session, and a bearer request has none.
+
+### `DELETE /api/v1/session`
+
+```
+$ curl -i -b cookies.txt -X DELETE https://restorelab.example.com/api/v1/session \
+    -H 'Origin: https://restorelab.example.com'
+HTTP/1.1 204 No Content
+Set-Cookie: __Host-restorelab_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict
+```
+
+The row is deleted and the cookie is expired whatever happened — a browser
+holding a cookie for a row that is gone would keep sending it forever. Calling
+it twice is not a failure: the second call arrives with a cookie the store no
+longer knows, so it is simply unauthenticated (401). It is an unsafe method,
+so it is subject to the `Origin` guard like every other cookie write.
+
 ## Scopes
 
 A token holds one or more levels of access:
@@ -196,7 +355,9 @@ anonymous request still gets its 401.
 ## The surface
 
 ```
+GET  /                                     unauthenticated — the dashboard
 GET  /api/v1/health                        unauthenticated
+GET  /api/v1/session                       describe this cookie session
 GET  /api/v1/recovery-runs                 workload, state, result, since, limit, cursor
 GET  /api/v1/recovery-runs/{id}            id complete or a prefix
 GET  /api/v1/recovery-runs/{id}/events     after=<seq>, or SSE on Accept
@@ -211,13 +372,23 @@ GET  /api/v1/doctor                        provider, workload
 GET  /api/v1/plans                         workload, limit
 GET  /api/v1/plans/{ref}                   format=yaml for the document itself
 
+POST   /api/v1/session                     unauthenticated — token for a cookie
+DELETE /api/v1/session                     log out
 POST   /api/v1/recovery-runs               operate — queue a drill
 POST   /api/v1/recovery-runs/{id}/cancel   operate — stop one
 POST   /api/v1/cleanup/{vmid}              operate — destroy a leftover workload
+POST   /api/v1/plans/validate              manage  — check a document, store nothing
 POST   /api/v1/plans                       manage  — store a new plan
 PUT    /api/v1/plans/{ref}                 manage  — replace one, version=N to guard
 DELETE /api/v1/plans/{ref}                 manage  — remove one
 ```
+
+`GET /` is the dashboard, served from the binary. It needs no token — it is
+the login screen as much as the application, and the API underneath it checks
+every request the page then makes. Anything that is not a file in the bundle
+falls back to `index.html`, so the client's own router owns `/runs/94bce70d`.
+A path under `/api/` that matched no route still answers as the API, never
+with HTML.
 
 `{id}` on a run accepts a prefix, exactly like `restorelab runs show`: an
 exact match wins, an ambiguous prefix comes back as a 409 rather than a
@@ -582,6 +753,33 @@ everything. A plan exported and re-imported is the same bytes. What each run
 actually executed is kept separately, in that run's snapshot, so there is no
 information to gain from canonicalising the text and a comment to lose.
 
+### `POST /api/v1/plans/validate`
+
+Says whether a document is a valid plan, and stores nothing. Needs `manage`.
+
+```
+$ curl -X POST -H "Authorization: Bearer rl_..." \
+    -H "Content-Type: application/yaml" \
+    --data-binary @web-tier.yaml \
+    https://restorelab.example.com/api/v1/plans/validate
+
+{"valid":true,"name":"web-tier","workload_id":"110","provider_id":"pve","normalized_yaml":"name: web-tier\n..."}
+```
+
+`normalized_yaml` is the document with its defaults applied — "here is what
+this actually says". It is the difference between a field left out and a field
+left out *meaning something*, which is exactly what an editor needs to show
+before anyone commits to it.
+
+An invalid document is a `400` carrying every problem found, in the same shape
+`POST /plans` returns. The route requires `manage` even though it writes
+nothing: it is the plan editor's own route, and the editor is the thing
+`manage` exists to gate.
+
+It goes through the same `catalog.Validate` the write routes use. A second
+definition of "a valid plan", in TypeScript, would drift from this one at the
+first field added on this side.
+
 ### `POST /api/v1/plans`
 
 Stores a new plan. Needs `manage`.
@@ -703,10 +901,12 @@ happens anywhere. A stream opened without the header replays the run from its
 first event, which is what a dashboard opening a run mid-flight wants.
 
 The browser's `EventSource` does this on its own: it remembers the last id and
-sends the header when it reconnects. It also cannot set an `Authorization`
-header, which is worth knowing before designing around it — either put the
-bearer token on at your reverse proxy, or read the stream with `fetch` and
-handle reconnection, and `Last-Event-ID`, yourself.
+sends the header when it reconnects. It cannot set an `Authorization` header —
+which is why the dashboard authenticates with a session cookie instead.
+`EventSource` sends cookies without being asked, so a browser gets the
+reconnection, the backoff and the resumption for nothing. An API client
+holding a bearer token reads the stream with whatever HTTP client it already
+has.
 
 Note that `?after=` is ignored on the streaming representation. The resumption
 point of a stream is `Last-Event-ID`, and having two ways to say the same
