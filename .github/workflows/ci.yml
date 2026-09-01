@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
 
 permissions:
@@ -15,6 +15,29 @@ jobs:
   backend:
     name: Backend
     runs-on: ubuntu-latest
+
+    # The store speaks to two engines from one query set, and a conformance
+    # suite is what keeps them from drifting apart. SQLite is embedded, so it
+    # runs anywhere; PostgreSQL needs a server, and without one here the
+    # second half of that promise is never actually checked.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: restorelab
+          POSTGRES_PASSWORD: restorelab
+          POSTGRES_DB: history
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U restorelab"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      RESTORELAB_TEST_DATABASE_URL: postgres://restorelab:restorelab@127.0.0.1:5432/history?sslmode=disable
+
     steps:
       - uses: actions/checkout@v4
 

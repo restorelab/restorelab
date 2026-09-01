@@ -34,6 +34,22 @@ test: ## Run the test suite
 test-race: ## Run tests with the race detector
 	$(GO) test -race ./...
 
+# The store runs one query set against two engines, and only the conformance
+# suite proves they behave the same. SQLite is embedded and runs on every
+# `make test`; PostgreSQL needs a server, so it is skipped unless one is
+# pointed at. This target provides the server, so "I did not have a
+# PostgreSQL handy" stops being the reason half the promise goes unchecked.
+.PHONY: test-postgres
+test-postgres: ## Run the store conformance suite against a throwaway PostgreSQL
+	docker run -d --rm --name restorelab-test-pg \
+		-e POSTGRES_USER=restorelab -e POSTGRES_PASSWORD=restorelab -e POSTGRES_DB=history \
+		-p 55432:5432 postgres:17-alpine
+	@echo "waiting for postgres..."
+	@until docker exec restorelab-test-pg pg_isready -U restorelab >/dev/null 2>&1; do sleep 1; done
+	-RESTORELAB_TEST_DATABASE_URL="postgres://restorelab:restorelab@127.0.0.1:55432/history?sslmode=disable" \
+		$(GO) test ./internal/store/ -count=1 -v -run Postgres
+	docker stop restorelab-test-pg
+
 .PHONY: cover
 cover: ## Run tests and open the coverage report
 	$(GO) test -coverprofile=coverage.out ./...
