@@ -33,11 +33,11 @@ const noDashboardPage = `<!doctype html>
 <title>RestoreLab</title>
 <style>body{font:16px system-ui;margin:4rem auto;max-width:40rem;padding:0 1rem}
 code{background:#eee;padding:.15em .35em;border-radius:3px}</style>
-<h1>The dashboard is not compiled into this binary</h1>
-<p>The API is running and answering on <code>/api/v1</code>. The web interface
-was not built into this build.</p>
-<p>Build it from the repository with <code>make ui</code>, or use the API
-directly &mdash; see <code>docs/api.md</code>.</p>
+<h1>This build has no web interface</h1>
+<p>RestoreLab is running, and its API is answering on <code>/api/v1</code>.
+The web dashboard is not part of this build.</p>
+<p>Drive it from a terminal with the <code>restorelab</code> command, or over
+HTTP &mdash; the endpoints are documented in <code>docs/api.md</code>.</p>
 `
 
 // handleRoot serves the dashboard, and answers as the API for API paths.

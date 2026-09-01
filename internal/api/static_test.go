@@ -1,8 +1,13 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -162,11 +167,64 @@ func TestNoDashboardCompiledInSaysSo(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200: the person hitting / is a human in a browser", resp.StatusCode)
 	}
-	body := make([]byte, 2048)
-	n, _ := resp.Body.Read(body)
-	if !strings.Contains(string(body[:n]), "not compiled") {
-		t.Errorf("the page must name the cause: %q", body[:n])
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
 	}
+	page := string(body)
+
+	// The reader is a human who typed the address and got no application.
+	// The page has to say why, and then say where the product actually is.
+	for _, want := range []string{"no web interface", "/api/v1", "docs/api.md", "restorelab"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page never mentions %q: %s", want, page)
+		}
+	}
+
+	// It must not send anyone to a command this repository does not have.
+	// The page said `make ui` for a while and that target never existed: the
+	// only reader who would ever have tried it is the one already stuck.
+	targets := makeTargets(t)
+	for _, named := range makeCommandsIn(page) {
+		if !slices.Contains(targets, named) {
+			t.Errorf("the page tells the reader to run `make %s`, which the Makefile does not define (it has %v)",
+				named, targets)
+		}
+	}
+}
+
+// makeCommandsIn returns the make targets a page tells its reader to run.
+var makeCommandRE = regexp.MustCompile(`make ([a-z][a-z0-9-]*)`)
+
+func makeCommandsIn(page string) []string {
+	var out []string
+	for _, m := range makeCommandRE.FindAllStringSubmatch(page, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+// makeTargets lists the targets the repository's Makefile declares.
+//
+// It exists so that a page or a message naming `make something` can be
+// checked against reality rather than against someone's memory of it.
+func makeTargets(t *testing.T) []string {
+	t.Helper()
+
+	body, err := os.ReadFile(filepath.Join("..", "..", "Makefile"))
+	if err != nil {
+		t.Skipf("no Makefile to read from here: %v", err)
+	}
+
+	var out []string
+	for _, line := range strings.Split(string(body), "\n") {
+		name, _, ok := strings.Cut(line, ":")
+		if !ok || name == "" || strings.ContainsAny(name, " \t.$") {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
 }
 
 func TestNoUIAtAllStillAnswersTheAPIProblem(t *testing.T) {
