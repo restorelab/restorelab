@@ -1,8 +1,11 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -328,5 +331,143 @@ func TestSSEHeartbeatsThroughAQuietStream(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), ": heartbeat\n\n") {
 		t.Fatalf("a quiet stream sent no heartbeat: %q", rec.Body)
+	}
+}
+
+// A stream is an in-flight request, and http.Server.Shutdown does not
+// interrupt one: it waits for it. A dashboard following a running drill would
+// therefore hold every Ctrl-C for the whole grace period and then turn a
+// clean stop into context.DeadlineExceeded. The streams have to be told the
+// server is going away, and they have to say so honestly: the run is not
+// over, the connection is.
+func TestShutdownClosesOpenStreamsInsteadOfWaitingOutTheGrace(t *testing.T) {
+	h := newFakeHistory()
+	seedRuns(h, 1)
+	id := h.runs[0].ID
+	// Never terminal: nothing but the shutdown can end this stream, so a
+	// stream that ends is a stream the shutdown ended.
+	h.setState(id, core.RunRestoring, time.Time{})
+	seedEvents(h, id, 1)
+	s := newStreamServer(t, Options{History: h})
+
+	addr := freeAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	served := make(chan error, 1)
+	go func() { served <- Serve(ctx, addr, s, nil) }()
+
+	body := openStream(t, "http://"+addr+"/api/v1/recovery-runs/"+id+"/events")
+	defer func() { _ = body.Close() }()
+	reader := bufio.NewReader(body)
+
+	// Reading the first progress frame proves the handler is inside its loop
+	// with the response open: exactly the in-flight request Shutdown will not
+	// interrupt on its own.
+	readUntil(t, reader, "event: progress")
+
+	start := time.Now()
+	cancel()
+
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("Serve returned %v, want nil: a clean stop must not report an error", err)
+		}
+	case <-time.After(shutdownGrace - 2*time.Second):
+		t.Fatal("Serve waited out the grace period: the open stream was never told to stop")
+	}
+	if elapsed := time.Since(start); elapsed >= shutdownGrace {
+		t.Fatalf("shutting down took %s, want well under the %s grace period", elapsed, shutdownGrace)
+	}
+
+	rest, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("reading the tail of the stream: %v", err)
+	}
+	frames := parseSSE(t, string(rest))
+	if len(frames) == 0 {
+		t.Fatalf("the stream was cut without a word: %q", rest)
+	}
+	last := frames[len(frames)-1]
+	if last.event != "disconnected" {
+		t.Fatalf("last frame = %+v, want a disconnected frame: the run is still going", last)
+	}
+	var end struct {
+		State  string `json:"state"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(last.data), &end); err != nil {
+		t.Fatalf("disconnected frame is not JSON: %v", err)
+	}
+	if end.State != string(core.RunRestoring) {
+		t.Errorf("disconnected state = %q, want %q: the frame must not imply the run ended",
+			end.State, core.RunRestoring)
+	}
+	if end.Reason == "" {
+		t.Error("the disconnected frame says nothing about why: a client cannot tell a crash from a restart")
+	}
+	// And it must not be mistaken for the end of the run.
+	for _, f := range frames {
+		if f.event == "done" {
+			t.Fatal("a shutdown must never emit a done frame: the drill is still running")
+		}
+	}
+}
+
+// freeAddr reserves a loopback port and hands it back. Closing the listener
+// leaves a window, which is why it is a test helper and not a product
+// function: a real deployment names its port.
+func freeAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserving a port: %v", err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatalf("releasing the reserved port: %v", err)
+	}
+	return addr
+}
+
+// openStream asks for a live stream over a real socket, retrying while the
+// server is still coming up.
+func openStream(t *testing.T, url string) io.ReadCloser {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		if err != nil {
+			t.Fatalf("building the stream request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+testSecret)
+		req.Header.Set("Accept", "text/event-stream")
+
+		resp, err := http.DefaultClient.Do(req)
+		switch {
+		case err == nil && resp.StatusCode == http.StatusOK:
+			return resp.Body
+		case err == nil:
+			_ = resp.Body.Close()
+			t.Fatalf("stream status = %d, want 200", resp.StatusCode)
+		case time.Now().After(deadline):
+			t.Fatalf("the server never accepted a connection: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// readUntil consumes lines until one of them starts with prefix.
+func readUntil(t *testing.T, r *bufio.Reader, prefix string) {
+	t.Helper()
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("the stream ended before %q: %v", prefix, err)
+		}
+		if strings.HasPrefix(line, prefix) {
+			return
+		}
 	}
 }

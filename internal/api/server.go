@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/restorelab/restorelab/internal/config"
@@ -103,6 +104,14 @@ type Server struct {
 	// afterwards - a stream never writes them.
 	ssePoll      time.Duration
 	sseHeartbeat time.Duration
+
+	// stopping is closed once, by Drain, when the process starts shutting
+	// down. It is the only way an open event stream can learn that it is
+	// about to be cut: see Drain. Created in New and never reassigned, so
+	// every reader races only against the single close, which is what a
+	// channel is for.
+	stopping chan struct{}
+	drained  sync.Once
 }
 
 // New builds a Server with its routes wired.
@@ -117,6 +126,7 @@ func New(opts Options) *Server {
 
 		ssePoll:      ssePoll,
 		sseHeartbeat: sseHeartbeat,
+		stopping:     make(chan struct{}),
 	}
 	if s.now == nil {
 		s.now = time.Now
@@ -135,6 +145,32 @@ func New(opts Options) *Server {
 
 // ServeHTTP makes Server an http.Handler.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+
+// Draining is implemented by a handler that holds responses open for longer
+// than a request takes to answer, and can be asked to let them go.
+//
+// It exists because http.Server.Shutdown does not interrupt in-flight
+// requests, it waits for them - and an event stream is an in-flight request
+// that ends when the drill ends, minutes later. Without this, one connected
+// dashboard turns every clean stop into a full grace period followed by
+// context.DeadlineExceeded.
+type Draining interface {
+	// Drain tells long-lived responses that the server is going away. It is
+	// safe to call more than once and never blocks.
+	Drain()
+}
+
+var _ Draining = (*Server)(nil)
+
+// Drain closes every event stream this server is holding open.
+//
+// It only signals; each stream returns from its own goroutine after writing a
+// last frame that says the connection ended, not the run. Calling it twice is
+// harmless, and a Server that has been drained stays drained: a Server is
+// built per process, and a process that started stopping does not un-stop.
+func (s *Server) Drain() {
+	s.drained.Do(func() { close(s.stopping) })
+}
 
 // routes wires the surface.
 //
@@ -245,6 +281,13 @@ func Serve(ctx context.Context, addr string, h http.Handler, logf func(string, .
 		return err
 	case <-ctx.Done():
 		logf("shutting down, finishing in-flight requests (%s)", shutdownGrace)
+		// Before Shutdown, not after: Shutdown waits for in-flight requests
+		// and an event stream is one that would not end until its drill did.
+		// Telling the streams first is what keeps a stop from costing the
+		// whole grace period and then reporting DeadlineExceeded.
+		if d, ok := h.(Draining); ok {
+			d.Drain()
+		}
 		// Detached from ctx on purpose: we are here *because* ctx is done, so
 		// a context derived from it would already be cancelled and Shutdown
 		// would drop every in-flight request instead of letting it finish.

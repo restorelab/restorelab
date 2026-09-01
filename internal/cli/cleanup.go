@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/restorelab/restorelab/internal/core"
+	"github.com/restorelab/restorelab/internal/worker"
 )
 
 func newCleanupCmd(a *app) *cobra.Command {
@@ -26,7 +27,11 @@ func newCleanupCmd(a *app) *cobra.Command {
 that was interrupted or that used --keep.
 
 Only workloads carrying RestoreLab's ownership metadata can be destroyed: the
-provider refuses anything else, so this command cannot touch production.`,
+provider refuses anything else, so this command cannot touch production.
+
+It destroys through worker.Cleanup, the same call POST /api/v1/cleanup makes,
+so that there is exactly one destruction path in the product and no way for
+the CLI and the API to drift apart on what they will agree to remove.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -37,7 +42,7 @@ provider refuses anything else, so this command cannot touch production.`,
 			}
 
 			if len(args) == 1 {
-				if err := hv.Delete(ctx, args[0]); err != nil {
+				if err := worker.Cleanup(ctx, hv, args[0]); err != nil {
 					return err
 				}
 				fmt.Fprintf(a.out, "%s workload %s destroyed\n", a.ok(), args[0])
@@ -75,7 +80,7 @@ provider refuses anything else, so this command cannot touch production.`,
 
 			var failures int
 			for _, w := range orphans {
-				if err := hv.Delete(ctx, w.ID); err != nil {
+				if err := worker.Cleanup(ctx, hv, w.ID); err != nil {
 					failures++
 					fmt.Fprintf(a.out, "%s %s: %v\n", a.fail(), w.ID, err)
 					continue

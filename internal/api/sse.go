@@ -51,6 +51,11 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, run *core.
 
 	lastBeat := s.now()
 
+	// The last state this stream knows about, so that a stream cut short by a
+	// shutdown can say what the run was doing when the connection ended
+	// rather than leave the client guessing.
+	state := run.State
+
 	for {
 		events, err := s.history.Events(r.Context(), run.ID, after)
 		if err != nil {
@@ -71,10 +76,13 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, run *core.
 		// transition is written by the worker, and a stream that waited for
 		// an event that will never come would hold the connection forever.
 		current, err := s.history.GetRun(r.Context(), run.ID)
-		if err == nil && current.State.Terminal() {
-			fmt.Fprintf(w, "event: done\ndata: {\"state\":%q}\n\n", current.State)
-			flusher.Flush()
-			return
+		if err == nil {
+			state = current.State
+			if current.State.Terminal() {
+				fmt.Fprintf(w, "event: done\ndata: {\"state\":%q}\n\n", current.State)
+				flusher.Flush()
+				return
+			}
 		}
 
 		if s.now().Sub(lastBeat) >= s.sseHeartbeat {
@@ -90,6 +98,17 @@ func (s *Server) streamEvents(w http.ResponseWriter, r *http.Request, run *core.
 		// provider calls.
 		select {
 		case <-r.Context().Done():
+			return
+		case <-s.stopping:
+			// The server is stopping, the drill is not. A `done` frame here
+			// would be a lie a dashboard would act on - it would mark the run
+			// finished with whatever state it last saw. `disconnected` says
+			// the only true thing: this connection ended, reconnect and
+			// resume from the last id.
+			fmt.Fprintf(w,
+				"event: disconnected\ndata: {\"state\":%q,\"reason\":\"the server is shutting down\"}\n\n",
+				state)
+			flusher.Flush()
 			return
 		case <-time.After(s.ssePoll):
 		}

@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -25,10 +26,17 @@ is no command that can print it again. Lose it and create another one.`,
 }
 
 func newTokenCreateCmd(a *app) *cobra.Command {
-	return &cobra.Command{
+	var operate bool
+
+	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create an API token and print it once",
-		Args:  cobra.ExactArgs(1),
+		Long: `Creates an API token and prints it once.
+
+A token is read only unless --operate is given. An operate token can trigger
+drills, cancel them and destroy the workloads they leave behind: it is a key
+that can destroy and recreate machines, not a key that reads a dashboard.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if name == "" {
@@ -38,6 +46,13 @@ func newTokenCreateCmd(a *app) *cobra.Command {
 			secret, record, err := api.NewToken(name, time.Now())
 			if err != nil {
 				return err
+			}
+			// Read is always present, including on an operate token: an
+			// operator that could trigger a drill but not watch it would be a
+			// strange thing to hand anyone.
+			record.Scopes = []string{store.ScopeRead}
+			if operate {
+				record.Scopes = append(record.Scopes, store.ScopeOperate)
 			}
 
 			if err := a.store(cmd.Context()).CreateToken(cmd.Context(), record); err != nil {
@@ -49,13 +64,33 @@ func newTokenCreateCmd(a *app) *cobra.Command {
 
 			fmt.Fprintf(a.out, "%s token %q created\n\n", a.ok(), name)
 			fmt.Fprintf(a.out, "  %s\n\n", secret)
+
+			// What it can do, said at the only moment the operator is still
+			// looking: a key that destroys and recreates machines must not be
+			// handed out looking like a key that reads a dashboard.
+			if operate {
+				fmt.Fprintf(a.out, "  scopes: %s\n", strings.Join(record.Scopes, ", "))
+				fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
+					"This token can trigger drills, cancel them, and clean up the workloads they leave."))
+				fmt.Fprintf(a.out, "  %s\n\n", a.paint(colorYellow,
+					"It destroys and recreates machines. Treat it like a hypervisor credential."))
+			} else {
+				fmt.Fprintf(a.out, "  scopes: %s\n", strings.Join(record.Scopes, ", "))
+				fmt.Fprintf(a.out, "  %s\n\n", a.paint(colorDim,
+					"Read only: it can look, and change nothing. Add --operate for a token that runs drills."))
+			}
+
 			fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
-				"This is the only time it will be shown. Store it now."))
+				"This is the only time the secret will be shown. Store it now."))
 			fmt.Fprintf(a.out, "  %s\n", a.paint(colorDim,
 				"Use it as: Authorization: Bearer "+secret[:6]+"..."))
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&operate, "operate", false,
+		"allow this token to trigger, cancel and clean up drills (default: read only)")
+	return cmd
 }
 
 func newTokenListCmd(a *app) *cobra.Command {
@@ -77,7 +112,10 @@ func newTokenListCmd(a *app) *cobra.Command {
 				return nil
 			}
 
-			t := a.table(a.out, "NAME", "CREATED", "LAST USED", "STATE")
+			// SCOPES is in the table rather than behind a flag: which token
+			// can destroy machines is the first thing anyone auditing this
+			// list is looking for.
+			t := a.table(a.out, "NAME", "SCOPES", "CREATED", "LAST USED", "STATE")
 			for _, tok := range tokens {
 				lastUsed := "never"
 				if !tok.LastUsedAt.IsZero() {
@@ -87,7 +125,13 @@ func newTokenListCmd(a *app) *cobra.Command {
 				if !tok.Live() {
 					state = "revoked " + tok.RevokedAt.Local().Format("2006-01-02")
 				}
-				t.row(tok.Name, tok.CreatedAt.Local().Format("2006-01-02 15:04"), lastUsed, state)
+				scopes := strings.Join(tok.Scopes, ",")
+				if scopes == "" {
+					// A token recorded before scopes existed reads back with
+					// none, and means read only. Saying so beats a blank.
+					scopes = store.ScopeRead
+				}
+				t.row(tok.Name, scopes, tok.CreatedAt.Local().Format("2006-01-02 15:04"), lastUsed, state)
 			}
 			t.flush()
 			return nil
