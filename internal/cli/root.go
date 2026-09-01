@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/crypto"
 	"github.com/restorelab/restorelab/internal/providers"
+	"github.com/restorelab/restorelab/internal/store"
 	"github.com/restorelab/restorelab/internal/version"
 )
 
@@ -33,6 +36,9 @@ type app struct {
 	cfg    *config.Config
 	key    crypto.Key
 	keySet bool
+
+	storeOnce  sync.Once
+	storeValue store.Store
 }
 
 // Execute runs the root command. It returns the process exit code.
@@ -93,6 +99,8 @@ cleans everything up.`,
 		newBackupsCmd(a),
 		newRecoveryCmd(a),
 		newCleanupCmd(a),
+		newRunsCmd(a),
+		newDBCmd(a),
 		newVersionCmd(a),
 	)
 	return cmd
@@ -238,4 +246,43 @@ func hintFor(err error) string {
 		return "RestoreLab only ever destroys workloads it created itself"
 	}
 	return ""
+}
+
+// storeConfig says where the drill history lives: the configured URL if there
+// is one, the embedded file next to the config otherwise.
+func (a *app) storeConfig() store.Config {
+	cfg := store.Config{DefaultPath: a.defaultHistoryPath()}
+	if url := os.Getenv("RESTORELAB_DATABASE_URL"); url != "" {
+		cfg.URL = url
+		return cfg
+	}
+	if loaded, err := a.config(); err == nil {
+		cfg.URL = loaded.Database.URL
+	}
+	return cfg
+}
+
+// defaultHistoryPath is the embedded database, next to the config file and
+// the master key.
+func (a *app) defaultHistoryPath() string {
+	return filepath.Join(filepath.Dir(a.path()), "history.db")
+}
+
+// store opens the drill history once per process.
+//
+// Any failure is reported once and answered with store.Noop. History is a
+// convenience; nothing here may stop a drill, so this method has no error to
+// return and callers have no branch to write.
+func (a *app) store(ctx context.Context) store.Store {
+	a.storeOnce.Do(func() {
+		a.storeValue = store.Noop{}
+
+		s, err := store.Open(ctx, a.storeConfig())
+		if err != nil {
+			fmt.Fprintf(a.err, "%s drill history is not being recorded: %v\n", a.warn(), err)
+			return
+		}
+		a.storeValue = s
+	})
+	return a.storeValue
 }

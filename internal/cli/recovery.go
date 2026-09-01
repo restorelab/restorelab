@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"github.com/restorelab/restorelab/internal/checks"
 	"github.com/restorelab/restorelab/internal/core"
@@ -272,11 +273,24 @@ func (a *app) runPlan(ctx context.Context, p *plan.Plan, f *runFlags) error {
 			a.warn(), networkName)
 	}
 
+	// The drill is mirrored into the history as it happens. rec never returns
+	// an error: a locked database or a full disk must not abort a destructive
+	// operation on a production cluster.
+	rec := newRecorder(a.store(ctx), a.runLogger())
+	rec.Prepare(p.Name, hvEntry.ID, p.Workload.ID, p.Workload.Name, planYAML(p))
+	printer := a.progressPrinter()
+
 	engine, err := recovery.New(recovery.Deps{
 		Hypervisor: hv,
 		Backups:    bp,
 		Checks:     checks.Default(),
-		Emit:       a.progressPrinter(),
+		// Both consumers see every event: the terminal renders it, the
+		// recorder files it. The printer runs first so that writing history
+		// never delays what the user is watching.
+		Emit: func(e recovery.Event) {
+			printer(e)
+			rec.Emit(e)
+		},
 		// The event stream is what the user reads; structured logs are for
 		// --verbose and for the future server, not for a terminal timeline.
 		Logger: a.runLogger(),
@@ -300,6 +314,11 @@ func (a *app) runPlan(ctx context.Context, p *plan.Plan, f *runFlags) error {
 		DryRun:       f.dryRun,
 		KeepWorkload: f.keep,
 	})
+
+	// Record the outcome on a context that outlives cancellation, for the same
+	// reason the cleanup runs on one: a drill interrupted with Ctrl-C is
+	// exactly the one whose trace is worth the most.
+	rec.Finish(context.WithoutCancel(ctx), run)
 
 	// The report is written from the run even when the run failed: a failed
 	// drill is exactly the case where the report matters most.
@@ -388,4 +407,19 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// planYAML renders the plan as it is at this moment, to be stored alongside
+// the run.
+//
+// Plans become editable once they live in the database, so a run that only
+// referenced its plan would let a months-old report describe checks that were
+// never performed. An unmarshalable plan is not worth failing a drill over -
+// the snapshot is a record, not an input.
+func planYAML(p *plan.Plan) string {
+	out, err := yaml.Marshal(p)
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
