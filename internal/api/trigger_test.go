@@ -231,6 +231,26 @@ func TestCancellingARunningRunIsAccepted(t *testing.T) {
 	}
 }
 
+func TestCancellingAnAlreadySettledRunIsRefused(t *testing.T) {
+	history := newFakeHistory()
+	history.add(core.RecoveryRun{
+		ID: "run-done", PlanName: "adhoc-110", SourceWorkloadID: "110",
+		State: core.RunSuccess, Result: core.ResultSuccess,
+		StartedAt:   time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC),
+		CompletedAt: time.Date(2026, 9, 1, 11, 5, 0, 0, time.UTC),
+	})
+	s := operatingServer(t, history, nil)
+
+	rec := post(s, operateSecret, "/api/v1/recovery-runs/run-done/cancel", "")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: a drill that is already over cannot be cancelled again: %s",
+			rec.Code, rec.Body)
+	}
+	if history.byID["run-done"].State != core.RunSuccess {
+		t.Errorf("cancelling a settled run must not touch its state: %q", history.byID["run-done"].State)
+	}
+}
+
 func TestCleanupRefusesAnIdOutsideTheReservedRange(t *testing.T) {
 	s := operatingServer(t, newFakeHistory(), strictProviders{t: t})
 

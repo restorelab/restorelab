@@ -124,6 +124,10 @@ func (t APIToken) Can(scope string) bool {
 // ErrNoWork is returned by ClaimRun when the queue holds nothing to run.
 var ErrNoWork = errors.New("store: no queued run to claim")
 
+// ErrAlreadySettled is returned when an operation asks something of a run
+// that has already reached a terminal state.
+var ErrAlreadySettled = errors.New("store: run has already settled")
+
 // QueuedRun is what a worker needs to execute a run it just claimed: the id
 // to run under, and the plan exactly as it was when the run was queued.
 type QueuedRun struct {
@@ -150,6 +154,12 @@ type Filter struct {
 	// shifts every OFFSET after it, which either skips a row or shows one
 	// twice - and the reader has no way to notice either.
 	After *Position
+	// NotTerminal restricts the listing to runs that have not settled: the
+	// queue, and whatever is running. The set of terminal states lives in
+	// one place (terminalStates, which a test keeps in step with
+	// core.RunState.Terminal), so a state added to core cannot quietly stop
+	// being filtered here.
+	NotTerminal bool
 }
 
 // DefaultListLimit caps a listing that did not ask for a size.

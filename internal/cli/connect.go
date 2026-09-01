@@ -229,8 +229,8 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 		CACertPath: f.caCert,
 		Node:       f.node,
 		Pool:       opts.Pool,
-		TempIDMin:  9000,
-		TempIDMax:  9999,
+		TempIDMin:  core.DefaultTempIDMin,
+		TempIDMax:  core.DefaultTempIDMax,
 	}
 	previousSecret := ""
 	if existing, err := cfg.Provider(entry.ID); err == nil {

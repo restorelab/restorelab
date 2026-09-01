@@ -196,6 +196,21 @@ func QueueWriteConformance(t *testing.T, open OpenFunc) {
 		}
 	})
 
+	t.Run("cancelling an already settled run is refused with a sentinel", func(t *testing.T) {
+		s := open(t)
+		if err := s.Enqueue(ctx, queuedRun("q5", "110"), "name: x\n", base); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if err := s.SetState(ctx, "q5", core.RunSuccess); err != nil {
+			t.Fatalf("SetState: %v", err)
+		}
+
+		_, err := s.RequestCancel(ctx, "q5", base)
+		if !errors.Is(err, ErrAlreadySettled) {
+			t.Fatalf("RequestCancel on a settled run = %v, want ErrAlreadySettled", err)
+		}
+	})
+
 	t.Run("a token carries its scopes", func(t *testing.T) {
 		s := open(t)
 		tok := APIToken{ID: "t1", Name: "dash", Hash: "h1", CreatedAt: base, Scopes: []string{ScopeRead}}

@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/restorelab/restorelab/internal/config"
+	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/crypto"
 	"github.com/restorelab/restorelab/internal/providers"
 )
@@ -94,8 +95,8 @@ the process list. Prefer --token-secret-file, '-' to read stdin, or the
 	pve.bindCommon(proxmoxCmd)
 	proxmoxCmd.Flags().StringVar(&pve.node, "node", "", "default node for API calls")
 	proxmoxCmd.Flags().StringVar(&pve.backupStorage, "backup-storage", "", "storage holding backups (default: scan every backup-capable storage)")
-	proxmoxCmd.Flags().IntVar(&pve.tempIDMin, "temp-id-min", 9000, "lowest VMID used for temporary workloads")
-	proxmoxCmd.Flags().IntVar(&pve.tempIDMax, "temp-id-max", 9999, "highest VMID used for temporary workloads")
+	proxmoxCmd.Flags().IntVar(&pve.tempIDMin, "temp-id-min", core.DefaultTempIDMin, "lowest VMID used for temporary workloads")
+	proxmoxCmd.Flags().IntVar(&pve.tempIDMax, "temp-id-max", core.DefaultTempIDMax, "highest VMID used for temporary workloads")
 
 	pbsFlags := &providerFlags{}
 	pbsCmd := &cobra.Command{

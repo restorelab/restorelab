@@ -12,6 +12,20 @@ const (
 	MetadataCreatedAt     = "restorelab_created_at"
 )
 
+// DefaultTempIDMin and DefaultTempIDMax bound the range a temporary
+// workload's id is allocated in when a provider is not configured with its
+// own narrower range. This is a safety boundary, not a default in the
+// cosmetic sense: it is what makes a mistyped or malicious id outside the
+// range refused rather than acted on, both by the API before a provider is
+// even asked (the early gate) and by the provider itself when it deletes a
+// workload (the independent one). Two copies of these numbers is two chances
+// for that gate to quietly narrow or widen without the other noticing, so
+// every caller reads them from here.
+const (
+	DefaultTempIDMin = 9000
+	DefaultTempIDMax = 9999
+)
+
 // HypervisorProvider is the contract every compute backend implements
 // (Proxmox VE today; VMware, Hyper-V, cloud providers later).
 //

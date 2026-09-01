@@ -107,6 +107,9 @@ func (f *fakeHistory) ListRuns(_ context.Context, filter store.Filter) ([]store.
 		if filter.Result != "" && r.Result != filter.Result {
 			continue
 		}
+		if filter.NotTerminal && r.State.Terminal() {
+			continue
+		}
 		if filter.After != nil {
 			after := filter.After
 			// Runs come back newest first, so "after the cursor" means
@@ -184,7 +187,7 @@ func (f *fakeHistory) RequestCancel(_ context.Context, runID string, at time.Tim
 		return false, store.ErrNotFound
 	}
 	if run.State.Terminal() {
-		return false, fmt.Errorf("run %s is already %s", runID, run.State)
+		return false, fmt.Errorf("%w: run %s is %s", store.ErrAlreadySettled, runID, run.State)
 	}
 	if run.State == core.RunQueued {
 		f.setState(runID, core.RunCancelled, at)

@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -137,7 +136,7 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 
 	settled, err := s.history.RequestCancel(r.Context(), run.ID, s.now())
 	if err != nil {
-		writeProblem(w, r, s.cancelProblem(r, run.ID, err))
+		writeProblem(w, r, problemFor(err))
 		return
 	}
 
@@ -157,43 +156,17 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	writeJSONStatus(w, r, status, newRunDTO(current))
 }
 
-// cancelProblem maps a refused cancellation.
-//
-// RequestCancel refuses a run that has already settled, and says so without a
-// sentinel error to match on. So the run is read back instead of the message
-// parsed: a drill that is already over is the caller's mistake and a 409,
-// anything else is ours and a 500.
-func (s *Server) cancelProblem(r *http.Request, runID string, err error) Problem {
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrAmbiguous) ||
-		errors.Is(err, store.ErrNoHistory) {
-		return problemFor(err)
-	}
-	if current, gerr := s.history.GetRun(r.Context(), runID); gerr == nil && current.State.Terminal() {
-		return newProblem("already-settled", "This drill is already over", http.StatusConflict,
-			fmt.Sprintf("run %s is already %s", current.ID, current.State))
-	}
-	return problemFor(err)
-}
-
-// defaultTempIDMin and defaultTempIDMax are the reserved range a drill's
-// temporary workload is allocated in when the provider entry does not narrow
-// it. They mirror the provider's own defaults on purpose: this gate is the
-// early one, so that a mistyped id never becomes a request to the cluster at
-// all, and the provider still refuses independently before it deletes
-// anything.
-const (
-	defaultTempIDMin = 9000
-	defaultTempIDMax = 9999
-)
-
 // tempIDRange is the reserved range configured for a provider.
 //
 // It reads the configuration rather than asking the ProviderSet, because the
 // point of the check is to answer before anything is asked of a provider at
-// all.
+// all. Falling back to core.DefaultTempIDMin/Max on an unconfigured provider
+// mirrors the provider's own defaults on purpose: this gate is the early
+// one, so that a mistyped id never becomes a request to the cluster at all,
+// and the provider still refuses independently before it deletes anything.
 func (s *Server) tempIDRange(providerID string) (int, int) {
 	if s.cfg == nil {
-		return defaultTempIDMin, defaultTempIDMax
+		return core.DefaultTempIDMin, core.DefaultTempIDMax
 	}
 	if providerID == "" {
 		providerID = s.cfg.Defaults.Provider
@@ -204,7 +177,7 @@ func (s *Server) tempIDRange(providerID string) (int, int) {
 		}
 		return p.TempIDMin, p.TempIDMax
 	}
-	return defaultTempIDMin, defaultTempIDMax
+	return core.DefaultTempIDMin, core.DefaultTempIDMax
 }
 
 // cleanupResponse says what was removed.
@@ -259,13 +232,11 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scanned newest-first and filtered here rather than asked of the store,
-	// because store.Filter carries one state and the queue spans nine. Doing
-	// it in Go means the definition of "not settled" is core.RunState.Terminal
-	// itself, so a state added there can never be silently missing from the
-	// queue. The scan is bounded: a run that has not settled started, at the
-	// latest, when it was queued, so it is among the newest rows there are.
-	runs, err := s.history.ListRuns(r.Context(), store.Filter{Limit: maxPageSize})
+	// Filtered by the store, not in Go: the set of states that have not
+	// settled lives in one place there (terminalStates, kept in step with
+	// core.RunState.Terminal by a test), so a run in flight cannot be pushed
+	// out of the page by finished runs that merely happen to be more recent.
+	runs, err := s.history.ListRuns(r.Context(), store.Filter{NotTerminal: true, Limit: limit})
 	if err != nil {
 		writeProblem(w, r, problemFor(err))
 		return
@@ -273,13 +244,7 @@ func (s *Server) handleQueue(w http.ResponseWriter, r *http.Request) {
 
 	out := page[queueEntryDTO]{Items: []queueEntryDTO{}}
 	for _, run := range runs {
-		if run.State.Terminal() {
-			continue
-		}
 		out.Items = append(out.Items, s.newQueueEntryDTO(r, run))
-		if len(out.Items) == limit {
-			break
-		}
 	}
 	writeJSON(w, r, out)
 }

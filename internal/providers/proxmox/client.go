@@ -82,10 +82,10 @@ func New(cfg Config) (*Provider, error) {
 		cfg.Timeout = 30 * time.Second
 	}
 	if cfg.TempIDMin <= 0 {
-		cfg.TempIDMin = 9000
+		cfg.TempIDMin = core.DefaultTempIDMin
 	}
 	if cfg.TempIDMax <= 0 {
-		cfg.TempIDMax = 9999
+		cfg.TempIDMax = core.DefaultTempIDMax
 	}
 	if cfg.TempIDMin > cfg.TempIDMax {
 		return nil, fmt.Errorf("proxmox: TempIDMin (%d) must be <= TempIDMax (%d)", cfg.TempIDMin, cfg.TempIDMax)

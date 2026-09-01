@@ -79,6 +79,8 @@ func problemFor(err error) Problem {
 		return newProblem("history-unavailable", "The drill history is unavailable",
 			http.StatusServiceUnavailable,
 			"this RestoreLab has no usable history database; see `restorelab db status`")
+	case errors.Is(err, store.ErrAlreadySettled):
+		return newProblem("already-settled", "This drill is already over", http.StatusConflict, err.Error())
 	case errors.Is(err, core.ErrNotFound):
 		return newProblem("not-found", "Not found", http.StatusNotFound, err.Error())
 	case errors.Is(err, core.ErrNoBackup):

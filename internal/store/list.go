@@ -41,6 +41,11 @@ func (s *sqlStore) ListRuns(ctx context.Context, f Filter) ([]RunSummary, error)
 		clauses = append(clauses, "started_at >= ?")
 		args = append(args, formatTime(f.Since))
 	}
+	if f.NotTerminal {
+		marks, targs := terminalList()
+		clauses = append(clauses, "state NOT IN ("+marks+")")
+		args = append(args, targs...)
+	}
 	if f.After != nil {
 		// Le tri est (started_at DESC, id DESC) ; « après » veut donc dire
 		// strictement plus petit dans cet ordre lexicographique à deux

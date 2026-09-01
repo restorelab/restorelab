@@ -121,7 +121,7 @@ func (s *sqlStore) RequestCancel(ctx context.Context, runID string, at time.Time
 	if err != nil {
 		return false, err
 	}
-	return false, fmt.Errorf("run %s is already %s", runID, state)
+	return false, fmt.Errorf("%w: run %s is %s", ErrAlreadySettled, runID, state)
 }
 
 const cancelRequestedSQL = `SELECT cancel_requested_at FROM runs WHERE id = ?`

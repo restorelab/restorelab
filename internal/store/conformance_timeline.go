@@ -373,6 +373,45 @@ func ListConformance(t *testing.T, open OpenFunc) {
 		}
 	})
 
+	t.Run("NotTerminal keeps an in-flight run however many finished ones are newer", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+
+		// The oldest run of the batch, and the only one still in flight.
+		inFlight := sampleRun("55555555-0000-0000-0000-000000000000")
+		inFlight.State = core.RunRestoring
+		inFlight.StartedAt = base
+		inFlight.CompletedAt = time.Time{}
+		if err := s.CreateRun(ctx, inFlight, "name: x\n"); err != nil {
+			t.Fatalf("CreateRun in-flight: %v", err)
+		}
+
+		// A handful of terminal runs, all started later than the in-flight
+		// one - exactly what pushes it past a low limit when the listing is
+		// not filtered before it is truncated.
+		for i := 0; i < 3; i++ {
+			id := fmt.Sprintf("66666666-0000-0000-0000-00000000000%d", i)
+			done := sampleRun(id)
+			done.State = core.RunSuccess
+			done.Result = core.ResultSuccess
+			done.StartedAt = base.Add(time.Duration(i+1) * time.Hour)
+			done.CompletedAt = done.StartedAt.Add(time.Minute)
+			if err := s.CreateRun(ctx, done, "name: x\n"); err != nil {
+				t.Fatalf("CreateRun done %d: %v", i, err)
+			}
+		}
+
+		got, err := s.ListRuns(ctx, Filter{NotTerminal: true, Limit: 1})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(got) != 1 || got[0].ID != inFlight.ID {
+			t.Fatalf("ListRuns(NotTerminal, Limit:1) = %+v, want only the in-flight run %s: "+
+				"a queue that hides a running drill behind finished ones is worse than no queue at all",
+				got, inFlight.ID)
+		}
+	})
+
 	t.Run("an empty store lists nothing without erroring", func(t *testing.T) {
 		s := open(t)
 
