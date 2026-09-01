@@ -96,6 +96,13 @@ type Server struct {
 	now       func() time.Time
 	touch     *touchThrottle
 	mux       *http.ServeMux
+
+	// The event stream's rhythm. Fields rather than the constants they are
+	// built from so that a test can drive the loop instead of waiting a real
+	// second for every pass. They are set once, in New, and only read
+	// afterwards - a stream never writes them.
+	ssePoll      time.Duration
+	sseHeartbeat time.Duration
 }
 
 // New builds a Server with its routes wired.
@@ -107,6 +114,9 @@ func New(opts Options) *Server {
 		cfg:       opts.Config,
 		weights:   opts.Weights,
 		now:       opts.Now,
+
+		ssePoll:      ssePoll,
+		sseHeartbeat: sseHeartbeat,
 	}
 	if s.now == nil {
 		s.now = time.Now

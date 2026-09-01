@@ -179,11 +179,22 @@ func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
 
 // handleRunEvents serves GET /api/v1/recovery-runs/{id}/events.
 //
-// ?after=<seq> resumes: it is the same replay B2's SSE will do on
-// Last-Event-ID, available now to anything that polls.
+// One endpoint, two representations, chosen by Accept: a dashboard follows
+// the run live over text/event-stream, a script loops over the JSON page. The
+// JSON shape is the one B1 shipped and must stay byte for byte what its
+// clients already parse.
+//
+// ?after=<seq> resumes the JSON page; the stream resumes on Last-Event-ID.
+// Both are the same replay, because both are the same Events(runID, afterSeq)
+// query over the seq stored in run_events.
 func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
 	run, ok := s.resolveRun(w, r)
 	if !ok {
+		return
+	}
+
+	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		s.streamEvents(w, r, run)
 		return
 	}
 
