@@ -87,6 +87,15 @@ type Worker struct {
 	// nothing outside this package can set it, and nothing production-side
 	// changes it.
 	renew time.Duration
+
+	// mu guards inFlight, and nothing else: every other field is written
+	// once in New and only read afterwards.
+	mu sync.Mutex
+	// inFlight names the runs this process is executing right now. It is the
+	// one piece of state the claim loop and the reconciliation sweep share,
+	// and it exists so the sweep can never settle a drill this very worker
+	// is still running. See reconcile for why that is not theoretical.
+	inFlight map[string]bool
 }
 
 // New builds a worker.
@@ -109,6 +118,7 @@ func New(opts Options) (*Worker, error) {
 		poll:        opts.Poll,
 		now:         opts.Now,
 		renew:       renewEvery,
+		inFlight:    map[string]bool{},
 	}
 	if w.log == nil {
 		w.log = slog.Default()
@@ -154,6 +164,20 @@ func (w *Worker) Run(ctx context.Context) error {
 	)
 	defer wg.Wait()
 
+	// Before taking a single new drill: settle the ones a previous life of
+	// this process, or another machine entirely, left half-run. They are
+	// failed and cleaned up, never replayed.
+	w.reconcile(ctx)
+
+	// And keep sweeping. A worker that died elsewhere does not announce it,
+	// so the only way to notice is to look again - one lease apart, which is
+	// the shortest interval at which anything can have become stale.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		w.reconcileEvery(ctx)
+	}()
+
 	ticker := time.NewTicker(w.poll)
 	defer ticker.Stop()
 
@@ -194,13 +218,54 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 
+		w.markInFlight(claimed.ID)
 		wg.Add(1)
 		go func(q store.QueuedRun) {
 			defer wg.Done()
 			defer func() { <-running }()
+			defer w.clearInFlight(q.ID)
 			w.execute(ctx, q)
 		}(*claimed)
 	}
+}
+
+// reconcileEvery sweeps for interrupted runs until ctx is cancelled.
+//
+// One lease apart: a lease is by definition how long a worker may go quiet
+// before it is presumed dead, so nothing can become stale faster than that,
+// and sweeping more often would only mean more queries for the same answer.
+func (w *Worker) reconcileEvery(ctx context.Context) {
+	ticker := time.NewTicker(w.lease)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.reconcile(ctx)
+		}
+	}
+}
+
+// markInFlight records that this process has started executing a run.
+func (w *Worker) markInFlight(runID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.inFlight[runID] = true
+}
+
+// clearInFlight records that this process has finished with a run.
+func (w *Worker) clearInFlight(runID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.inFlight, runID)
+}
+
+// isInFlight reports whether this process is executing a run right now.
+func (w *Worker) isInFlight(runID string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.inFlight[runID]
 }
 
 // firstNonEmpty returns the first non-empty string.

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite" // to read the lease columns the Store does not expose
+	_ "modernc.org/sqlite" // for steal, the one thing no Store method may do
 
 	"github.com/restorelab/restorelab/internal/config"
 	"github.com/restorelab/restorelab/internal/core"
@@ -262,11 +262,15 @@ startup:
 `, workloadID, workloadID)
 }
 
-// history is a store plus the path it lives at. The path is what lets a test
-// read the lease columns: they are the worker's only durable side effect that
-// the Store interface deliberately exposes no getter for, and asserting on
-// them through StaleRuns would prove nothing - StaleRuns already skips every
-// terminal run, which is exactly what a finished drill is.
+// history is a store plus the path it lives at.
+//
+// The path is here for steal alone. Reading a lease goes through
+// store.RunLease; taking one away from its holder cannot, and must not: every
+// query in the store either requires the caller to already hold the lease
+// (RenewLease) or requires there to be none (ClaimRun), which is precisely
+// the invariant this phase is built on. A store method that handed a claimed
+// run to somebody else would be a way to run two engines against one drill,
+// and it would exist in production to serve one test.
 type history struct {
 	store.Store
 	path string
@@ -281,23 +285,6 @@ func newStore(t *testing.T) *history {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return &history{Store: s, path: path}
-}
-
-// lease reads the two columns that say who owns a run and until when.
-func (h *history) lease(t *testing.T, runID string) (owner string, expiresSet bool) {
-	t.Helper()
-
-	db, err := sql.Open("sqlite", h.path+"?_pragma=busy_timeout(5000)")
-	if err != nil {
-		t.Fatalf("open the history file: %v", err)
-	}
-	defer func() { _ = db.Close() }()
-
-	var o, exp sql.NullString
-	if err := db.QueryRow(`SELECT lease_owner, lease_expires_at FROM runs WHERE id = ?`, runID).Scan(&o, &exp); err != nil {
-		t.Fatalf("read the lease of %s: %v", runID, err)
-	}
-	return o.String, exp.Valid && exp.String != ""
 }
 
 // steal hands a claimed run to somebody else behind the worker's back. It is
@@ -430,12 +417,21 @@ func getRun(t *testing.T, s store.Store, id string) *core.RecoveryRun {
 // the expiry is cleared, and the owner is kept because which worker ran a
 // drill is part of its history - and because a cleared owner would make the
 // run claimable all over again.
-func assertLeaseReleased(t *testing.T, h *history, runIDs ...string) {
+//
+// It asks the store rather than the file. StaleRuns cannot answer this - it
+// skips every terminal run, which is exactly what a finished drill is - so
+// until RunLease existed the only way to see a lease was to read its two
+// columns, and a test that knows the column names breaks the day one is
+// renamed while proving nothing to whoever reads the interface.
+func assertLeaseReleased(t *testing.T, s store.Store, runIDs ...string) {
 	t.Helper()
 	for _, id := range runIDs {
-		owner, expiresSet := h.lease(t, id)
-		if expiresSet {
-			t.Errorf("run %s still holds a lease expiry after finishing", id)
+		owner, expires, err := s.RunLease(context.Background(), id)
+		if err != nil {
+			t.Fatalf("RunLease %s: %v", id, err)
+		}
+		if !expires.IsZero() {
+			t.Errorf("run %s still holds a lease expiry after finishing: %v", id, expires)
 		}
 		if owner == "" {
 			t.Errorf("run %s lost its lease owner: it would be claimable again", id)

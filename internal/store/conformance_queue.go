@@ -72,6 +72,71 @@ func QueueWriteConformance(t *testing.T, open OpenFunc) {
 		}
 	})
 
+	t.Run("a settled run keeps the verdict it settled on", func(t *testing.T) {
+		s := open(t)
+		if err := s.Enqueue(ctx, queuedRun("q2b", "110"), "name: x\n", base); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if err := s.SetState(ctx, "q2b", core.RunFailed); err != nil {
+			t.Fatalf("SetState: %v", err)
+		}
+
+		// Two workers sweeping the same interrupted run both try to clean it
+		// up; the one that loses is refused by the provider and would report
+		// an orphan that the winner had already removed. ORPHANED WORKLOAD is
+		// the loudest thing this product says, and it has to stay true.
+		if err := s.SetState(ctx, "q2b", core.RunCleanupFailed); err != nil {
+			t.Fatalf("SetState over a settled run must be a silent no-op, got: %v", err)
+		}
+		got, err := s.GetRun(ctx, "q2b")
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if got.State != core.RunFailed {
+			t.Errorf("State = %q, want FAILED: the first writer decides", got.State)
+		}
+	})
+
+	t.Run("a run's error is written on its own, without touching anything else", func(t *testing.T) {
+		s := open(t)
+		if err := s.Enqueue(ctx, queuedRun("q5", "110"), "name: x\n", base); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		if err := s.SetState(ctx, "q5", core.RunFailed); err != nil {
+			t.Fatalf("SetState: %v", err)
+		}
+
+		// This is how an interrupted run says why it died: reconciliation
+		// never loaded it as a full run, so UpdateRun is not available to it.
+		const why = "interrupted: the worker running this drill did not survive"
+		if err := s.SetRunError(ctx, "q5", why); err != nil {
+			t.Fatalf("SetRunError: %v", err)
+		}
+
+		got, err := s.GetRun(ctx, "q5")
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if got.Err != why {
+			t.Errorf("Err = %q, want %q", got.Err, why)
+		}
+		if got.State != core.RunFailed {
+			t.Errorf("State = %q, want FAILED: SetRunError must not touch it", got.State)
+		}
+		if got.SourceWorkloadID != "110" {
+			t.Errorf("SourceWorkloadID = %q, want 110: SetRunError must not touch it", got.SourceWorkloadID)
+		}
+	})
+
+	t.Run("setting the error of an unknown run is not an error", func(t *testing.T) {
+		s := open(t)
+		// Best-effort, like SetTempWorkload: the caller has a run id and a
+		// reason, not a reason to abort.
+		if err := s.SetRunError(ctx, "does-not-exist", "boom"); err != nil {
+			t.Fatalf("SetRunError on an unknown run = %v, want nil", err)
+		}
+	})
+
 	t.Run("a workload with an active run is reported, a finished one is not", func(t *testing.T) {
 		s := open(t)
 		if err := s.Enqueue(ctx, queuedRun("q3", "110"), "name: x\n", base); err != nil {
@@ -290,6 +355,64 @@ func QueueClaimConformance(t *testing.T, open OpenFunc) {
 		}
 		if err := s.RenewLease(ctx, "c5", "worker-b", base.Add(3*lease)); err == nil {
 			t.Fatal("a lease was renewed by a worker that does not hold it")
+		}
+	})
+
+	t.Run("a lease can be read back without knowing the schema", func(t *testing.T) {
+		s := open(t)
+		if err := s.Enqueue(ctx, queuedRun("c7", "110"), "name: x\n", base); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+
+		// Queued and untouched: nobody holds it, and nothing is running.
+		owner, expires, err := s.RunLease(ctx, "c7")
+		if err != nil {
+			t.Fatalf("RunLease on a queued run: %v", err)
+		}
+		if owner != "" {
+			t.Errorf("owner = %q on a run nobody claimed, want empty", owner)
+		}
+		if !expires.IsZero() {
+			t.Errorf("expires = %v on a run nobody claimed, want the zero time", expires)
+		}
+
+		if _, err := s.ClaimRun(ctx, "worker-a", lease, base); err != nil {
+			t.Fatalf("ClaimRun: %v", err)
+		}
+
+		owner, expires, err = s.RunLease(ctx, "c7")
+		if err != nil {
+			t.Fatalf("RunLease on a claimed run: %v", err)
+		}
+		if owner != "worker-a" {
+			t.Errorf("owner = %q, want worker-a", owner)
+		}
+		if !expires.Equal(base.Add(lease)) {
+			t.Errorf("expires = %v, want %v", expires, base.Add(lease))
+		}
+
+		// Finished: the expiry is gone, the owner stays. Both halves matter -
+		// a cleared owner would make the run claimable all over again, which
+		// is the one thing this phase exists to prevent.
+		if err := s.FinishLease(ctx, "c7"); err != nil {
+			t.Fatalf("FinishLease: %v", err)
+		}
+		owner, expires, err = s.RunLease(ctx, "c7")
+		if err != nil {
+			t.Fatalf("RunLease after FinishLease: %v", err)
+		}
+		if owner != "worker-a" {
+			t.Errorf("owner = %q after FinishLease, want it kept as worker-a", owner)
+		}
+		if !expires.IsZero() {
+			t.Errorf("expires = %v after FinishLease, want the zero time", expires)
+		}
+	})
+
+	t.Run("the lease of an unknown run is not found", func(t *testing.T) {
+		s := open(t)
+		if _, _, err := s.RunLease(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("RunLease on an unknown run = %v, want ErrNotFound", err)
 		}
 	})
 

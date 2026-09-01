@@ -69,6 +69,8 @@ func (Noop) Enqueue(context.Context, *core.RecoveryRun, string, time.Time) error
 
 func (Noop) SetState(context.Context, string, core.RunState) error { return nil }
 
+func (Noop) SetRunError(context.Context, string, string) error { return nil }
+
 func (Noop) RequestCancel(context.Context, string, time.Time) (bool, error) {
 	return false, ErrNoHistory
 }
@@ -92,3 +94,10 @@ func (Noop) FinishLease(context.Context, string) error { return nil }
 
 // StaleRuns reports nothing to reconcile, for the same reason as ClaimRun.
 func (Noop) StaleRuns(context.Context, time.Time) ([]QueuedRun, error) { return nil, nil }
+
+// RunLease reports ErrNotFound, for the same reason GetRun does: a caller
+// asking about one specific run must be told there is no such run, not
+// handed an empty lease it would read as "nobody is running this".
+func (Noop) RunLease(context.Context, string) (string, time.Time, error) {
+	return "", time.Time{}, ErrNotFound
+}

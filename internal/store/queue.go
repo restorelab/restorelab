@@ -52,11 +52,32 @@ func (s *sqlStore) Enqueue(ctx context.Context, run *core.RecoveryRun, planYAML 
 	)
 }
 
-const setStateSQL = `UPDATE runs SET state = ? WHERE id = ?`
-
-// SetState writes the run's state and nothing else.
+// SetState writes the run's state and nothing else - and never over a state
+// the run has already settled into.
+//
+// The guard is not defensive programming, it is a false alarm this product
+// cannot afford. Two workers sweeping the same interrupted run both call
+// Delete: the winner removes the workload and records FAILED, the loser is
+// refused by the provider and would write CLEANUP_FAILED with an ORPHANED
+// WORKLOAD message over it. Nothing unsafe happens - nothing is re-run and
+// nothing extra is deleted - but that message is the loudest alarm the
+// product has, and an alarm that cries wolf is one an operator learns to
+// ignore. The first writer decides.
 func (s *sqlStore) SetState(ctx context.Context, runID string, state core.RunState) error {
-	return s.exec(ctx, setStateSQL, string(state), runID)
+	marks, args := terminalList()
+	args = append([]any{string(state), runID}, args...)
+	return s.exec(ctx, `UPDATE runs SET state = ? WHERE id = ? AND state NOT IN (`+marks+`)`, args...)
+}
+
+const setRunErrorSQL = `UPDATE runs SET err = ? WHERE id = ?`
+
+// SetRunError writes the run's error message and nothing else.
+//
+// Like SetState and SetTempWorkload, an unknown run id is not an error: this
+// is a best-effort write made from something other than a full run, and
+// nothing here should ever become a reason to abort or retry.
+func (s *sqlStore) SetRunError(ctx context.Context, runID, message string) error {
+	return s.exec(ctx, setRunErrorSQL, nullString(message), runID)
 }
 
 // RequestCancel asks a run to stop, settling it immediately when nothing has
@@ -274,6 +295,31 @@ const finishLeaseSQL = `UPDATE runs SET lease_expires_at = NULL WHERE id = ?`
 // again.
 func (s *sqlStore) FinishLease(ctx context.Context, runID string) error {
 	return s.exec(ctx, finishLeaseSQL, runID)
+}
+
+const runLeaseSQL = `SELECT lease_owner, lease_expires_at FROM runs WHERE id = ?`
+
+// RunLease reports who holds a run and until when.
+//
+// It is the read half of the lease, and it exists so that nothing outside
+// this package has to know the two columns are called lease_owner and
+// lease_expires_at. StaleRuns cannot stand in for it: it deliberately skips
+// terminal runs, so it can never say anything about a drill that finished.
+func (s *sqlStore) RunLease(ctx context.Context, runID string) (string, time.Time, error) {
+	var owner, expires sql.NullString
+	err := s.queryRow(ctx, runLeaseSQL, runID).Scan(&owner, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, fmt.Errorf("%w: %s", ErrNotFound, runID)
+	}
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
+	at, err := parseNullTime(nullable(expires))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("store: run %s has an unreadable lease expiry: %w", runID, err)
+	}
+	return owner.String, at, nil
 }
 
 // StaleRuns lists the runs whose worker stopped renewing: it was claimed, it

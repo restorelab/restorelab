@@ -78,6 +78,10 @@ func (b *brokenStore) SetState(context.Context, string, core.RunState) error {
 	b.calls++
 	return errBroken
 }
+func (b *brokenStore) SetRunError(context.Context, string, string) error {
+	b.calls++
+	return errBroken
+}
 func (b *brokenStore) RequestCancel(context.Context, string, time.Time) (bool, error) {
 	b.calls++
 	return false, errBroken
@@ -101,6 +105,9 @@ func (b *brokenStore) FinishLease(context.Context, string) error {
 }
 func (b *brokenStore) StaleRuns(context.Context, time.Time) ([]store.QueuedRun, error) {
 	return nil, errBroken
+}
+func (b *brokenStore) RunLease(context.Context, string) (string, time.Time, error) {
+	return "", time.Time{}, errBroken
 }
 func (b *brokenStore) Describe() string { return "broken" }
 func (b *brokenStore) Close() error     { return errBroken }

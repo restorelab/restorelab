@@ -188,6 +188,13 @@ type Store interface {
 	Enqueue(ctx context.Context, run *core.RecoveryRun, planYAML string, at time.Time) error
 	// SetState writes just the run's state, as the drill progresses.
 	SetState(ctx context.Context, runID string, state core.RunState) error
+	// SetRunError writes just the run's error message.
+	//
+	// It exists for the same reason SetState does: reconciliation settles a
+	// run it never loaded as a *core.RecoveryRun, and UpdateRun would
+	// overwrite the whole mutable row from a value it does not have. A run
+	// failed because its worker died has to be able to say so.
+	SetRunError(ctx context.Context, runID, message string) error
 	// RequestCancel asks for a run to stop. It returns true when the run was
 	// settled on the spot - a queued run nobody has claimed is cancelled
 	// here, because nothing exists to clean up.
@@ -217,6 +224,16 @@ type Store interface {
 	// StaleRuns lists claimed runs that are not finished and whose lease has
 	// expired: their worker died. They are never re-run, only failed.
 	StaleRuns(ctx context.Context, now time.Time) ([]QueuedRun, error)
+	// RunLease reports which worker holds a run and until when. An empty
+	// owner means nobody has claimed it; a zero expiry means the run has
+	// finished and released its lease, while keeping the owner - which
+	// worker ran a drill is part of its history.
+	//
+	// StaleRuns cannot answer this: it skips every terminal run, which is
+	// exactly what a finished drill is. Without this method the only way to
+	// see a lease is to read the columns, which couples a caller to the
+	// schema - and `GET /api/v1/queue` needs precisely this answer.
+	RunLease(ctx context.Context, runID string) (owner string, expires time.Time, err error)
 
 	// GetRun loads a run with its steps and checks. idOrPrefix accepts a
 	// unique prefix of the id, the way git accepts a short sha. It returns
