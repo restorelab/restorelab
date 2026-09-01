@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,16 +16,76 @@ import (
 
 // --- test doubles -----------------------------------------------------------
 
+// enqueued is one row Enqueue was handed: the run, the plan snapshot, and
+// when. Keeping the plan lets a test assert what a handler built without a
+// database anywhere near it.
+type enqueued struct {
+	run  core.RecoveryRun
+	plan string
+	at   time.Time
+}
+
+// fakeLease is what a worker holds over a run.
+type fakeLease struct {
+	owner   string
+	expires time.Time
+}
+
 // fakeHistory is the API's view of the store, in memory.
 type fakeHistory struct {
 	runs   []store.RunSummary
 	byID   map[string]*core.RecoveryRun
 	events map[string][]store.Event
 	err    error
+
+	// The queue half. queued records every Enqueue in order; cancelAsked
+	// records the runs a cancellation was asked of but not settled - the
+	// worker's half of the job, which no handler does.
+	queued      []enqueued
+	cancelAsked []string
+	leases      map[string]fakeLease
 }
 
 func newFakeHistory() *fakeHistory {
-	return &fakeHistory{byID: map[string]*core.RecoveryRun{}, events: map[string][]store.Event{}}
+	return &fakeHistory{
+		byID:   map[string]*core.RecoveryRun{},
+		events: map[string][]store.Event{},
+		leases: map[string]fakeLease{},
+	}
+}
+
+// add records a run in both views the fake keeps, newest first, exactly as
+// the real listing orders them.
+func (f *fakeHistory) add(run core.RecoveryRun) {
+	stored := run
+	f.byID[run.ID] = &stored
+	f.runs = append([]store.RunSummary{{
+		ID:               run.ID,
+		PlanName:         run.PlanName,
+		SourceWorkloadID: run.SourceWorkloadID,
+		SourceName:       run.SourceName,
+		State:            run.State,
+		Result:           run.Result,
+		StartedAt:        run.StartedAt,
+		CompletedAt:      run.CompletedAt,
+		RTO:              run.RTO,
+		RTOTarget:        run.RTOTarget,
+		CleanupDone:      run.CleanupDone,
+	}}, f.runs...)
+}
+
+// setState keeps the two views in step.
+func (f *fakeHistory) setState(runID string, state core.RunState, at time.Time) {
+	if run, ok := f.byID[runID]; ok {
+		run.State = state
+		run.CompletedAt = at
+	}
+	for i := range f.runs {
+		if f.runs[i].ID == runID {
+			f.runs[i].State = state
+			f.runs[i].CompletedAt = at
+		}
+	}
 }
 
 func (f *fakeHistory) ListRuns(_ context.Context, filter store.Filter) ([]store.RunSummary, error) {
@@ -97,6 +158,63 @@ func (f *fakeHistory) Events(_ context.Context, runID string, afterSeq int64) ([
 		}
 	}
 	return out, nil
+}
+
+// Enqueue records a run to be executed later. It never runs anything: that
+// is the whole point of the interface the API declares.
+func (f *fakeHistory) Enqueue(_ context.Context, run *core.RecoveryRun, planYAML string, at time.Time) error {
+	if f.err != nil {
+		return f.err
+	}
+	queuedRun := *run
+	queuedRun.StartedAt = at
+	f.queued = append(f.queued, enqueued{run: queuedRun, plan: planYAML, at: at})
+	f.add(queuedRun)
+	return nil
+}
+
+// RequestCancel mirrors the store: a queued run settles here and now, a run
+// already in flight can only be asked.
+func (f *fakeHistory) RequestCancel(_ context.Context, runID string, at time.Time) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	run, ok := f.byID[runID]
+	if !ok {
+		return false, store.ErrNotFound
+	}
+	if run.State.Terminal() {
+		return false, fmt.Errorf("run %s is already %s", runID, run.State)
+	}
+	if run.State == core.RunQueued {
+		f.setState(runID, core.RunCancelled, at)
+		return true, nil
+	}
+	f.cancelAsked = append(f.cancelAsked, runID)
+	return false, nil
+}
+
+func (f *fakeHistory) ActiveRunForWorkload(_ context.Context, workloadID string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	for _, r := range f.runs {
+		if r.SourceWorkloadID == workloadID && !r.State.Terminal() {
+			return r.ID, nil
+		}
+	}
+	return "", nil
+}
+
+func (f *fakeHistory) RunLease(_ context.Context, runID string) (string, time.Time, error) {
+	if f.err != nil {
+		return "", time.Time{}, f.err
+	}
+	if _, ok := f.byID[runID]; !ok {
+		return "", time.Time{}, store.ErrNotFound
+	}
+	l := f.leases[runID]
+	return l.owner, l.expires, nil
 }
 
 // fakeTokens accepts exactly the tokens it was given.

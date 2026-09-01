@@ -66,13 +66,35 @@ func HashToken(secret string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// tokenKey types the request-context key holding the authenticated token.
+type tokenKey struct{}
+
 // authed wraps a handler so that it only runs for an authenticated caller.
+//
+// It is requireScope(read), which is why every read route reads exactly as it
+// did before scopes existed: read is implied by every token, so a token that
+// only holds operate still passes here.
 func (s *Server) authed(h http.HandlerFunc) http.Handler {
+	return s.requireScope(store.ScopeRead, h)
+}
+
+// requireScope wraps a handler so that it only runs for a token holding the
+// scope. It authenticates first: an anonymous request is 401, an
+// insufficiently privileged one is 403, and confusing the two is how a
+// caller ends up regenerating a token that was never the problem.
+func (s *Server) requireScope(scope string, h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.authenticate(w, r) {
+		tok, ok := s.authenticate(w, r)
+		if !ok {
 			return
 		}
-		h(w, r)
+		if !tok.Can(scope) {
+			writeProblem(w, r, newProblem("insufficient-scope", "This token may not do that",
+				http.StatusForbidden,
+				fmt.Sprintf("this endpoint needs the %q scope; create a token with `restorelab token create <name> --operate`", scope)))
+			return
+		}
+		h(w, r.WithContext(context.WithValue(r.Context(), tokenKey{}, tok)))
 	})
 }
 
@@ -83,13 +105,17 @@ func (s *Server) authed(h http.HandlerFunc) http.Handler {
 // confirm to a guesser that the shape of their guess was right.
 const rejection = "this request needs a valid API token: send `Authorization: Bearer rl_...` (create one with `restorelab token create`)"
 
-// authenticate reports whether the request carries a live token, answering
-// the request itself when it does not.
-func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
+// authenticate returns the live token the request carries, answering the
+// request itself when it carries none.
+//
+// It returns the token rather than a bare bool because authorisation needs
+// it: the scopes are on the record, and a second lookup to read them would be
+// a second chance for the two answers to disagree.
+func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*store.APIToken, bool) {
 	secret, ok := bearerToken(r.Header.Get("Authorization"))
 	if !ok {
 		writeUnauthorized(w, r)
-		return false
+		return nil, false
 	}
 
 	hash := HashToken(secret)
@@ -97,15 +123,15 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		writeUnauthorized(w, r)
-		return false
+		return nil, false
 	case err != nil:
 		// Not a 401: the caller's token may be perfect and our database
 		// unreachable. store.ErrNoHistory maps to 503.
 		writeProblem(w, r, problemFor(err))
-		return false
+		return nil, false
 	case rec == nil:
 		writeUnauthorized(w, r)
-		return false
+		return nil, false
 	}
 
 	// The lookup already matched on the hash; this is the belt to its
@@ -113,11 +139,11 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) bool {
 	// many bytes matched.
 	if subtle.ConstantTimeCompare([]byte(rec.Hash), []byte(hash)) != 1 {
 		writeUnauthorized(w, r)
-		return false
+		return nil, false
 	}
 
 	s.touch.record(r.Context(), s.tokens, rec.ID, s.now())
-	return true
+	return rec, true
 }
 
 // bearerToken extracts the credential from an Authorization header.

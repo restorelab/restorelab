@@ -1,9 +1,12 @@
-// Package api serves RestoreLab's read-only HTTP API.
+// Package api serves RestoreLab's HTTP API.
 //
-// Read-only is structural, not a promise: no handler in this package calls a
-// mutating provider method, and the fake provider the tests run against fails
-// the test if one is ever reached. Triggering, cancelling and cleaning up are
-// phase B2, on a server whose read paths are already proven.
+// It reads the drill history and it queues work; it does not execute any. No
+// handler in this package calls a mutating provider method, and the fake
+// provider the tests run against fails the test if one is ever reached.
+// Triggering and cancelling write a row that a worker picks up, and the one
+// destructive endpoint - /cleanup - goes through worker.Cleanup, so the only
+// package holding a mutating provider call stays the one that carries the
+// guards and the tests for them.
 package api
 
 import (

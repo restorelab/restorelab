@@ -14,15 +14,28 @@ import (
 	"github.com/restorelab/restorelab/internal/version"
 )
 
-// History is the slice of the drill history this API reads.
+// History is the slice of the drill history this API uses.
 //
 // It is declared here rather than taken as a store.Store because that is the
-// interface the consumer needs: three methods, all read-only. A handler
-// cannot write a run even by accident, and the tests run against a map.
+// interface the consumer needs. A handler cannot advance a run even by
+// accident, and the tests run against a map.
 type History interface {
 	ListRuns(ctx context.Context, f store.Filter) ([]store.RunSummary, error)
 	GetRun(ctx context.Context, idOrPrefix string) (*core.RecoveryRun, error)
 	Events(ctx context.Context, runID string, afterSeq int64) ([]store.Event, error)
+
+	// Queueing, and only queueing. The API never claims, never leases and
+	// never writes a run's progress: those belong to the worker, and an
+	// interface that offered them here would be an invitation to execute a
+	// drill inside an HTTP handler.
+	Enqueue(ctx context.Context, run *core.RecoveryRun, planYAML string, at time.Time) error
+	RequestCancel(ctx context.Context, runID string, at time.Time) (bool, error)
+	ActiveRunForWorkload(ctx context.Context, workloadID string) (string, error)
+
+	// RunLease is the read half of the lease, and the only reason /queue can
+	// say which worker holds which drill. Its write half - ClaimRun,
+	// RenewLease - is deliberately not here.
+	RunLease(ctx context.Context, runID string) (owner string, expires time.Time, err error)
 }
 
 // TokenStore is what authentication needs, and nothing more: it cannot create
@@ -72,7 +85,8 @@ type Options struct {
 	TouchInterval time.Duration
 }
 
-// Server is the read-only HTTP API.
+// Server is the HTTP API: the read surface, and the writes that queue work
+// for a worker to execute.
 type Server struct {
 	history   History
 	tokens    TokenStore
@@ -115,8 +129,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.Serve
 // routes wires the surface.
 //
 // The router is net/http's ServeMux: since Go 1.22 it matches on method and
-// path variables, which is the entirety of what a dozen read-only routes
-// need. A third-party router would be a dependency bought for nothing.
+// path variables, which is the entirety of what a dozen routes need. A
+// third-party router would be a dependency bought for nothing.
 func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
@@ -135,6 +149,15 @@ func (s *Server) routes() *http.ServeMux {
 	mux.Handle("GET /api/v1/providers", s.authed(s.handleProviders))
 	mux.Handle("GET /api/v1/doctor", s.authed(s.handleDoctor))
 
+	// The write surface. Every one of these writes a row and returns; not one
+	// of them touches a cluster, except /cleanup, which goes through
+	// worker.Cleanup so that the only package holding a destructive provider
+	// call stays the one with the guards and the tests for it.
+	mux.Handle("GET /api/v1/queue", s.authed(s.handleQueue))
+	mux.Handle("POST /api/v1/recovery-runs", s.requireScope(store.ScopeOperate, s.handleTriggerRun))
+	mux.Handle("POST /api/v1/recovery-runs/{id}/cancel", s.requireScope(store.ScopeOperate, s.handleCancelRun))
+	mux.Handle("POST /api/v1/cleanup/{vmid}", s.requireScope(store.ScopeOperate, s.handleCleanup))
+
 	// Anything else: a problem document, not net/http's plain-text 404. A
 	// client that parses problem+json must not have to special-case the one
 	// response that is not.
@@ -144,7 +167,7 @@ func (s *Server) routes() *http.ServeMux {
 
 func (s *Server) handleUnknown(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, r, newProblem("no-such-route", "No such endpoint", http.StatusNotFound,
-		"this API serves GET requests under /api/v1; see docs/api.md"))
+		"this API serves /api/v1; see docs/api.md"))
 }
 
 // handleHealth answers liveness without a token.
@@ -158,19 +181,28 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// writeJSON renders v as the response body.
+// writeJSON renders v as a 200.
+//
+// Every read route answers 200 or a problem document, so the status is not a
+// parameter here: it is one on writeJSONStatus, which the write routes use
+// because 201 and 202 carry meaning a 200 would throw away.
+func writeJSON(w http.ResponseWriter, r *http.Request, v any) {
+	writeJSONStatus(w, r, http.StatusOK, v)
+}
+
+// writeJSONStatus renders v as the response body under an explicit status.
 //
 // It marshals before writing anything: encoding straight into the
-// ResponseWriter would emit a 200 header and then fail halfway through the
+// ResponseWriter would emit the header and then fail halfway through the
 // body, which a client cannot tell from a truncated network read.
-func writeJSON(w http.ResponseWriter, r *http.Request, v any) {
+func writeJSONStatus(w http.ResponseWriter, r *http.Request, status int, v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
 		writeProblem(w, r, problemFor(err))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_, _ = w.Write(body)
 }
 
