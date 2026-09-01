@@ -78,7 +78,10 @@ func (p *Provider) ListWorkloads(ctx context.Context) ([]core.Workload, error) {
 }
 
 func mapWorkloadEntry(e map[string]any) (core.Workload, bool) {
-	kind := core.WorkloadKindUnknown
+	// Every reachable branch below assigns kind or returns, so there is no
+	// default to seed it with: an unrecognised type is dropped, not mapped
+	// onto core.WorkloadKindUnknown.
+	var kind core.WorkloadKind
 	switch asString(e["type"]) {
 	case "qemu":
 		kind = core.WorkloadKindVM

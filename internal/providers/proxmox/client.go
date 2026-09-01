@@ -144,10 +144,6 @@ func (p *Provider) post(ctx context.Context, path string, form url.Values) (json
 	return p.request(ctx, http.MethodPost, path, form)
 }
 
-func (p *Provider) put(ctx context.Context, path string, form url.Values) (json.RawMessage, error) {
-	return p.request(ctx, http.MethodPut, path, form)
-}
-
 func (p *Provider) delete(ctx context.Context, path string, params url.Values) (json.RawMessage, error) {
 	return p.request(ctx, http.MethodDelete, path, params)
 }
@@ -188,7 +184,7 @@ func (p *Provider) request(ctx context.Context, method, path string, params url.
 		}
 		return nil, core.Retryable(fmt.Errorf("proxmox: %s %s: %w", method, path, err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if readErr != nil {
@@ -218,9 +214,9 @@ func mapStatusError(status int, method, path string, body []byte) error {
 
 	switch {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return fmt.Errorf("%w: %v", core.ErrUnauthorized, base)
+		return fmt.Errorf("%w: %w", core.ErrUnauthorized, base)
 	case status == http.StatusNotFound:
-		return fmt.Errorf("%w: %v", core.ErrNotFound, base)
+		return fmt.Errorf("%w: %w", core.ErrNotFound, base)
 	case status >= 500:
 		return core.Retryable(base)
 	default:
