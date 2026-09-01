@@ -226,6 +226,59 @@ func TestResolveReportsAStoredPlanThatNoLongerParses(t *testing.T) {
 	}
 }
 
+func TestValidateAppliesDefaultsAndWritesNothing(t *testing.T) {
+	// Un plan minimal : tout ce que Validate rend en plus vient des defaults.
+	document := []byte(`
+name: web-tier
+workload:
+  provider: proxmox-main
+  id: "110"
+checks:
+  - type: command
+    command: systemctl is-active ssh
+`)
+
+	v, err := catalog.Validate(document)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if v.Name != "web-tier" {
+		t.Errorf("Name = %q, want web-tier", v.Name)
+	}
+	if v.WorkloadID != "110" || v.ProviderID != "proxmox-main" {
+		t.Errorf("workload = %s/%s, want proxmox-main/110", v.ProviderID, v.WorkloadID)
+	}
+	if v.Normalised == "" {
+		t.Fatal("Normalised must carry the document with its defaults applied")
+	}
+	// Le document rendu doit se relire : c'est ce qui prouve qu'un editeur
+	// peut l'afficher puis le renvoyer tel quel.
+	if _, err := catalog.Validate([]byte(v.Normalised)); err != nil {
+		t.Fatalf("the normalised document does not validate: %v", err)
+	}
+}
+
+func TestValidateRejectsABadDocumentWithErrInvalid(t *testing.T) {
+	if _, err := catalog.Validate([]byte("name: x\nnot_a_field: 1\n")); !errors.Is(err, catalog.ErrInvalid) {
+		t.Fatalf("Validate on an unknown field = %v, want ErrInvalid", err)
+	}
+	if _, err := catalog.Validate([]byte(": not yaml at all")); !errors.Is(err, catalog.ErrInvalid) {
+		t.Fatalf("Validate on broken YAML = %v, want ErrInvalid", err)
+	}
+}
+
+// Validate ne touche jamais au store : on lui en donne un qui échoue sur
+// tout, et on constate qu'elle n'a rien à en faire.
+func TestValidateNeedsNoStore(t *testing.T) {
+	document := []byte("name: t\nworkload:\n  provider: p\n  id: \"1\"\nchecks:\n  - type: command\n    command: true\n")
+	if _, err := catalog.Validate(document); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	// Rien à assert de plus : la signature elle-même est la preuve. Si
+	// quelqu'un ajoute un paramètre Store à Validate, ce test ne compile
+	// plus, et c'est exactement le signal voulu.
+}
+
 func TestGetAndDeletePassErrNotFoundThrough(t *testing.T) {
 	ctx := context.Background()
 	s := newMemStore()

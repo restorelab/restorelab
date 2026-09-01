@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 
 	"github.com/restorelab/restorelab/internal/plan"
 	"github.com/restorelab/restorelab/internal/store"
@@ -46,6 +47,57 @@ type Store interface {
 // replace what carries it. It is what a POST means, as opposed to a PUT.
 const CreateOnly = -1
 
+// Validated is what a plan document means, without it being stored.
+type Validated struct {
+	Name        string
+	Description string
+	WorkloadID  string
+	ProviderID  string
+	// Normalised is the document with every default applied, rendered back
+	// as YAML. It is what an editor shows as "here is what this actually
+	// says" - the difference between a plan that omits a field and a plan
+	// whose omitted field means something.
+	Normalised string
+}
+
+// derive reads the indexed facts out of a parsed plan.
+//
+// Save and Validate both need them, and a second copy of this list would
+// drift from the first the day a column is added - the failure this codebase
+// has already met once, in adhocFields.
+func derive(parsed *plan.Plan) Validated {
+	return Validated{
+		Name:        parsed.Name,
+		Description: parsed.Description,
+		WorkloadID:  parsed.Workload.ID,
+		ProviderID:  parsed.Workload.Provider,
+	}
+}
+
+// Validate parses a plan document and reports what it means, writing nothing.
+//
+// It exists for an editor that has to answer "is this valid" before an
+// operator commits to saving. Going through the same parse Save uses is the
+// point: internal/plan stays the only definition of a valid plan, and a
+// client never has to reimplement one.
+//
+// Nothing is written. No row, no reserved name, no version.
+func Validate(document []byte) (*Validated, error) {
+	parsed, err := parse(document)
+	if err != nil {
+		return nil, err
+	}
+
+	normalised, err := yaml.Marshal(parsed)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: render the validated plan: %w", err)
+	}
+
+	v := derive(parsed)
+	v.Normalised = string(normalised)
+	return &v, nil
+}
+
 // Save writes a plan document, creating it or replacing the one that already
 // carries its name. It reports whether the plan was created.
 //
@@ -62,12 +114,13 @@ func Save(ctx context.Context, s Store, document []byte, expected int) (*store.P
 	}
 
 	now := time.Now().UTC()
+	d := derive(parsed)
 	row := store.Plan{
 		ID:          uuid.NewString(),
-		Name:        parsed.Name,
-		Description: parsed.Description,
-		WorkloadID:  parsed.Workload.ID,
-		ProviderID:  parsed.Workload.Provider,
+		Name:        d.Name,
+		Description: d.Description,
+		WorkloadID:  d.WorkloadID,
+		ProviderID:  d.ProviderID,
 		YAML:        string(document),
 		Version:     1,
 		CreatedAt:   now,
