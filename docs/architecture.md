@@ -224,8 +224,7 @@ editor. The confidence score and any dashboard need a history to read before
 anything else can be built on them, and a dashboard that can only watch drills
 it cannot start is half a product.
 
-The dashboard is being built in three slices, each with its own design
-document under `superpowers/specs/`: **C1** the server half (done), **C2** the
-read-only interface, **C3** the write paths. C1 ships in the binary with no
-interface compiled into it, which is why `/` explains itself rather than
-404ing.
+The dashboard is being built in three slices: **C1** the server half (done),
+**C2** the read-only interface, **C3** the write paths. C1 ships in the binary
+with no interface compiled into it, which is why `/` explains itself rather
+than 404ing.

@@ -35,11 +35,15 @@ web/.vite/
 internal/ui/dist/*
 !internal/ui/dist/.gitkeep
 
-# Session handover notes, local to this working copy
+# Working notes, local to this working copy: session handover state and the
+# design and implementation documents each phase was written from. They are
+# kept on disk because they are worth having while working; they are not part
+# of what the project ships.
 /STATE.md
+/docs/superpowers/
 
-# Throwaway git worktrees used by parallel agents
-/.claude/worktrees/
+# Local tooling state and scratch worktrees
+/.claude/
 
 # Editors / OS
 .DS_Store
