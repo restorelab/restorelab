@@ -39,19 +39,25 @@ func (s *sqlStore) CreateRun(ctx context.Context, run *core.RecoveryRun, planYAM
 
 const updateRunSQL = `
 UPDATE runs SET
-	temp_workload_id = ?, temp_name = ?, node = ?, backup = ?,
+	source_name = ?, temp_workload_id = ?, temp_name = ?, node = ?, backup = ?,
 	state = ?, result = ?, completed_at = ?,
 	rto_ms = ?, rto_target_ms = ?, cleanup_done = ?, err = ?
 WHERE id = ?`
 
-// UpdateRun overwrites the fields that change as a run progresses. The
-// identity fields and the plan snapshot are deliberately not among them.
+// UpdateRun overwrites the fields that change as a run progresses. The id,
+// the source workload and the plan snapshot are deliberately not among them.
+//
+// source_name is: an ad-hoc drill knows only the workload's id when it
+// starts, and learns its name from the provider on the way. Leaving it out
+// meant the history showed a bare "110" where the terminal had shown
+// "linux-test (110)".
 func (s *sqlStore) UpdateRun(ctx context.Context, run *core.RecoveryRun) error {
 	backupJSON, err := encodeJSON(run.Backup)
 	if err != nil {
 		return fmt.Errorf("store: encode backup for run %s: %w", run.ID, err)
 	}
 	return s.exec(ctx, updateRunSQL,
+		nullString(run.SourceName),
 		nullString(run.TempWorkloadID), nullString(run.TempName), nullString(run.Node),
 		nullString(backupJSON), string(run.State), nullString(string(run.Result)),
 		formatNullTime(run.CompletedAt),

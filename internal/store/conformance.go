@@ -130,6 +130,41 @@ func RunConformance(t *testing.T, open OpenFunc) {
 		}
 	})
 
+	// An ad-hoc drill starts knowing only the workload id and learns the name
+	// from the provider on the way. If the update does not carry it, the
+	// history shows a bare id where the terminal showed a name.
+	t.Run("a name discovered during the run is stored", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		run := sampleRun("7777dddd-0000-0000-0000-000000000000")
+		run.SourceName = ""
+
+		if err := s.CreateRun(ctx, run, "name: x\n"); err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+
+		run.SourceName = "linux-test"
+		if err := s.UpdateRun(ctx, run); err != nil {
+			t.Fatalf("UpdateRun: %v", err)
+		}
+
+		got, err := s.GetRun(ctx, run.ID)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if got.SourceName != "linux-test" {
+			t.Errorf("SourceName = %q, want %q", got.SourceName, "linux-test")
+		}
+
+		listed, err := s.ListRuns(ctx, Filter{})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(listed) != 1 || listed[0].SourceName != "linux-test" {
+			t.Errorf("the listing lost the name: %+v", listed)
+		}
+	})
+
 	t.Run("the stored backup survives", func(t *testing.T) {
 		s := open(t)
 		ctx := context.Background()
