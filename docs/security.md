@@ -73,6 +73,35 @@ enough to read its memory in the first place, which is the only lever
 available once a design commits to querying a cluster without a human
 present at every request.
 
+### And that process now destroys things
+
+`serve` runs a worker by default, and that worker executes drills: it
+allocates temporary VMIDs, restores backups onto them, boots them, and deletes
+them again. Everything the previous section says about the account running
+`serve` applies **more** strongly now, not less. It is no longer a daemon that
+reads your cluster; it is a daemon that writes to it, unattended, whenever a
+row appears in a queue.
+
+Two consequences worth stating rather than leaving to be discovered:
+
+- The dedicated account's exposure is now the union of the master key in its
+  memory and the destructive work it does with it. Compromising the process
+  does not merely leak the provider token — it hands over a running loop that
+  already knows how to restore and delete workloads on your cluster.
+- Splitting the process is a real mitigation, not just a deployment option.
+  `restorelab serve --no-worker --worker-elsewhere` in a DMZ and
+  `restorelab serve --no-listen` on the administration network gives you a
+  reachable half that cannot touch the cluster at all and a cluster-touching
+  half that nothing external can reach. The two halves share only the
+  database. Whether that is worth a second process is your call; the point is
+  that it is available.
+
+The guardrails in [Destructive-operation guardrails](#destructive-operation-guardrails)
+below are the same for a drill triggered over HTTP as for one triggered from a
+terminal — the API queues a row and a worker runs the same
+`recovery.Engine`, with the reserved ID range, the ownership metadata and the
+always-runs cleanup all intact. Nothing about the HTTP path relaxes them.
+
 ## API tokens
 
 `restorelab serve` accepts its own credential, separate from any provider
@@ -99,6 +128,47 @@ choices about it are worth stating explicitly:
   repository is recognisable as a RestoreLab credential on sight, which is
   what lets it be revoked instead of puzzled over.
 
+### Scopes
+
+A token holds `read`, or it holds `read` and `operate`. `read` covers every
+`GET` route, including the live event stream. `operate` adds the three writes:
+triggering a drill, cancelling one, and destroying a temporary workload that
+was left behind.
+
+**`read` is the default, and `--operate` has to be asked for.** A read token
+can look at a dashboard. An operate token can make RestoreLab restore backups,
+boot machines and delete them, as often as its holder chooses to ask. Those
+are not the same credential and they should not be issued as if they were, so
+`token create` prints in full what an operate token can do at the one moment
+the secret is still on screen, and `token list` puts `SCOPES` in the table
+rather than behind a flag — which token can destroy machines is the first
+thing anyone auditing that list needs to see.
+
+**Tokens issued before scopes existed read back as `read`.** The migration
+that added the column defaults it to `read` for every existing row. That is
+deliberate and worth being explicit about as a rule for future migrations
+too: *a schema change must never grant an existing credential a power it did
+not have when it was issued.* The reverse — defaulting to `operate` so that
+nothing appears to break during an upgrade — would silently promote every
+dashboard token in the fleet. If one of those tokens is meant to trigger
+drills, issue a new one with `--operate` and revoke the old.
+
+**A refused write is 403, never 401.** Authentication runs first: a request
+with no token, or an unknown one, gets `401` and the same single message every
+failed authentication gets. A request whose token is valid but lacks `operate`
+gets `403`. Collapsing the two would be an operational trap, not a cosmetic
+one — `401` tells the caller its credential is broken, and the honest response
+to that is to regenerate the token, revoke the old one, and redeploy, none of
+which fixes anything here. `403` says the token is exactly who it claims to
+be and simply was not granted this, which points at the one action that does
+help.
+
+Scopes are not RBAC and are not sold as such. There is no per-workload
+restriction and no per-provider restriction: an operate token can drill
+anything RestoreLab can see. Finer-grained access control is a roadmap item
+(`v0.4`, with RBAC and OIDC), and until it exists an operate token should be
+scoped by *who holds it*, not by what it can reach.
+
 ## Destructive-operation guardrails
 
 RestoreLab only ever destroys what it created. Concretely:
@@ -115,6 +185,19 @@ RestoreLab only ever destroys what it created. Concretely:
    destroys the temporary workload. A cleanup that fails is reported as
    `CLEANUP_FAILED` with the exact node and VMID, because a silent orphan is the
    worst possible outcome.
+5. **An interrupted run is never replayed.** A run whose worker died is marked
+   `FAILED`, its temporary workload is destroyed if it can be reached, and it
+   is never claimed again — the SQL of the claim itself makes a claimed run
+   unclaimable, so this holds across processes and machines, not only within
+   one. A queue that "helpfully" retried would restore a second time and
+   allocate a second temporary id, most likely orphaning the first. Deciding
+   to run the drill again is a human's call.
+
+A cancellation stops the drill at its next observable point and tears down the
+temporary workload. It does **not** abort work already running on the
+hypervisor: a Proxmox restore task that has started runs to completion, and
+RestoreLab deletes the result afterwards. Nothing is left behind either way,
+but the cluster stays busy until that task finishes.
 
 ## Transport security
 
@@ -147,6 +230,13 @@ marketing:
   configuration has your provider tokens. The scoped Proxmox role limits the
   blast radius (see [proxmox-permissions.md](proxmox-permissions.md)) but
   does not eliminate it.
+- **A leaked `operate` token.** It cannot read your provider secrets and it
+  cannot touch a production workload, but it can queue drills without limit.
+  The worker's concurrency cap and the capacity check keep the cluster from
+  being saturated all at once; nothing keeps a flooded queue from keeping it
+  busy indefinitely, and there is no rate limit on triggering. Treat an
+  operate token as a cluster credential, hand it out accordingly, and revoke
+  it with `restorelab token revoke <name>` the moment it is in doubt.
 - **A malicious restored guest.** You are booting an untrusted disk image. The
   isolated bridge contains it at the network layer; it is not a hypervisor
   escape mitigation. Do not run drills for workloads you do not trust on a node

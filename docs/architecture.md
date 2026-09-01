@@ -9,28 +9,48 @@ itself.
 ## Dependency direction
 
 ```text
-        cli / api  ───────────────┐
-             │                    │
-             ▼                    ▼
-        recovery (engine)     report
-             │  │  │
-   ┌─────────┘  │  └──────────┐
-   ▼            ▼             ▼
-plan        checks        providers/{proxmox,pbs}
-   │            │             │
-   └────────────┴─────────────┘
-                ▼
-              core
+        cli ──────────────┬───────────────┐
+         │                │               │
+         ▼                ▼               ▼
+        api            worker          report
+         │                │               ▲
+         │                ▼               │
+         │           recovery (engine) ───┘
+         │            │  │  │
+         │  ┌─────────┘  │  └──────────┐
+         │  ▼            ▼             ▼
+         │ plan       checks      providers/{proxmox,pbs}
+         │  │            │             │
+         ▼  └────────────┴─────────────┘
+       store             ▼
+         └────────────► core
 ```
 
 `api` sits beside `cli` rather than under it: both are entry points into the
 same domain, not one wrapping the other. `api` imports `core`, `store`,
-`report`, `config`, `diag` and `version`, and deliberately **not**
-`internal/providers` and **not** `crypto` — unsealing a provider secret needs
-the master key, and keeping that on the CLI's side of an interface
-(`api.ProviderSet`, implemented in `internal/cli/serve.go`) is what stops the
-API package from ever being able to import them. A provider client is
-something the CLI hands the API, not something the API knows how to build.
+`report`, `config`, `diag`, `adhoc`, `worker` and `version`, and deliberately
+**not** `internal/providers` and **not** `crypto` — unsealing a provider
+secret needs the master key, and keeping that on the CLI's side of an
+interface (`api.ProviderSet`, implemented in `internal/cli/serve.go`) is what
+stops the API package from ever being able to import them. A provider client
+is something the CLI hands the API, not something the API knows how to build.
+
+**`api` and `worker` do not know each other.** The API writes a queued row;
+the worker claims it. Neither imports the other for that purpose, neither
+holds a reference to the other, and the only thing they share is the database.
+That is what makes running them as one process or two a deployment flag
+(`serve --no-worker` / `serve --no-listen`) rather than a rewrite, and it is
+why the queue's correctness lives in SQL — a claim that excludes a run
+another worker already holds — rather than in a mutex that only works inside
+one process.
+
+The one edge from `api` to `worker` is `worker.Cleanup`, the single mutating
+provider call reachable from an HTTP request. It points that way on purpose:
+the package that owns the destructive calls owns their guards and their
+tests, and duplicating those in `api` would create a second place for them to
+drift. No handler in `internal/api` calls `Restore`, `Start`, `Stop`, `Delete`
+or `AllocateWorkloadID` itself, and a test greps the package to keep it that
+way.
 
 **Everything points at `core`, `core` points at nothing.** `core` holds the
 domain model (`Workload`, `Backup`, `RecoveryRun`, `CheckResult`) and the four
@@ -59,16 +79,34 @@ internal/
     providers/pbs       Proxmox Backup Server API client + backup provider
     checks              check registry, retries, timeouts + ping/tcp/http/dns
     recovery            the engine: workflow, isolation, cleanup, RTO, grading
+    adhoc               a drill described by a workload id, turned into a plan
+    journal             a run recorded as it happens: row, events, checks, timeline
+    store               drill history, queue and leases, tokens (SQLite / PostgreSQL)
     report              text / JSON / HTML reports, recovery confidence score
     diag                doctor's readiness checks, as data (Level, Finding, Report)
-    api                 the read-only HTTP API: routing, auth, pagination, problem+json
+    api                 the HTTP API: routing, auth and scopes, pagination, SSE, problem+json
+    worker              the queue loop: claim, execute, renew, release, reconcile
     cli                 cobra commands
     version             build metadata
 ```
 
-Planned, not yet present: the write paths of `api` — triggering and
-cancelling a drill, cleanup, Server-Sent Events (phase B2) — plans stored in
-the database (phase B3), `jobs` (Asynq workers), `scheduler`,
+Three of those exist because two entry points needed the same thing and a
+second implementation would have become a second answer:
+
+- **`adhoc`** builds the plan behind a drill described by nothing more than a
+  workload id. It moved out of `internal/cli` when the API gained
+  `POST /recovery-runs`: a drill triggered over HTTP and one triggered from a
+  terminal must be the same drill, defaults included.
+- **`journal`** records a run as it happens. It moved out of `internal/cli`
+  for the same reason — the CLI and the worker write the same history, and two
+  implementations of "what happened during this drill" would drift into two
+  stories about the same run. Nothing it does returns an error, deliberately:
+  a locked database must never abort a destructive drill, and a compiler
+  enforcing that is worth more than a convention.
+- **`worker`** holds the only mutating provider calls reachable from an HTTP
+  request, and reaches them through `recovery.Engine`.
+
+Planned, not yet present: plans stored in the database, `scheduler`,
 `notifications`, `audit`, `probe`.
 
 ## The recovery workflow
@@ -118,10 +156,41 @@ transport, so the engine never has to know what a Proxmox 596 means.
 
 ## Concurrency
 
-v0.1 runs one drill at a time from the CLI. The design point for the worker
-release is three concurrency limits — global, per provider, per node — because
-the failure mode that actually matters is a recovery drill saturating the
-cluster it is supposed to protect.
+The CLI runs one drill at a time. A worker runs `limits.max_concurrent_restores`
+at a time, which defaults to 1 — the failure mode that actually matters is a
+recovery drill saturating the cluster it is supposed to protect, so the
+default is the cautious one and raising it is a decision an operator makes
+about their own cluster. Per-provider and per-node limits are still a design
+point, not yet built.
+
+Two workers on the same database never execute the same run. That is not a
+convention, it is the `WHERE` clause of the claim: a run whose `lease_owner`
+is set cannot be claimed again, by anyone, ever. The claim is the one query in
+the project written differently for SQLite and for PostgreSQL — the engines
+genuinely differ on how a row is locked and returned in a single statement —
+and the queue conformance suite runs the concurrent-claim test against both,
+because a claim proven on one engine says nothing about the other.
+
+A lease expires if a worker stops renewing it. Reconciliation then settles
+that run as `FAILED` and cleans up after it; it never re-runs it. See
+[Interrupted runs](#interrupted-runs) below.
+
+## Interrupted runs
+
+A worker that dies mid-drill — crash, `kill -9`, power cut — leaves a claimed
+run in a non-terminal state with a lease that stops being renewed. The next
+worker to reconcile the queue finds it, marks it `FAILED`, destroys the
+temporary workload the run row recorded, and releases the lease. If that
+cleanup fails, the run settles as `CLEANUP_FAILED` with the node and VMID in
+the error, because a silent orphan is worse than a loud one.
+
+**Nothing is ever replayed.** A drill restores a backup onto a freshly
+allocated temporary id; running one twice allocates a second id, restores a
+second time, and orphans the first workload. There is no retry queue, and its
+absence is the design. The one case reconciliation deliberately skips is a run
+this same process is currently executing: a frozen program — a suspended
+laptop, a stalled database — can let its own lease look expired, and settling
+it would destroy the temporary workload of a live restore.
 
 ## Testing strategy
 
@@ -145,8 +214,10 @@ cluster it is supposed to protect.
 | v0.3 | Multi-workload plans, dependencies, restore ordering, parallel restores |
 | v0.4 | Remote probes, RBAC, OIDC, PDF reports |
 | v0.5 | LXC, multi-cluster, multiple PBS, recovery confidence, capacity checks |
-| v1.0 | Write paths on the API (trigger, cancel, queue, workers), web dashboard, audit, notifications |
+| v1.0 | Web dashboard, audit, notifications |
 
-Delivered ahead of that order: persistence (SQLite and PostgreSQL) and the
-read-only HTTP API, because the confidence score and any dashboard need a
-history to read before anything else can be built on them.
+Delivered ahead of that order: persistence (SQLite and PostgreSQL), the HTTP
+API, and the queue and worker behind its write paths. The confidence score and
+any dashboard need a history to read before anything else can be built on
+them, and a dashboard that can only watch drills it cannot start is half a
+product.

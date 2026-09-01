@@ -48,9 +48,9 @@ it did not create.
 
 Alpha, under active development. The Proxmox recovery drill pipeline works
 end to end behind the CLI and has been proven against a real cluster, drill
-history is kept automatically, and the read-only HTTP API serves it. What is
-still ahead: triggering drills over HTTP, the scheduler and the web
-dashboard.
+history is kept automatically, and the HTTP API both serves that history and
+triggers new drills through a worker that drains a queue. What is still
+ahead: the scheduler and the web dashboard.
 
 | Area | State |
 | --- | --- |
@@ -64,9 +64,10 @@ dashboard.
 | One-command setup (`connect`) creating a least-privilege service account | done |
 | `doctor` diagnostics and `network create` for the isolated bridge | done |
 | Drill history, SQLite by default, PostgreSQL optional (`runs`, `db`) | done |
-| Read-only HTTP API + token auth (`serve`, `token`) | done |
+| HTTP API + token auth and scopes (`serve`, `token`) | done |
 | Recovery confidence score, computed from the stored history | done |
-| Triggering and cancelling drills over HTTP, workers, queue | next |
+| Triggering and cancelling drills over HTTP, worker, queue, live event stream | done |
+| Recovery plans stored in the database | next |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
 | Web dashboard | planned |
 
@@ -157,16 +158,31 @@ restorelab recovery run examples/plans/postgres-prod.yaml
 
 ## API
 
-Drill history and fleet state are also reachable over HTTP, read-only:
+Drill history, fleet state and the drills themselves are reachable over HTTP:
 
 ```bash
-bin/restorelab token create dashboard   # prints a token once
-bin/restorelab serve                    # binds 127.0.0.1:8080
+bin/restorelab token create dashboard             # read-only, printed once
+bin/restorelab token create ci --operate          # can also trigger drills
+bin/restorelab serve                              # binds 127.0.0.1:8080, worker included
 curl http://127.0.0.1:8080/api/v1/health
 ```
 
-See [docs/api.md](docs/api.md) for the full surface, authentication and
-pagination.
+`serve` both answers requests and executes what they queue. Trigger a drill,
+then watch it live:
+
+```bash
+curl -X POST -H "Authorization: Bearer rl_..." -H "Content-Type: application/json" \
+     -d '{"workload_id":"110","checks":["tcp:22"]}' \
+     http://127.0.0.1:8080/api/v1/recovery-runs
+
+curl -N -H "Authorization: Bearer rl_..." -H "Accept: text/event-stream" \
+     http://127.0.0.1:8080/api/v1/recovery-runs/<id>/events
+```
+
+A token is read-only unless it was created with `--operate`; a write attempted
+without that scope is a 403. See [docs/api.md](docs/api.md) for the full
+surface, scopes, the event stream, and what cancelling a drill does and does
+not do.
 
 ## Safety model
 
@@ -183,6 +199,10 @@ built so that a bug cannot cost you production:
   default), never over an existing workload.
 - **Cleanup always runs** — including after a failure, a timeout or a cancelled
   run; a failed cleanup is a loud, named alert, never a silent orphan.
+- **An interrupted drill is never replayed** — a run whose worker died is
+  failed and cleaned up, not retried. A drill is destructive and not
+  idempotent, so re-running one would restore a second time and orphan the
+  first temporary workload.
 - **No plaintext secrets** — API tokens are sealed with AES-256-GCM under a
   master key that is never stored in the config file.
 - **Least privilege by default** — `connect` creates a service account scoped to
@@ -198,7 +218,7 @@ global administrator rights.
 
 | Document | Contents |
 | --- | --- |
-| [docs/api.md](docs/api.md) | The read-only HTTP API: auth, endpoints, pagination, errors |
+| [docs/api.md](docs/api.md) | The HTTP API: auth and scopes, endpoints, the event stream, errors |
 | [docs/deployment.md](docs/deployment.md) | Where to run RestoreLab, and how checks reach the guest |
 | [docs/configuration.md](docs/configuration.md) | Config file, providers, network profiles, limits |
 | [docs/recovery-plans.md](docs/recovery-plans.md) | Plan reference and every check type |
