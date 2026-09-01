@@ -257,6 +257,10 @@ func (s *Server) routes() *http.ServeMux {
 	// two different powers.
 	mux.Handle("GET /api/v1/plans", s.authed(s.handleListPlans))
 	mux.Handle("GET /api/v1/plans/{ref}", s.authed(s.handleGetPlan))
+	// Validation is a write scope even though it writes nothing: it is the
+	// plan editor's own route, and the editor is exactly the thing `manage`
+	// names.
+	mux.Handle("POST /api/v1/plans/validate", s.requireScope(store.ScopeManage, s.handleValidatePlan))
 	mux.Handle("POST /api/v1/plans", s.requireScope(store.ScopeManage, s.handleCreatePlan))
 	mux.Handle("PUT /api/v1/plans/{ref}", s.requireScope(store.ScopeManage, s.handleUpdatePlan))
 	mux.Handle("DELETE /api/v1/plans/{ref}", s.requireScope(store.ScopeManage, s.handleDeletePlan))

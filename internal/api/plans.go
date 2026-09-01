@@ -208,6 +208,49 @@ func (s *Server) handleDeletePlan(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// validatedDTO is a plan document's meaning, on the wire.
+type validatedDTO struct {
+	Valid       bool   `json:"valid"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	WorkloadID  string `json:"workload_id"`
+	ProviderID  string `json:"provider_id,omitempty"`
+	// NormalizedYAML is the document with its defaults applied. An editor
+	// shows it as "here is what this actually says": the difference between
+	// a field left out and a field left out *meaning something*.
+	NormalizedYAML string `json:"normalized_yaml"`
+}
+
+// handleValidatePlan reports whether a document is a valid plan, storing
+// nothing.
+//
+// It exists for the dashboard's editor. Routing it through catalog.Validate
+// rather than reimplementing the rules in a client is the same argument that
+// put catalog between the API and the store: internal/plan is the only
+// definition of a valid plan, and a second one in TypeScript would drift from
+// it at the first field added on this side.
+func (s *Server) handleValidatePlan(w http.ResponseWriter, r *http.Request) {
+	document, ok := readDocument(w, r)
+	if !ok {
+		return
+	}
+
+	v, err := catalog.Validate(document)
+	if err != nil {
+		writeProblem(w, r, problemForPlan(err))
+		return
+	}
+
+	writeJSON(w, r, validatedDTO{
+		Valid:          true,
+		Name:           v.Name,
+		Description:    v.Description,
+		WorkloadID:     v.WorkloadID,
+		ProviderID:     v.ProviderID,
+		NormalizedYAML: v.Normalised,
+	})
+}
+
 // readDocument reads a plan document from a request body, capped.
 //
 // Capped by the same maxRequestBody the trigger endpoint uses: a plan is a

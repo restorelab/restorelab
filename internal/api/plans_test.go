@@ -687,3 +687,74 @@ func TestAnUnknownPlanIsA404AboutPlans(t *testing.T) {
 		t.Errorf("title = %q, want %q", p.Title, "No such plan")
 	}
 }
+
+// --- validating ---------------------------------------------------------------
+
+func TestValidatePlanReturnsTheNormalisedDocument(t *testing.T) {
+	s, _ := planServer(t)
+
+	rec := send(s, http.MethodPost, manageSecret, "/api/v1/plans/validate", validPlanYAML)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+
+	var dto validatedDTO
+	decodePlan(t, rec, &dto)
+	if !dto.Valid || dto.Name != "web-tier" || dto.WorkloadID != "110" {
+		t.Errorf("dto = %+v", dto)
+	}
+	if !strings.Contains(dto.NormalizedYAML, "web-tier") {
+		t.Errorf("normalized_yaml does not look like a plan: %q", dto.NormalizedYAML)
+	}
+	// The normalised document must validate in its turn: that is what proves
+	// an editor can show it and then send it straight back.
+	again := send(s, http.MethodPost, manageSecret, "/api/v1/plans/validate", dto.NormalizedYAML)
+	if again.Code != http.StatusOK {
+		t.Errorf("the normalised document does not validate: %d %s", again.Code, again.Body)
+	}
+}
+
+func TestValidatePlanWritesNothing(t *testing.T) {
+	s, plans := planServer(t)
+
+	rec := send(s, http.MethodPost, manageSecret, "/api/v1/plans/validate", validPlanYAML)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if len(plans.stored) != 0 {
+		t.Fatalf("the catalogue holds %d plan(s): validating must write nothing", len(plans.stored))
+	}
+}
+
+func TestValidatePlanReportsTheSameProblemAsCreate(t *testing.T) {
+	s, _ := planServer(t)
+	const bad = "name: \"\"\nworkload:\n  id: \"\"\n"
+
+	v := send(s, http.MethodPost, manageSecret, "/api/v1/plans/validate", bad)
+	c := send(s, http.MethodPost, manageSecret, "/api/v1/plans", bad)
+
+	if v.Code != http.StatusBadRequest {
+		t.Fatalf("validate: status = %d, want 400: %s", v.Code, v.Body)
+	}
+
+	var vp, cp Problem
+	decodePlan(t, v, &vp)
+	decodePlan(t, c, &cp)
+
+	// instance is the request path, so the two differ there by construction.
+	// Everything else must be identical: an editor that met two shapes of
+	// error for the same mistake would end up implementing both.
+	vp.Instance, cp.Instance = "", ""
+	if vp != cp {
+		t.Errorf("validate and create disagree on the same bad document:\n validate: %+v\n create:   %+v", vp, cp)
+	}
+}
+
+func TestValidatePlanNeedsManage(t *testing.T) {
+	s, _ := planServer(t)
+
+	rec := send(s, http.MethodPost, operateSecret, "/api/v1/plans/validate", validPlanYAML)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
