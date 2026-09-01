@@ -165,3 +165,47 @@ func TestNewBackupDTOOnNilIsNil(t *testing.T) {
 		t.Fatalf("NewBackupDTO(nil) = %+v, want nil", got)
 	}
 }
+
+// A report says which stored plan produced the run, and which version of it.
+// "postgres-nightly" alone cannot answer "which version", and the plan may
+// well have been edited since the drill ran.
+func TestJSON_CarriesTheStoredPlanItCameFrom(t *testing.T) {
+	run := fixtureRunSuccess()
+	run.PlanID = "2f1a4c76-0b1e-4d2a-9a51-1d0f8c2b3e44"
+	run.PlanVersion = 2
+
+	var buf bytes.Buffer
+	if err := JSON(&buf, run); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	if raw["plan_id"] != run.PlanID {
+		t.Errorf("plan_id = %v, want %q", raw["plan_id"], run.PlanID)
+	}
+	if raw["plan_version"] != float64(2) {
+		t.Errorf("plan_version = %v, want 2", raw["plan_version"])
+	}
+}
+
+// An ad-hoc drill has no plan behind it, and a report that showed an empty
+// id would invite a reader to go looking for a plan that never existed.
+func TestJSON_ProvenanceIsOmittedForAnAdhocDrill(t *testing.T) {
+	var buf bytes.Buffer
+	if err := JSON(&buf, fixtureRunSuccess()); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	for _, field := range []string{"plan_id", "plan_version"} {
+		if _, ok := raw[field]; ok {
+			t.Errorf("%s is present on an ad-hoc run: %v", field, raw[field])
+		}
+	}
+}

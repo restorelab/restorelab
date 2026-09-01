@@ -37,6 +37,17 @@ type Document struct {
 	RunID    string `json:"run_id"`
 	PlanName string `json:"plan_name"`
 
+	// PlanID and PlanVersion name the stored plan this run came from, and
+	// the version of it that ran. Both are absent for an ad-hoc drill, and
+	// PlanID stays absent once that plan is deleted - the report keeps
+	// describing what was checked either way, because the plan it was
+	// checked against is copied into the run, not referenced.
+	//
+	// A report that only said "postgres-nightly" could not answer "which
+	// version of it", and the plan may well have been edited since.
+	PlanID      string `json:"plan_id,omitempty"`
+	PlanVersion int    `json:"plan_version,omitempty"`
+
 	ProviderID       string `json:"provider_id,omitempty"`
 	BackupProviderID string `json:"backup_provider_id,omitempty"`
 
@@ -145,8 +156,10 @@ func NewDocument(run *core.RecoveryRun) Document {
 	doc := Document{
 		Schema: SchemaVersion,
 
-		RunID:    run.ID,
-		PlanName: run.PlanName,
+		RunID:       run.ID,
+		PlanName:    run.PlanName,
+		PlanID:      run.PlanID,
+		PlanVersion: run.PlanVersion,
 
 		ProviderID:       run.ProviderID,
 		BackupProviderID: run.BackupProviderID,
