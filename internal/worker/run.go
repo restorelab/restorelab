@@ -84,9 +84,9 @@ func (w *Worker) execute(parent context.Context, q store.QueuedRun) {
 	run, runErr := engine.Run(runCtx, p, recovery.RunOptions{
 		RunID:   q.ID, // the row already exists; the engine must not mint another id
 		Network: network,
-		Node:    p.Restore.Node,
-		Storage: p.Restore.Storage,
-		Pool:    p.Restore.Pool,
+		Node:    w.placement(q.ProviderID, p.Restore.Node, deploymentNode),
+		Storage: w.placement(q.ProviderID, p.Restore.Storage, deploymentStorage),
+		Pool:    w.placement(q.ProviderID, p.Restore.Pool, deploymentPool),
 	})
 	stop()
 
@@ -108,6 +108,47 @@ func (w *Worker) execute(parent context.Context, q store.QueuedRun) {
 // The engine refuses a network that is not marked isolated, so nothing is
 // re-checked here. What this does add is the plan's bridge override, which
 // exists so a plan can name a profile and still pin the bridge it lands on.
+// deployment settings a plan can leave to the machine that executes it.
+type deploymentSetting int
+
+const (
+	deploymentNode deploymentSetting = iota
+	deploymentStorage
+	deploymentPool
+)
+
+// placement fills in where a restore lands when the plan does not say.
+//
+// A plan describes a drill, not a deployment: it names the workload and what
+// to check, and leaves node, storage and pool to whoever runs it. The CLI has
+// always resolved them from the configuration this way; the worker did not,
+// and that gap is not cosmetic.
+//
+// The pool is the sharp one. A least-privilege service account holds its
+// destructive rights on the drill pool alone (see docs/proxmox-permissions.md),
+// so a restore that lands outside it is refused by Proxmox with a bare
+// "Permission check failed" - which reads like a broken token rather than a
+// misplaced VM. Every drill triggered over HTTP failed exactly that way until
+// the worker learned to read this.
+func (w *Worker) placement(providerID, fromPlan string, which deploymentSetting) string {
+	if fromPlan != "" || w.cfg == nil {
+		return fromPlan
+	}
+	switch which {
+	case deploymentNode:
+		return w.cfg.Defaults.Node
+	case deploymentStorage:
+		return w.cfg.Defaults.Storage
+	case deploymentPool:
+		// The pool lives on the provider entry rather than in the defaults:
+		// it is a property of the cluster's access model, not of a drill.
+		if entry, err := w.cfg.Provider(providerID); err == nil {
+			return entry.Pool
+		}
+	}
+	return ""
+}
+
 func (w *Worker) resolveNetwork(p *plan.Plan) (core.NetworkConfig, error) {
 	if w.cfg == nil {
 		return core.NetworkConfig{}, errors.New("worker: no configuration is loaded, so no network profile can be resolved")

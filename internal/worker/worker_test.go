@@ -749,3 +749,46 @@ func TestWorkerReleasesTheLeaseOnFailure(t *testing.T) {
 		assertLeaseReleased(t, s, "run-junk", "run-next")
 	})
 }
+
+// A plan describes a drill, not a deployment: it names the workload and what
+// to check, and leaves node, storage and pool to whoever executes it. The CLI
+// has always filled them in from the configuration; the worker did not, and
+// every drill triggered over HTTP failed on a real cluster because of it.
+//
+// The pool is the one that bites. A least-privilege service account holds its
+// destructive rights on the drill pool alone, so a restore landing outside it
+// is refused with a bare "Permission check failed" - which reads like a
+// broken token rather than a misplaced VM.
+func TestWorkerFillsInPlacementTheConfigurationDecides(t *testing.T) {
+	cfg := config.New()
+	cfg.Providers = []config.Provider{{
+		ID: "pve", Kind: "proxmox", Endpoint: "https://pve.example.com:8006",
+		Pool: "restorelab",
+	}}
+	cfg.Defaults.Provider = "pve"
+	cfg.Defaults.Node = "pve1"
+	cfg.Defaults.Storage = "local-zfs"
+
+	w, err := New(Options{Store: store.Noop{}, Providers: staticProviders{}, Config: cfg})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if got := w.placement("pve", "", deploymentPool); got != "restorelab" {
+		t.Errorf("pool = %q, want restorelab: the provider entry decides where a drill is allowed to run", got)
+	}
+	if got := w.placement("pve", "", deploymentNode); got != "pve1" {
+		t.Errorf("node = %q, want pve1", got)
+	}
+	if got := w.placement("pve", "", deploymentStorage); got != "local-zfs" {
+		t.Errorf("storage = %q, want local-zfs", got)
+	}
+
+	// What the plan says wins: it was written by someone who meant it.
+	if got := w.placement("pve", "other-pool", deploymentPool); got != "other-pool" {
+		t.Errorf("pool = %q, want the plan's own value", got)
+	}
+	if got := w.placement("unknown-provider", "", deploymentPool); got != "" {
+		t.Errorf("pool = %q, want empty for a provider that is not configured", got)
+	}
+}
