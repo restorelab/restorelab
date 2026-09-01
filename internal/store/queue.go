@@ -33,10 +33,11 @@ func terminalList() (string, []any) {
 
 const enqueueSQL = `
 INSERT INTO runs (
-	id, plan_name, plan_snapshot, provider_id, backup_provider_id,
+	id, plan_name, plan_snapshot, plan_id, plan_version,
+	provider_id, backup_provider_id,
 	source_workload_id, source_name, state, started_at, queued_at,
 	rto_ms, rto_target_ms, cleanup_done
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0)`
 
 // Enqueue records a run to be executed later.
 //
@@ -44,9 +45,16 @@ INSERT INTO runs (
 // history is ordered by it, and a row that sorted last until a worker picked
 // it up would be invisible in the listing that is supposed to show it
 // waiting.
+//
+// The provenance is written here for the same reason CreateRun writes it: a
+// queued drill knows where it came from at the moment it is queued, and the
+// worker that picks it up later has no way to find out. It is never read on
+// the way to execution - the snapshot is - it only has to survive.
 func (s *sqlStore) Enqueue(ctx context.Context, run *core.RecoveryRun, planYAML string, at time.Time) error {
 	return s.exec(ctx, enqueueSQL,
-		run.ID, run.PlanName, planYAML, run.ProviderID, nullString(run.BackupProviderID),
+		run.ID, run.PlanName, planYAML,
+		nullString(run.PlanID), nullInt(run.PlanVersion),
+		run.ProviderID, nullString(run.BackupProviderID),
 		run.SourceWorkloadID, nullString(run.SourceName), string(core.RunQueued),
 		formatTime(at), formatTime(at), run.RTOTarget.Milliseconds(),
 	)

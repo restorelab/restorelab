@@ -56,6 +56,17 @@ func (Noop) RevokeToken(context.Context, string, time.Time) error { return ErrNo
 // already accepted, so failing silently is right.
 func (Noop) TouchToken(context.Context, string, time.Time) error { return nil }
 
+// The plan methods refuse for the same reason the token ones do: a plan the
+// caller believes stored, and that is not, is worse than an error. `plan
+// apply` must say it could not apply anything.
+func (Noop) CreatePlan(context.Context, Plan) error      { return ErrNoHistory }
+func (Noop) UpdatePlan(context.Context, Plan, int) error { return ErrNoHistory }
+func (Noop) DeletePlan(context.Context, string) error    { return ErrNoHistory }
+
+func (Noop) GetPlan(context.Context, string) (*Plan, error) { return nil, ErrNoHistory }
+
+func (Noop) ListPlans(context.Context, PlanFilter) ([]Plan, error) { return nil, ErrNoHistory }
+
 // The queue methods follow the same rule as the tokens: silence where a
 // missing database only costs history, an error where succeeding would be a
 // lie the caller acts on.

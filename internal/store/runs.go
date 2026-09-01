@@ -12,22 +12,30 @@ import (
 
 const insertRunSQL = `
 INSERT INTO runs (
-	id, plan_name, plan_snapshot, provider_id, backup_provider_id,
+	id, plan_name, plan_snapshot, plan_id, plan_version,
+	provider_id, backup_provider_id,
 	source_workload_id, source_name, temp_workload_id, temp_name, node,
 	backup, state, result, started_at, completed_at,
 	rto_ms, rto_target_ms, cleanup_done, err
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // CreateRun records a run that has just started, with the plan exactly as it
 // was at that moment. Plans become editable later; a report must keep saying
 // what was actually checked, not what the plan says today.
+//
+// plan_id and plan_version are provenance beside that snapshot: they say
+// which catalogue entry this drill came from, while the snapshot says what it
+// actually executed. They are written here and nowhere else - UpdateRun does
+// not carry them, because where a run came from cannot change afterwards.
 func (s *sqlStore) CreateRun(ctx context.Context, run *core.RecoveryRun, planYAML string) error {
 	backupJSON, err := encodeJSON(run.Backup)
 	if err != nil {
 		return fmt.Errorf("store: encode backup for run %s: %w", run.ID, err)
 	}
 	return s.exec(ctx, insertRunSQL,
-		run.ID, run.PlanName, planYAML, run.ProviderID, nullString(run.BackupProviderID),
+		run.ID, run.PlanName, planYAML,
+		nullString(run.PlanID), nullInt(run.PlanVersion),
+		run.ProviderID, nullString(run.BackupProviderID),
 		run.SourceWorkloadID, nullString(run.SourceName), nullString(run.TempWorkloadID),
 		nullString(run.TempName), nullString(run.Node),
 		nullString(backupJSON), string(run.State), nullString(string(run.Result)),
@@ -83,7 +91,7 @@ func (s *sqlStore) SetTempWorkload(ctx context.Context, runID, tempWorkloadID, n
 }
 
 const selectRunSQL = `
-SELECT id, plan_name, provider_id, backup_provider_id,
+SELECT id, plan_name, plan_id, plan_version, provider_id, backup_provider_id,
 	source_workload_id, source_name, temp_workload_id, temp_name, node,
 	backup, state, result, started_at, completed_at,
 	rto_ms, rto_target_ms, cleanup_done, err
@@ -144,6 +152,8 @@ func (s *sqlStore) GetRun(ctx context.Context, idOrPrefix string) (*core.Recover
 
 	var (
 		run                         core.RecoveryRun
+		planID                      sql.NullString
+		planVersion                 sql.NullInt64
 		backupProvider, sourceName  sql.NullString
 		tempID, tempName, node      sql.NullString
 		backupJSON, result, errText sql.NullString
@@ -155,7 +165,7 @@ func (s *sqlStore) GetRun(ctx context.Context, idOrPrefix string) (*core.Recover
 	)
 
 	err = s.queryRow(ctx, selectRunSQL, id).Scan(
-		&run.ID, &run.PlanName, &run.ProviderID, &backupProvider,
+		&run.ID, &run.PlanName, &planID, &planVersion, &run.ProviderID, &backupProvider,
 		&run.SourceWorkloadID, &sourceName, &tempID, &tempName, &node,
 		&backupJSON, &state, &result, &startedAt, &completedAt,
 		&rtoMS, &rtoTargetMS, &cleanupDone, &errText,
@@ -167,6 +177,11 @@ func (s *sqlStore) GetRun(ctx context.Context, idOrPrefix string) (*core.Recover
 		return nil, err
 	}
 
+	// Both provenance columns read back as NULL for an ad-hoc drill, and for
+	// a run whose stored plan has since been deleted: ON DELETE SET NULL
+	// clears the link and leaves the rest of the row exactly as it was.
+	run.PlanID = planID.String
+	run.PlanVersion = int(planVersion.Int64)
 	run.BackupProviderID = backupProvider.String
 	run.SourceName = sourceName.String
 	run.TempWorkloadID = tempID.String

@@ -24,6 +24,12 @@ type OpenFunc func(t *testing.T) Store
 // sampleRun builds a run with every field populated, so a column the
 // implementation forgot to write shows up as a mismatch rather than as a
 // zero value nobody notices.
+//
+// PlanID and PlanVersion are the one exception, and deliberately so: plan_id
+// is a foreign key, and both engines enforce it - foreign_keys is on in the
+// SQLite DSN. A sample carrying an id no row in plans holds would fail every
+// insert in this suite. A test that wants provenance creates the plan first
+// and sets the two fields itself.
 func sampleRun(id string) *core.RecoveryRun {
 	started := time.Date(2026, 9, 1, 10, 0, 0, 123456789, time.UTC)
 	return &core.RecoveryRun{
@@ -53,6 +59,17 @@ func RunConformance(t *testing.T, open OpenFunc) {
 		ctx := context.Background()
 		want := sampleRun("0aca8405-4e80-4ac9-8bdd-057a56dc0281")
 
+		// The plan has to exist before the run can point at it: plan_id is a
+		// foreign key on both engines. That is the point of writing it this
+		// way round - a run claiming a provenance no catalogue entry backs is
+		// a state the database refuses, not one we have to check for.
+		p := samplePlan("6b1d5a90-3c7e-4f11-8a02-9e4d7c6b5a03", "provenance-plan")
+		if err := s.CreatePlan(ctx, p); err != nil {
+			t.Fatalf("CreatePlan: %v", err)
+		}
+		want.PlanID = p.ID
+		want.PlanVersion = 3
+
 		if err := s.CreateRun(ctx, want, "name: adhoc-110\n"); err != nil {
 			t.Fatalf("CreateRun: %v", err)
 		}
@@ -63,6 +80,10 @@ func RunConformance(t *testing.T, open OpenFunc) {
 
 		if got.ID != want.ID || got.PlanName != want.PlanName {
 			t.Errorf("ID/PlanName = %q/%q, want %q/%q", got.ID, got.PlanName, want.ID, want.PlanName)
+		}
+		if got.PlanID != want.PlanID || got.PlanVersion != want.PlanVersion {
+			t.Errorf("provenance = %q/v%d, want %q/v%d",
+				got.PlanID, got.PlanVersion, want.PlanID, want.PlanVersion)
 		}
 		if got.ProviderID != want.ProviderID || got.BackupProviderID != want.BackupProviderID {
 			t.Errorf("provider ids = %q/%q, want %q/%q",

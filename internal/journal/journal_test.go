@@ -70,6 +70,24 @@ func (b *brokenStore) TouchToken(context.Context, string, time.Time) error {
 	b.calls++
 	return errBroken
 }
+func (b *brokenStore) CreatePlan(context.Context, store.Plan) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) UpdatePlan(context.Context, store.Plan, int) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) GetPlan(context.Context, string) (*store.Plan, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) ListPlans(context.Context, store.PlanFilter) ([]store.Plan, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) DeletePlan(context.Context, string) error {
+	b.calls++
+	return errBroken
+}
 func (b *brokenStore) Enqueue(context.Context, *core.RecoveryRun, string, time.Time) error {
 	b.calls++
 	return errBroken
@@ -421,5 +439,65 @@ func TestRecorderWithoutAttachStillCreatesTheRun(t *testing.T) {
 
 	if len(spy.runs) != 1 {
 		t.Fatalf("CreateRun calls = %d, want 1", len(spy.runs))
+	}
+}
+
+// A drill launched from a stored plan must be indistinguishable in the
+// history from the same drill triggered over HTTP: the API writes plan_id and
+// plan_version when it queues a run, and the CLI has to write them too or
+// half the history cannot answer "which plan produced this".
+func TestRecorderRecordsWhichStoredPlanTheRunCameFrom(t *testing.T) {
+	spy := &spyStore{}
+	rec := quietRecorder(spy)
+	rec.Prepare("web-tier", "proxmox-main", "110", "linux-test", "name: web-tier\n")
+	rec.FromPlan("2f1a4c76-0b1e-4d2a-9a51-1d0f8c2b3e44", 2)
+
+	rec.Emit(recovery.Event{RunID: "abc", At: time.Now().UTC(), State: core.RunDiscoveringBackup})
+
+	if len(spy.runs) != 1 {
+		t.Fatalf("CreateRun calls = %d, want 1", len(spy.runs))
+	}
+	got := spy.runs[0]
+	if got.PlanID != "2f1a4c76-0b1e-4d2a-9a51-1d0f8c2b3e44" || got.PlanVersion != 2 {
+		t.Errorf("provenance = %q/v%d, want the stored plan and v2", got.PlanID, got.PlanVersion)
+	}
+}
+
+// And an ad-hoc drill carries none: provenance that was invented would be
+// worse than provenance that is absent.
+func TestRecorderRecordsNoProvenanceWithoutFromPlan(t *testing.T) {
+	spy := &spyStore{}
+	rec := quietRecorder(spy)
+	rec.Prepare("adhoc-110", "proxmox-main", "110", "linux-test", "name: x\n")
+
+	rec.Emit(recovery.Event{RunID: "abc", At: time.Now().UTC(), State: core.RunDiscoveringBackup})
+
+	if len(spy.runs) != 1 {
+		t.Fatalf("CreateRun calls = %d, want 1", len(spy.runs))
+	}
+	if got := spy.runs[0]; got.PlanID != "" || got.PlanVersion != 0 {
+		t.Errorf("provenance = %q/v%d, want none: this drill came from no stored plan", got.PlanID, got.PlanVersion)
+	}
+}
+
+// The row a stored-plan drill creates when it dies before its first event is
+// the one someone will go looking for; it needs its provenance just as much.
+func TestRecorderFinishCarriesTheProvenanceOnARunThatNeverEmitted(t *testing.T) {
+	spy := &spyStore{}
+	rec := quietRecorder(spy)
+	rec.Prepare("web-tier", "proxmox-main", "110", "linux-test", "name: web-tier\n")
+	rec.FromPlan("plan-id", 3)
+
+	run := &core.RecoveryRun{
+		ID: "abc", State: core.RunFailed, Result: core.ResultFailed,
+		Err: "no backup found for workload 110", StartedAt: time.Now().UTC(),
+	}
+	rec.Finish(context.Background(), run)
+
+	if len(spy.runs) != 1 {
+		t.Fatalf("CreateRun calls = %d, want 1", len(spy.runs))
+	}
+	if got := spy.runs[0]; got.PlanID != "plan-id" || got.PlanVersion != 3 {
+		t.Errorf("provenance = %q/v%d, want plan-id/v3", got.PlanID, got.PlanVersion)
 	}
 }

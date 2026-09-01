@@ -11,7 +11,7 @@ import (
 )
 
 const selectRunsPrefix = `
-SELECT id, plan_name, source_workload_id, source_name, state, result,
+SELECT id, plan_name, plan_id, source_workload_id, source_name, state, result,
 	started_at, completed_at, rto_ms, rto_target_ms, cleanup_done
 FROM runs`
 
@@ -79,6 +79,7 @@ func (s *sqlStore) ListRuns(ctx context.Context, f Filter) ([]RunSummary, error)
 	for rows.Next() {
 		var (
 			r                  RunSummary
+			planID             sql.NullString
 			sourceName, result sql.NullString
 			state, startedAt   string
 			completedAt        sql.NullString
@@ -86,11 +87,12 @@ func (s *sqlStore) ListRuns(ctx context.Context, f Filter) ([]RunSummary, error)
 			rtoTargetMS        sql.NullInt64
 			cleanupDone        int
 		)
-		if err := rows.Scan(&r.ID, &r.PlanName, &r.SourceWorkloadID, &sourceName,
+		if err := rows.Scan(&r.ID, &r.PlanName, &planID, &r.SourceWorkloadID, &sourceName,
 			&state, &result, &startedAt, &completedAt, &rtoMS, &rtoTargetMS, &cleanupDone); err != nil {
 			return nil, err
 		}
 
+		r.PlanID = planID.String
 		r.SourceName = sourceName.String
 		r.State = core.RunState(state)
 		r.Result = core.RunResult(result.String)

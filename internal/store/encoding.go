@@ -76,6 +76,17 @@ func decodeJSON(raw []byte, out any) error {
 	return json.Unmarshal(raw, out)
 }
 
+// nullInt writes a zero as SQL NULL. A run with no stored plan has no
+// version, and a 0 in that column would read back as "version zero", which is
+// not a thing: plan versions start at 1. It is nullString's argument applied
+// to an integer - "not recorded" must stay distinguishable from a value.
+func nullInt(n int) any {
+	if n == 0 {
+		return nil
+	}
+	return n
+}
+
 // boolToInt and intToBool bridge SQLite's missing boolean type. PostgreSQL
 // accepts the same integer column, so one schema serves both engines.
 func boolToInt(b bool) int {

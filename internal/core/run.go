@@ -74,6 +74,14 @@ type RecoveryRun struct {
 	ID       string
 	PlanName string
 
+	// PlanID and PlanVersion say which stored plan produced this run, and in
+	// which version. They are provenance and nothing else: the engine never
+	// reads them, and a run triggered ad hoc has neither. What actually ran
+	// is the plan snapshot the store holds beside the run - a plan edited or
+	// deleted afterwards cannot change what a report says.
+	PlanID      string
+	PlanVersion int
+
 	ProviderID       string
 	BackupProviderID string
 

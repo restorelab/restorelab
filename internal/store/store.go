@@ -32,6 +32,38 @@ var ErrAmbiguous = errors.New("store: id prefix matches more than one run")
 // the fault is ours is the classic way to send someone hunting for hours.
 var ErrNoHistory = errors.New("store: no history database is configured")
 
+// ErrDuplicate is returned when a write would collide with a name another
+// row already holds.
+var ErrDuplicate = errors.New("store: that name is already taken")
+
+// ErrVersionConflict is returned when an update carried an expected version
+// that is no longer the current one: somebody else wrote in between.
+var ErrVersionConflict = errors.New("store: the plan changed since it was read")
+
+// Plan is a recovery plan held in the catalogue.
+//
+// YAML is the document exactly as it was submitted, bytes included: comments
+// and key order survive, so exporting a plan gives back what was written.
+// The other fields are derived from it at write time and exist to list and
+// filter; the text is what carries authority.
+type Plan struct {
+	ID          string
+	Name        string
+	Description string
+	WorkloadID  string
+	ProviderID  string
+	YAML        string
+	Version     int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// PlanFilter narrows a plan listing. A zero value lists every plan by name.
+type PlanFilter struct {
+	WorkloadID string
+	Limit      int // 0 means DefaultListLimit
+}
+
 // Event is one line of a run's progress stream, as the engine emitted it.
 //
 // It mirrors recovery.Event deliberately rather than importing it: store must
@@ -51,8 +83,12 @@ type Event struct {
 // RunSummary is the row a listing shows. It deliberately omits steps, checks
 // and events: a listing of two hundred runs must not load them.
 type RunSummary struct {
-	ID               string
-	PlanName         string
+	ID       string
+	PlanName string
+	// PlanID is the stored plan this run came from, empty for an ad-hoc
+	// drill. It is in the summary so a listing can group by plan without
+	// loading every run.
+	PlanID           string
 	SourceWorkloadID string
 	SourceName       string
 	State            core.RunState
@@ -104,6 +140,12 @@ const (
 	// between a dashboard that shows the fleet and one that can destroy and
 	// recreate machines in it.
 	ScopeOperate = "operate"
+	// ScopeManage writes the catalogue: it creates, changes and deletes the
+	// plans. It is deliberately not implied by operate. Triggering a drill
+	// and deciding what a drill is are two different powers, and a token
+	// handed to a dashboard so it can launch one has no business rewriting
+	// the definition of what it launches.
+	ScopeManage = "manage"
 )
 
 // Can reports whether the token holds a scope. Read is implied by every
@@ -271,6 +313,26 @@ type Store interface {
 	// an exact counter would cost one write per request for something nobody
 	// reads to the second.
 	TouchToken(ctx context.Context, id string, at time.Time) error
+
+	// CreatePlan records a new plan. Name is unique; a duplicate is
+	// ErrDuplicate.
+	CreatePlan(ctx context.Context, p Plan) error
+	// UpdatePlan overwrites a plan and increments its version. expected > 0
+	// requires the current version to match, and returns ErrVersionConflict
+	// otherwise; 0 overwrites whatever is there. It does not report the new
+	// version: the increment happens in SQL, so the only honest way to know
+	// it is to read the row back.
+	UpdatePlan(ctx context.Context, p Plan, expected int) error
+	// GetPlan resolves a reference: an exact name first, then an exact id,
+	// then a unique id prefix. ErrNotFound, or ErrAmbiguous when a prefix
+	// matches more than one plan.
+	GetPlan(ctx context.Context, ref string) (*Plan, error)
+	// ListPlans returns the catalogue ordered by name.
+	ListPlans(ctx context.Context, f PlanFilter) ([]Plan, error)
+	// DeletePlan removes a plan. Its runs keep their name and snapshot and
+	// only lose the link: ON DELETE SET NULL, so history reads identically
+	// before and after.
+	DeletePlan(ctx context.Context, ref string) error
 
 	// Describe names the engine and location, for `db status`. It must never
 	// include a password.

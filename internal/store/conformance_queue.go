@@ -54,6 +54,53 @@ func QueueWriteConformance(t *testing.T, open OpenFunc) {
 		}
 	})
 
+	t.Run("a queued run keeps the provenance it was queued with", func(t *testing.T) {
+		s := open(t)
+
+		// A drill queued from the catalogue records which plan and which
+		// version produced it. The worker that picks it up later executes the
+		// snapshot, never this - but the answer to "where did this run come
+		// from" has to survive the wait, because nothing downstream can
+		// reconstruct it once the drill is running.
+		p := samplePlan("8c4e2b17-5d93-4a60-b1f8-2e70c9d4a615", "queued-from-catalogue")
+		if err := s.CreatePlan(ctx, p); err != nil {
+			t.Fatalf("CreatePlan: %v", err)
+		}
+
+		run := queuedRun("q6", "110")
+		run.PlanID = p.ID
+		run.PlanVersion = 2
+		if err := s.Enqueue(ctx, run, "name: web-tier\n", base); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+
+		got, err := s.GetRun(ctx, "q6")
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if got.PlanID != p.ID || got.PlanVersion != 2 {
+			t.Errorf("provenance = %q/v%d, want %q/v2", got.PlanID, got.PlanVersion, p.ID)
+		}
+	})
+
+	t.Run("an ad-hoc run is queued with no provenance at all", func(t *testing.T) {
+		s := open(t)
+
+		// The other half of the same rule: a drill nobody catalogued must not
+		// acquire a plan id or a version 0 on the way in. Both columns stay
+		// NULL, and read back as the zero value.
+		if err := s.Enqueue(ctx, queuedRun("q7", "110"), "name: x\n", base); err != nil {
+			t.Fatalf("Enqueue: %v", err)
+		}
+		got, err := s.GetRun(ctx, "q7")
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if got.PlanID != "" || got.PlanVersion != 0 {
+			t.Errorf("provenance = %q/v%d, want it empty for an ad-hoc drill", got.PlanID, got.PlanVersion)
+		}
+	})
+
 	t.Run("the state moves as the drill progresses", func(t *testing.T) {
 		s := open(t)
 		if err := s.Enqueue(ctx, queuedRun("q2", "110"), "name: x\n", base); err != nil {

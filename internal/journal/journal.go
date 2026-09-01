@@ -42,6 +42,10 @@ type Recorder struct {
 	sourceName string
 	planYAML   string
 
+	// Set by FromPlan, when the drill was launched from a stored plan.
+	planID      string
+	planVersion int
+
 	mu             sync.Mutex
 	runID          string
 	tempWorkloadID string
@@ -83,6 +87,26 @@ func (r *Recorder) Prepare(planName, providerID, sourceID, sourceName, planYAML 
 	r.planYAML = planYAML
 }
 
+// FromPlan records which stored plan this run came from, and in which
+// version.
+//
+// It is provenance and nothing else: set before the first event, written once
+// with the run row, and never read back by the engine. It exists so that a
+// drill launched from the terminal on a stored plan lands in the history
+// looking exactly like the same drill triggered over HTTP - the API writes
+// those two columns when it queues a run, and a CLI that did not would leave
+// half the history unable to answer "which plan produced this".
+//
+// It is a method rather than two more parameters on Prepare because that
+// signature already carries five, has two callers, and only one of them has
+// anything to say here.
+func (r *Recorder) FromPlan(planID string, version int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.planID = planID
+	r.planVersion = version
+}
+
 // Emit mirrors one engine event. It is meant to be composed with the terminal
 // printer in recovery.Deps.Emit.
 func (r *Recorder) Emit(e recovery.Event) {
@@ -103,6 +127,11 @@ func (r *Recorder) Emit(e recovery.Event) {
 			SourceName:       r.sourceName,
 			State:            e.State,
 			StartedAt:        e.At,
+			// The provenance can only be written here: CreateRun is the one
+			// statement that touches plan_id, and UpdateRun deliberately
+			// leaves it alone.
+			PlanID:      r.planID,
+			PlanVersion: r.planVersion,
 		}
 		planYAML := r.planYAML
 		r.mu.Unlock()
@@ -178,11 +207,18 @@ func (r *Recorder) Finish(ctx context.Context, run *core.RecoveryRun) {
 	r.mu.Lock()
 	known := r.runID
 	planYAML := r.planYAML
+	planID, planVersion := r.planID, r.planVersion
 	r.mu.Unlock()
 
 	// A run that failed before emitting anything has no row yet. Create one
 	// rather than lose the record of a failure.
 	if known == "" {
+		// Same reason as in Emit: this is the only write that records where
+		// the run came from. A drill that died before its first event is
+		// still a drill somebody will look up by plan.
+		if planID != "" {
+			run.PlanID, run.PlanVersion = planID, planVersion
+		}
 		if err := r.store.CreateRun(ctx, run, planYAML); err != nil {
 			r.warn("could not record this run", err)
 			return
