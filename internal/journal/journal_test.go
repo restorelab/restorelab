@@ -1,4 +1,4 @@
-package cli
+package journal
 
 import (
 	"context"
@@ -70,6 +70,38 @@ func (b *brokenStore) TouchToken(context.Context, string, time.Time) error {
 	b.calls++
 	return errBroken
 }
+func (b *brokenStore) Enqueue(context.Context, *core.RecoveryRun, string, time.Time) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) SetState(context.Context, string, core.RunState) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) RequestCancel(context.Context, string, time.Time) (bool, error) {
+	b.calls++
+	return false, errBroken
+}
+func (b *brokenStore) CancelRequested(context.Context, string) (bool, error) {
+	return false, errBroken
+}
+func (b *brokenStore) ActiveRunForWorkload(context.Context, string) (string, error) {
+	return "", errBroken
+}
+func (b *brokenStore) ClaimRun(context.Context, string, time.Duration, time.Time) (*store.QueuedRun, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) RenewLease(context.Context, string, string, time.Time) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) FinishLease(context.Context, string) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) StaleRuns(context.Context, time.Time) ([]store.QueuedRun, error) {
+	return nil, errBroken
+}
 func (b *brokenStore) Describe() string { return "broken" }
 func (b *brokenStore) Close() error     { return errBroken }
 
@@ -115,8 +147,8 @@ func (s *spyStore) SetTempWorkload(_ context.Context, runID, tempWorkloadID, nod
 	return nil
 }
 
-func quietRecorder(s store.Store) *recorder {
-	return newRecorder(s, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func quietRecorder(s store.Store) *Recorder {
+	return New(s, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // The guarantee this whole design rests on: a store that fails every call must
@@ -349,5 +381,38 @@ func TestRecorderSwallowsTempWorkloadFailure(t *testing.T) {
 
 	if broken.calls == 0 {
 		t.Fatal("the recorder never tried to write; this test would prove nothing")
+	}
+}
+
+// A run queued through the API already has its row: the API wrote it when it
+// accepted the request, and it holds the plan snapshot as it was then.
+// Creating it again would be a duplicate key at best, and at worst would
+// overwrite the queued row with a fresh one that has forgotten it was queued.
+func TestRecorderAttachedToAnExistingRunDoesNotCreateIt(t *testing.T) {
+	spy := &spyStore{}
+	rec := quietRecorder(spy)
+	rec.AttachTo("queued-1")
+
+	rec.Emit(recovery.Event{RunID: "queued-1", At: time.Now().UTC(), State: core.RunRestoring})
+
+	if len(spy.runs) != 0 {
+		t.Fatalf("the journal created a run row that already existed: %+v", spy.runs)
+	}
+	if len(spy.events) != 1 {
+		t.Fatalf("the event was not recorded: %d", len(spy.events))
+	}
+}
+
+// And the CLI path is unchanged: with no AttachTo, the first event still
+// creates the row.
+func TestRecorderWithoutAttachStillCreatesTheRun(t *testing.T) {
+	spy := &spyStore{}
+	rec := quietRecorder(spy)
+	rec.Prepare("adhoc-110", "proxmox-main", "110", "linux-test", "name: x\n")
+
+	rec.Emit(recovery.Event{RunID: "abc", At: time.Now().UTC(), State: core.RunDiscoveringBackup})
+
+	if len(spy.runs) != 1 {
+		t.Fatalf("CreateRun calls = %d, want 1", len(spy.runs))
 	}
 }

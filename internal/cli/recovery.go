@@ -6,15 +6,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/restorelab/restorelab/internal/adhoc"
 	"github.com/restorelab/restorelab/internal/checks"
 	"github.com/restorelab/restorelab/internal/core"
+	"github.com/restorelab/restorelab/internal/journal"
 	"github.com/restorelab/restorelab/internal/plan"
 	"github.com/restorelab/restorelab/internal/providers"
 	"github.com/restorelab/restorelab/internal/recovery"
@@ -104,7 +105,24 @@ configured its network, and started a service.`,
 			if err != nil {
 				return err
 			}
-			p, err := adHocPlan(args[0], entry.ID, f)
+			p, err := adhoc.Plan(adhoc.Options{
+				WorkloadID:     args[0],
+				ProviderID:     entry.ID,
+				BackupProvider: f.backupID,
+				Backup:         f.backup,
+				Node:           f.node,
+				Storage:        f.storage,
+				Pool:           f.pool,
+				Network:        f.network,
+				Checks:         f.checkSpecs,
+				CheckRetries:   f.checkRetries,
+				CheckInterval:  f.checkInterval,
+				StartupTimeout: f.startupTimeout,
+				RTOTarget:      f.rtoTarget,
+				CPULimit:       f.cpuLimit,
+				MemoryLimitMB:  f.memoryLimitMB,
+				SkipStartup:    f.skipStartup,
+			})
 			if err != nil {
 				return err
 			}
@@ -116,8 +134,8 @@ configured its network, and started a service.`,
 	fs := cmd.Flags()
 	fs.StringVar(&f.backup, "backup", "latest", `restore point: "latest" or a backup id`)
 	fs.StringArrayVar(&f.checkSpecs, "check", nil, "check to run (repeatable): ping, tcp:PORT, http://..., dns:NAME, cmd:COMMAND")
-	fs.IntVar(&f.checkRetries, "check-retries", defaultAdHocRetries, "how many times to retry a check that has not passed yet")
-	fs.DurationVar(&f.checkInterval, "check-interval", defaultAdHocRetryInterval, "wait between check attempts")
+	fs.IntVar(&f.checkRetries, "check-retries", adhoc.DefaultCheckRetries, "how many times to retry a check that has not passed yet")
+	fs.DurationVar(&f.checkInterval, "check-interval", adhoc.DefaultCheckInterval, "wait between check attempts")
 	fs.DurationVar(&f.startupTimeout, "startup-timeout", plan.DefaultStartupTimeout, "how long to wait for the guest to become reachable")
 	fs.DurationVar(&f.rtoTarget, "rto", 0, "recovery time objective the run is graded against")
 	fs.IntVar(&f.cpuLimit, "cpu", 0, "cap the temporary workload's cores")
@@ -144,101 +162,6 @@ func newRecoveryRunCmd(a *app) *cobra.Command {
 
 	f.bind(cmd)
 	return cmd
-}
-
-// Defaults for an ad-hoc drill's checks: a freshly restored guest is still
-// starting when the first attempt runs.
-const (
-	defaultAdHocRetries       = 10
-	defaultAdHocRetryInterval = 6 * time.Second
-)
-
-// adHocPlan turns `recovery test` flags into a plan, so both entry points run
-// exactly the same engine over exactly the same structure.
-func adHocPlan(workloadID, providerID string, f *runFlags) (*plan.Plan, error) {
-	p := &plan.Plan{
-		Name: "adhoc-" + workloadID,
-		Workload: plan.WorkloadRef{
-			Provider: providerID,
-			ID:       workloadID,
-		},
-		Backup: plan.BackupSpec{Provider: f.backupID, Strategy: plan.StrategyLatest},
-		Restore: plan.RestoreSpec{
-			Node:          f.node,
-			Storage:       f.storage,
-			Pool:          f.pool,
-			Network:       f.network,
-			CPULimit:      f.cpuLimit,
-			MemoryLimitMB: f.memoryLimitMB,
-		},
-		Startup:   plan.StartupSpec{Skip: f.skipStartup, Timeout: plan.Duration(f.startupTimeout)},
-		RTOTarget: plan.Duration(f.rtoTarget),
-	}
-
-	if f.backup != "" && f.backup != "latest" {
-		p.Backup.Strategy = plan.StrategySpecific
-		p.Backup.ID = f.backup
-	}
-
-	if !f.skipStartup {
-		specs := f.checkSpecs
-		if len(specs) == 0 {
-			specs = []string{"tcp:22"}
-		}
-		for _, s := range specs {
-			c, err := parseCheckSpec(s)
-			if err != nil {
-				return nil, err
-			}
-			// A drill's checks always run against a guest that booted seconds
-			// ago, so retrying is the normal case, not the exception. Without
-			// this a perfectly good recovery fails because systemd had not
-			// finished starting yet.
-			c.Retries = f.checkRetries
-			c.RetryInterval = plan.Duration(f.checkInterval)
-			p.Checks = append(p.Checks, c)
-		}
-	}
-
-	p.ApplyDefaults()
-	if err := p.Validate(); err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-// parseCheckSpec parses the shorthand accepted by --check.
-func parseCheckSpec(spec string) (plan.CheckSpec, error) {
-	switch {
-	case spec == "ping":
-		return plan.CheckSpec{Type: "ping", Params: map[string]any{}}, nil
-
-	case strings.HasPrefix(spec, "http://"), strings.HasPrefix(spec, "https://"):
-		return plan.CheckSpec{Type: "http", Params: map[string]any{"url": spec}}, nil
-
-	case strings.HasPrefix(spec, "tcp:"):
-		port, err := strconv.Atoi(strings.TrimPrefix(spec, "tcp:"))
-		if err != nil || port < 1 || port > 65535 {
-			return plan.CheckSpec{}, fmt.Errorf("invalid check %q: expected tcp:PORT with a port between 1 and 65535", spec)
-		}
-		return plan.CheckSpec{Type: "tcp", Params: map[string]any{"port": port}}, nil
-
-	case strings.HasPrefix(spec, "cmd:"):
-		run := strings.TrimPrefix(spec, "cmd:")
-		if strings.TrimSpace(run) == "" {
-			return plan.CheckSpec{}, fmt.Errorf("invalid check %q: expected cmd:COMMAND", spec)
-		}
-		return plan.CheckSpec{Type: "command", Params: map[string]any{"run": run}}, nil
-
-	case strings.HasPrefix(spec, "dns:"):
-		name := strings.TrimPrefix(spec, "dns:")
-		if name == "" {
-			return plan.CheckSpec{}, fmt.Errorf("invalid check %q: expected dns:NAME", spec)
-		}
-		return plan.CheckSpec{Type: "dns", Params: map[string]any{"name": name}}, nil
-	}
-
-	return plan.CheckSpec{}, fmt.Errorf("unknown check %q: expected ping, tcp:PORT, http(s)://..., dns:NAME, or cmd:COMMAND", spec)
 }
 
 // runPlan wires the providers, the check registry and the engine together,
@@ -276,7 +199,7 @@ func (a *app) runPlan(ctx context.Context, p *plan.Plan, f *runFlags) error {
 	// The drill is mirrored into the history as it happens. rec never returns
 	// an error: a locked database or a full disk must not abort a destructive
 	// operation on a production cluster.
-	rec := newRecorder(a.store(ctx), a.runLogger())
+	rec := journal.New(a.store(ctx), a.runLogger())
 	rec.Prepare(p.Name, hvEntry.ID, p.Workload.ID, p.Workload.Name, planYAML(p))
 	printer := a.progressPrinter()
 
