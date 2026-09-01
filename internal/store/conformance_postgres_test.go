@@ -111,6 +111,8 @@ func TestPostgresEventsConformance(t *testing.T) { EventsConformance(t, newTestP
 
 func TestPostgresListConformance(t *testing.T) { ListConformance(t, newTestPostgresStore) }
 
+func TestPostgresTokensConformance(t *testing.T) { TokensConformance(t, newTestPostgresStore) }
+
 // A PostgreSQL database is shared: RestoreLab must refuse to write into a
 // schema it does not fully recognise, rather than migrate it behind the
 // operator's back.

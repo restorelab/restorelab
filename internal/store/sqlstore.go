@@ -37,3 +37,14 @@ func (s *sqlStore) query(ctx context.Context, q string, args ...any) (*sql.Rows,
 func (s *sqlStore) queryRow(ctx context.Context, q string, args ...any) *sql.Row {
 	return s.db.QueryRowContext(ctx, rebind(s.dialect, q), args...)
 }
+
+// execCount runs a statement and reports how many rows it changed. It is what
+// lets "revoke a token that is not there" be an error rather than a silent
+// success.
+func (s *sqlStore) execCount(ctx context.Context, query string, args ...any) (int64, error) {
+	res, err := s.db.ExecContext(ctx, rebind(s.dialect, query), args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

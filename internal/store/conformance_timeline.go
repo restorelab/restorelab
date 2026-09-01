@@ -6,6 +6,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -381,6 +382,118 @@ func ListConformance(t *testing.T, open OpenFunc) {
 		}
 		if len(got) != 0 {
 			t.Fatalf("got %d runs, want none", len(got))
+		}
+	})
+
+	t.Run("paging with a cursor walks the whole history exactly once", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+
+		// Cinq runs, une minute d'écart, du plus ancien au plus récent.
+		var ids []string
+		for i := 0; i < 5; i++ {
+			id := fmt.Sprintf("aaaaaaa%d-0000-0000-0000-000000000000", i)
+			run := sampleRun(id)
+			run.StartedAt = base.Add(time.Duration(i) * time.Minute)
+			run.CompletedAt = run.StartedAt.Add(30 * time.Second)
+			if err := s.CreateRun(ctx, run, "name: x\n"); err != nil {
+				t.Fatalf("CreateRun %s: %v", id, err)
+			}
+			ids = append(ids, id)
+		}
+
+		seen := map[string]int{}
+		var after *Position
+		for page := 0; page < 10; page++ {
+			got, err := s.ListRuns(ctx, Filter{Limit: 2, After: after})
+			if err != nil {
+				t.Fatalf("ListRuns page %d: %v", page, err)
+			}
+			if len(got) == 0 {
+				break
+			}
+			for _, r := range got {
+				seen[r.ID]++
+			}
+			last := got[len(got)-1]
+			after = &Position{StartedAt: last.StartedAt, ID: last.ID}
+
+			// Un drill qui démarre pendant qu'on pagine : avec un OFFSET, il
+			// décalerait toute la suite et ferait sauter une ligne.
+			if page == 0 {
+				fresh := sampleRun("bbbbbbbb-0000-0000-0000-000000000000")
+				fresh.StartedAt = base.Add(time.Hour)
+				fresh.CompletedAt = fresh.StartedAt.Add(30 * time.Second)
+				if err := s.CreateRun(ctx, fresh, "name: x\n"); err != nil {
+					t.Fatalf("CreateRun fresh: %v", err)
+				}
+			}
+		}
+
+		for _, id := range ids {
+			switch seen[id] {
+			case 0:
+				t.Errorf("run %s was skipped while paging", id)
+			case 1:
+			default:
+				t.Errorf("run %s came back %d times while paging", id, seen[id])
+			}
+		}
+	})
+
+	t.Run("two runs started at the same instant both come back", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+
+		// Même started_at : sans l'id comme second critère de tri, le curseur
+		// en perdrait un.
+		for _, id := range []string{
+			"cccccccc-0000-0000-0000-000000000001",
+			"cccccccc-0000-0000-0000-000000000002",
+		} {
+			run := sampleRun(id)
+			run.StartedAt = base
+			if err := s.CreateRun(ctx, run, "name: x\n"); err != nil {
+				t.Fatalf("CreateRun %s: %v", id, err)
+			}
+		}
+
+		first, err := s.ListRuns(ctx, Filter{Limit: 1})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(first) != 1 {
+			t.Fatalf("got %d runs, want 1", len(first))
+		}
+		second, err := s.ListRuns(ctx, Filter{Limit: 1, After: &Position{
+			StartedAt: first[0].StartedAt, ID: first[0].ID,
+		}})
+		if err != nil {
+			t.Fatalf("ListRuns page 2: %v", err)
+		}
+		if len(second) != 1 {
+			t.Fatalf("second page has %d runs, want 1: the tie on started_at lost a row", len(second))
+		}
+		if second[0].ID == first[0].ID {
+			t.Fatal("the second page repeated the first row")
+		}
+	})
+
+	t.Run("the summary carries the RTO target", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		run := sampleRun("dddddddd-0000-0000-0000-000000000000")
+		if err := s.CreateRun(ctx, run, "name: x\n"); err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+
+		got, err := s.ListRuns(ctx, Filter{})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if got[0].RTOTarget != run.RTOTarget {
+			t.Errorf("RTOTarget = %v, want %v: the confidence score reads it from the listing",
+				got[0].RTOTarget, run.RTOTarget)
 		}
 	})
 }

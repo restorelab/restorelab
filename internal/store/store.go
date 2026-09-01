@@ -22,6 +22,16 @@ var ErrNotFound = errors.New("store: run not found")
 // ErrAmbiguous is returned when an id prefix matches more than one run.
 var ErrAmbiguous = errors.New("store: id prefix matches more than one run")
 
+// ErrNoHistory is returned when an operation needs a real database and there
+// is none: the Noop store cannot invent an API token, and pretending to
+// store one would hand an operator a credential that authenticates nothing.
+//
+// It is deliberately distinct from ErrNotFound. The API turns ErrNotFound
+// into 401 ("your token is not valid") and ErrNoHistory into 503 ("our
+// database is missing") - telling a client its credentials are wrong when
+// the fault is ours is the classic way to send someone hunting for hours.
+var ErrNoHistory = errors.New("store: no history database is configured")
+
 // Event is one line of a run's progress stream, as the engine emitted it.
 //
 // It mirrors recovery.Event deliberately rather than importing it: store must
@@ -50,8 +60,36 @@ type RunSummary struct {
 	StartedAt        time.Time
 	CompletedAt      time.Time
 	RTO              time.Duration
-	CleanupDone      bool
+	// RTOTarget is what the plan asked for. It is in the summary because the
+	// confidence score needs it, and grading a workload must not mean loading
+	// every full run it ever had.
+	RTOTarget   time.Duration
+	CleanupDone bool
 }
+
+// Position is a run's place in the listing order: when it started, then its
+// id to break ties. It is what a page cursor carries.
+type Position struct {
+	StartedAt time.Time
+	ID        string
+}
+
+// APIToken is a credential the read-only HTTP API accepts.
+//
+// The secret is never stored: Hash is its SHA-256, hex encoded. A leaked
+// database therefore hands an attacker nothing usable, and the only moment
+// the secret exists is when `token create` prints it.
+type APIToken struct {
+	ID         string
+	Name       string
+	Hash       string
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+	RevokedAt  time.Time
+}
+
+// Live reports whether the token has not been revoked.
+func (t APIToken) Live() bool { return t.RevokedAt.IsZero() }
 
 // Filter narrows a listing. A zero value lists the most recent runs.
 type Filter struct {
@@ -60,6 +98,13 @@ type Filter struct {
 	Result     core.RunResult
 	Since      time.Time
 	Limit      int // 0 means DefaultListLimit
+	// After continues a listing from a previous page's last row: only runs
+	// strictly older than this position come back.
+	//
+	// A keyset, never an OFFSET. A drill inserted while a dashboard pages
+	// shifts every OFFSET after it, which either skips a row or shows one
+	// twice - and the reader has no way to notice either.
+	After *Position
 }
 
 // DefaultListLimit caps a listing that did not ask for a size.
@@ -94,6 +139,23 @@ type Store interface {
 	// Events returns a run's events with a seq strictly greater than
 	// afterSeq, in order. Phase B's SSE replays from here on reconnection.
 	Events(ctx context.Context, runID string, afterSeq int64) ([]Event, error)
+
+	// CreateToken records a new API token. Name and Hash are unique; a
+	// duplicate of either is an error.
+	CreateToken(ctx context.Context, t APIToken) error
+	// TokenByHash returns the live token carrying this hash. It returns
+	// ErrNotFound for an unknown or revoked hash, and ErrNoHistory when
+	// there is no database to ask.
+	TokenByHash(ctx context.Context, hash string) (*APIToken, error)
+	// ListTokens returns every token, revoked ones included, oldest first.
+	ListTokens(ctx context.Context) ([]APIToken, error)
+	// RevokeToken marks the named token revoked at at. It returns
+	// ErrNotFound when no live token carries that name.
+	RevokeToken(ctx context.Context, name string, at time.Time) error
+	// TouchToken records that a token was used at at. Callers throttle it:
+	// an exact counter would cost one write per request for something nobody
+	// reads to the second.
+	TouchToken(ctx context.Context, id string, at time.Time) error
 
 	// Describe names the engine and location, for `db status`. It must never
 	// include a password.

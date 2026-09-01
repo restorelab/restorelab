@@ -16,3 +16,5 @@ func TestSQLiteStepsAndChecksConformance(t *testing.T) {
 func TestSQLiteEventsConformance(t *testing.T) { EventsConformance(t, newTestStore) }
 
 func TestSQLiteListConformance(t *testing.T) { ListConformance(t, newTestStore) }
+
+func TestSQLiteTokensConformance(t *testing.T) { TokensConformance(t, newTestStore) }

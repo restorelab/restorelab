@@ -48,6 +48,24 @@ func (b *brokenStore) ListRuns(context.Context, store.Filter) ([]store.RunSummar
 func (b *brokenStore) Events(context.Context, string, int64) ([]store.Event, error) {
 	return nil, errBroken
 }
+func (b *brokenStore) CreateToken(context.Context, store.APIToken) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) TokenByHash(context.Context, string) (*store.APIToken, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) ListTokens(context.Context) ([]store.APIToken, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) RevokeToken(context.Context, string, time.Time) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) TouchToken(context.Context, string, time.Time) error {
+	b.calls++
+	return errBroken
+}
 func (b *brokenStore) Describe() string { return "broken" }
 func (b *brokenStore) Close() error     { return errBroken }
 

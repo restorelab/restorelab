@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/restorelab/restorelab/internal/core"
 )
@@ -32,3 +33,24 @@ func (Noop) Close() error                                                   { re
 func (Noop) GetRun(context.Context, string) (*core.RecoveryRun, error) {
 	return nil, ErrNotFound
 }
+
+// The token methods are the one place Noop cannot do nothing quietly.
+//
+// Everywhere else, a missing database costs history and nothing more. A
+// token that appears to have been created but authenticates nothing would be
+// worse than an error: the operator would paste it into a dashboard and
+// spend an afternoon on a 401. So these say plainly that there is no
+// database, and `token create` refuses.
+func (Noop) CreateToken(context.Context, APIToken) error { return ErrNoHistory }
+
+func (Noop) TokenByHash(context.Context, string) (*APIToken, error) {
+	return nil, ErrNoHistory
+}
+
+func (Noop) ListTokens(context.Context) ([]APIToken, error) { return nil, ErrNoHistory }
+
+func (Noop) RevokeToken(context.Context, string, time.Time) error { return ErrNoHistory }
+
+// TouchToken is the exception: it is bookkeeping about a token that was
+// already accepted, so failing silently is right.
+func (Noop) TouchToken(context.Context, string, time.Time) error { return nil }
