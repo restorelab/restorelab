@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/restorelab/restorelab/internal/adhoc"
+	"github.com/restorelab/restorelab/internal/catalog"
 	"github.com/restorelab/restorelab/internal/checks"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/journal"
@@ -20,6 +21,7 @@ import (
 	"github.com/restorelab/restorelab/internal/providers"
 	"github.com/restorelab/restorelab/internal/recovery"
 	"github.com/restorelab/restorelab/internal/report"
+	"github.com/restorelab/restorelab/internal/store"
 )
 
 // runFlags are shared by `recovery test` and `recovery run`.
@@ -126,7 +128,7 @@ configured its network, and started a service.`,
 			if err != nil {
 				return err
 			}
-			return a.runPlan(cmd.Context(), p, f)
+			return a.runPlan(cmd.Context(), p, nil, f)
 		},
 	}
 
@@ -146,27 +148,59 @@ configured its network, and started a service.`,
 
 func newRecoveryRunCmd(a *app) *cobra.Command {
 	f := &runFlags{}
+	var stored string
 
 	cmd := &cobra.Command{
-		Use:   "run <plan.yaml>",
-		Short: "Run a recovery drill from a plan file",
-		Args:  cobra.ExactArgs(1),
+		Use:   "run [plan.yaml]",
+		Short: "Run a recovery drill from a plan file or a stored plan",
+		Long: `Runs a recovery drill from a plan.
+
+The plan is either a file on disk, or one stored in the catalogue:
+
+    restorelab recovery run plans/web-tier.yaml
+    restorelab recovery run --plan web-tier
+
+A file needs no database at all: a broken history never stops a drill. A
+stored plan is read from the catalogue, and the run records which plan and
+which version it came from, exactly as a drill triggered over HTTP does.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			p, err := plan.Load(args[0])
-			if err != nil {
-				return err
+			switch {
+			case len(args) == 1 && stored != "":
+				// Never guess. A file and a stored name are two different
+				// plans, and picking one silently is how the wrong drill
+				// runs against a production cluster.
+				return fmt.Errorf("give a plan file or --plan, not both: they are two different plans")
+			case len(args) == 1:
+				p, err := plan.Load(args[0])
+				if err != nil {
+					return err
+				}
+				return a.runPlan(cmd.Context(), p, nil, f)
+			case stored != "":
+				row, p, err := catalog.Resolve(cmd.Context(), a.store(cmd.Context()), stored)
+				if err != nil {
+					return planStoreError(stored, err)
+				}
+				return a.runPlan(cmd.Context(), p, row, f)
+			default:
+				return fmt.Errorf("give a plan file, or --plan <name> to run a stored one")
 			}
-			return a.runPlan(cmd.Context(), p, f)
 		},
 	}
 
 	f.bind(cmd)
+	cmd.Flags().StringVar(&stored, "plan", "", "run a stored plan by name or id")
 	return cmd
 }
 
 // runPlan wires the providers, the check registry and the engine together,
 // streams progress, and renders the report.
-func (a *app) runPlan(ctx context.Context, p *plan.Plan, f *runFlags) error {
+//
+// stored is the catalogue row the plan came from, nil for a plan file and for
+// `recovery test`. It is provenance only: nothing about the execution changes
+// with it, and the run is executed from p either way.
+func (a *app) runPlan(ctx context.Context, p *plan.Plan, stored *store.Plan, f *runFlags) error {
 	cfg, err := a.config()
 	if err != nil {
 		return err
@@ -201,6 +235,11 @@ func (a *app) runPlan(ctx context.Context, p *plan.Plan, f *runFlags) error {
 	// operation on a production cluster.
 	rec := journal.New(a.store(ctx), a.runLogger())
 	rec.Prepare(p.Name, hvEntry.ID, p.Workload.ID, p.Workload.Name, planYAML(p))
+	if stored != nil {
+		// So a drill run from the terminal on a stored plan looks in the
+		// history exactly like the same drill triggered over HTTP.
+		rec.FromPlan(stored.ID, stored.Version)
+	}
 	printer := a.progressPrinter()
 
 	engine, err := recovery.New(recovery.Deps{

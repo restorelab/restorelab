@@ -26,16 +26,23 @@ is no command that can print it again. Lose it and create another one.`,
 }
 
 func newTokenCreateCmd(a *app) *cobra.Command {
-	var operate bool
+	var operate, manage bool
 
 	cmd := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create an API token and print it once",
 		Long: `Creates an API token and prints it once.
 
-A token is read only unless --operate is given. An operate token can trigger
-drills, cancel them and destroy the workloads they leave behind: it is a key
-that can destroy and recreate machines, not a key that reads a dashboard.`,
+A token is read only unless --operate or --manage is given. An operate token
+can trigger drills, cancel them and destroy the workloads they leave behind:
+it is a key that can destroy and recreate machines, not a key that reads a
+dashboard.
+
+A manage token writes the plan catalogue: it creates, changes and deletes the
+stored plans. Neither scope implies the other. Triggering a drill and deciding
+what a drill is are two different powers, and a token handed to a dashboard so
+it can launch one has no business rewriting the definition of what it
+launches.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -54,6 +61,9 @@ that can destroy and recreate machines, not a key that reads a dashboard.`,
 			if operate {
 				record.Scopes = append(record.Scopes, store.ScopeOperate)
 			}
+			if manage {
+				record.Scopes = append(record.Scopes, store.ScopeManage)
+			}
 
 			if err := a.store(cmd.Context()).CreateToken(cmd.Context(), record); err != nil {
 				if errors.Is(err, store.ErrNoHistory) {
@@ -67,18 +77,27 @@ that can destroy and recreate machines, not a key that reads a dashboard.`,
 
 			// What it can do, said at the only moment the operator is still
 			// looking: a key that destroys and recreates machines must not be
-			// handed out looking like a key that reads a dashboard.
+			// handed out looking like a key that reads a dashboard. Each
+			// power gets its own line, because the two are independent and a
+			// token can carry either, both, or neither.
+			fmt.Fprintf(a.out, "  scopes: %s\n", strings.Join(record.Scopes, ", "))
 			if operate {
-				fmt.Fprintf(a.out, "  scopes: %s\n", strings.Join(record.Scopes, ", "))
 				fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
 					"This token can trigger drills, cancel them, and clean up the workloads they leave."))
-				fmt.Fprintf(a.out, "  %s\n\n", a.paint(colorYellow,
+				fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
 					"It destroys and recreates machines. Treat it like a hypervisor credential."))
-			} else {
-				fmt.Fprintf(a.out, "  scopes: %s\n", strings.Join(record.Scopes, ", "))
-				fmt.Fprintf(a.out, "  %s\n\n", a.paint(colorDim,
-					"Read only: it can look, and change nothing. Add --operate for a token that runs drills."))
 			}
+			if manage {
+				fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
+					"This token can create, change and delete stored plans."))
+				fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
+					"It decides what a drill does, on which workload. It cannot run one."))
+			}
+			if !operate && !manage {
+				fmt.Fprintf(a.out, "  %s\n", a.paint(colorDim,
+					"Read only: it can look, and change nothing. Add --operate for a token that runs drills, --manage for one that writes plans."))
+			}
+			fmt.Fprintln(a.out)
 
 			fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
 				"This is the only time the secret will be shown. Store it now."))
@@ -90,6 +109,8 @@ that can destroy and recreate machines, not a key that reads a dashboard.`,
 
 	cmd.Flags().BoolVar(&operate, "operate", false,
 		"allow this token to trigger, cancel and clean up drills (default: read only)")
+	cmd.Flags().BoolVar(&manage, "manage", false,
+		"also allow writing the plan catalogue (create, change and delete plans)")
 	return cmd
 }
 
