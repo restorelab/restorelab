@@ -33,6 +33,16 @@ type app struct {
 	out io.Writer
 	err io.Writer
 
+	// lazyMu guards the lazily loaded configuration and master key.
+	//
+	// Until phase B2 an app was driven by exactly one goroutine: a command
+	// ran, it finished. `serve` broke that - the HTTP handlers and the worker
+	// both reach for a provider, and building one unseals a secret with the
+	// master key. Today every concurrent path happens to funnel through
+	// cliProviders' own mutex, which makes this safe by accident; a mutex
+	// here makes it safe by construction, which is what it needs to be when
+	// the race detector cannot run on this machine.
+	lazyMu sync.Mutex
 	cfg    *config.Config
 	key    crypto.Key
 	keySet bool
@@ -139,6 +149,8 @@ func (a *app) path() string {
 
 // config loads and caches the configuration file.
 func (a *app) config() (*config.Config, error) {
+	a.lazyMu.Lock()
+	defer a.lazyMu.Unlock()
 	if a.cfg != nil {
 		return a.cfg, nil
 	}
@@ -152,6 +164,8 @@ func (a *app) config() (*config.Config, error) {
 
 // masterKey resolves and caches the master key.
 func (a *app) masterKey() (crypto.Key, error) {
+	a.lazyMu.Lock()
+	defer a.lazyMu.Unlock()
 	if a.keySet {
 		return a.key, nil
 	}
