@@ -32,6 +32,9 @@ web/.vite/
 # Session handover notes, local to this working copy
 /STATE.md
 
+# Throwaway git worktrees used by parallel agents
+/.claude/worktrees/
+
 # Editors / OS
 .DS_Store
 Thumbs.db
