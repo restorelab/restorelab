@@ -163,6 +163,25 @@ func (t APIToken) Can(scope string) bool {
 	return false
 }
 
+// Session is a browser's authenticated connection to the API.
+//
+// It names a token; it carries no authority of its own. That is what makes
+// revoking a token enough to end every session opened with it, and what stops
+// a cookie from becoming a token in disguise: the scopes are read from the
+// token on every request, never from the session.
+//
+// The secret is never stored. Hash is its SHA-256, exactly as for a token.
+type Session struct {
+	ID        string
+	Hash      string
+	TokenID   string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+	// UserAgent is a label, so a human can pick their own session out of a
+	// list. Nothing depends on it and nothing should.
+	UserAgent string
+}
+
 // ErrNoWork is returned by ClaimRun when the queue holds nothing to run.
 var ErrNoWork = errors.New("store: no queued run to claim")
 
@@ -313,6 +332,29 @@ type Store interface {
 	// an exact counter would cost one write per request for something nobody
 	// reads to the second.
 	TouchToken(ctx context.Context, id string, at time.Time) error
+
+	// CreateSession records a session and drops every session that has
+	// already expired, in the same transaction. The sweep lives here because
+	// this is the only statement that ever grows the table: it cleans itself
+	// at exactly the rate it fills, without a goroutine to own.
+	CreateSession(ctx context.Context, s Session, now time.Time) error
+	// SessionByHash returns the session carrying this hash together with the
+	// token it names - but only when the session has not expired and the
+	// token is live. It returns ErrNotFound otherwise, without saying which
+	// condition failed.
+	//
+	// The two answers come from one query on purpose. Revocation writes
+	// revoked_at rather than deleting the row, so ON DELETE CASCADE does not
+	// fire for it; a caller left to check that itself would eventually
+	// forget, and a revoked credential would keep working for twelve hours.
+	SessionByHash(ctx context.Context, hash string, now time.Time) (*Session, *APIToken, error)
+	// DeleteSession removes a session. Removing one that is not there is not
+	// an error: logging out twice is not a failure.
+	DeleteSession(ctx context.Context, hash string) error
+	// DeleteExpiredSessions removes every session that has expired. It is the
+	// statement CreateSession runs as its sweep, exposed on its own so the
+	// sweep can be tested and driven without opening a session.
+	DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error)
 
 	// CreatePlan records a new plan. Name is unique; a duplicate is
 	// ErrDuplicate.

@@ -70,6 +70,24 @@ func (b *brokenStore) TouchToken(context.Context, string, time.Time) error {
 	b.calls++
 	return errBroken
 }
+func (b *brokenStore) CreateSession(context.Context, store.Session, time.Time) error {
+	b.calls++
+	return errBroken
+}
+
+func (b *brokenStore) SessionByHash(context.Context, string, time.Time) (*store.Session, *store.APIToken, error) {
+	return nil, nil, errBroken
+}
+
+func (b *brokenStore) DeleteSession(context.Context, string) error {
+	b.calls++
+	return errBroken
+}
+
+func (b *brokenStore) DeleteExpiredSessions(context.Context, time.Time) (int64, error) {
+	return 0, errBroken
+}
+
 func (b *brokenStore) CreatePlan(context.Context, store.Plan) error {
 	b.calls++
 	return errBroken

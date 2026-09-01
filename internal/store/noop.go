@@ -56,6 +56,21 @@ func (Noop) RevokeToken(context.Context, string, time.Time) error { return ErrNo
 // already accepted, so failing silently is right.
 func (Noop) TouchToken(context.Context, string, time.Time) error { return nil }
 
+// The session methods refuse for the reason the token ones do. A dashboard
+// cannot open a session without a database, and saying so is more useful than
+// handing back a cookie that names a row nobody wrote.
+func (Noop) CreateSession(context.Context, Session, time.Time) error { return ErrNoHistory }
+
+func (Noop) SessionByHash(context.Context, string, time.Time) (*Session, *APIToken, error) {
+	return nil, nil, ErrNoHistory
+}
+
+func (Noop) DeleteSession(context.Context, string) error { return ErrNoHistory }
+
+func (Noop) DeleteExpiredSessions(context.Context, time.Time) (int64, error) {
+	return 0, ErrNoHistory
+}
+
 // The plan methods refuse for the same reason the token ones do: a plan the
 // caller believes stored, and that is not, is worse than an error. `plan
 // apply` must say it could not apply anything.

@@ -113,6 +113,10 @@ func TestPostgresListConformance(t *testing.T) { ListConformance(t, newTestPostg
 
 func TestPostgresTokensConformance(t *testing.T) { TokensConformance(t, newTestPostgresStore) }
 
+func TestPostgresSessionsConformance(t *testing.T) {
+	SessionsConformance(t, newTestPostgresStore)
+}
+
 func TestPostgresPlanConformance(t *testing.T) { PlanConformance(t, newTestPostgresStore) }
 
 func TestPostgresTempWorkloadConformance(t *testing.T) {

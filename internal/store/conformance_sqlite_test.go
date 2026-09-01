@@ -19,6 +19,8 @@ func TestSQLiteListConformance(t *testing.T) { ListConformance(t, newTestStore) 
 
 func TestSQLiteTokensConformance(t *testing.T) { TokensConformance(t, newTestStore) }
 
+func TestSQLiteSessionsConformance(t *testing.T) { SessionsConformance(t, newTestStore) }
+
 func TestSQLitePlanConformance(t *testing.T) { PlanConformance(t, newTestStore) }
 
 func TestSQLiteTempWorkloadConformance(t *testing.T) { TempWorkloadConformance(t, newTestStore) }
