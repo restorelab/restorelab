@@ -142,11 +142,17 @@ func realSleep(ctx context.Context, d time.Duration) error {
 // Contract: Run ALWAYS returns a non-nil *core.RecoveryRun, populated as far
 // as the workflow got — callers (the CLI, the report writer) build the
 // report from this run even when the run failed. Run returns a non-nil error
-// exactly when the run did not succeed: run.Result == core.ResultFailed, or
+// exactly when the run did not succeed: run.Result == core.ResultFailed, the
+// run was cancelled (run.State == core.RunCancelled, run.Result empty), or
 // cleanup itself failed (run.State == core.RunCleanupFailed, which can
 // happen even after a graded Success/Degraded run — both are joined via
 // errors.Join when they occur together). A core.ResultDegraded run with
 // cleanup done returns a nil error — it recovered, just not perfectly.
+//
+// A run whose ctx was cancelled (context.Canceled, NOT
+// context.DeadlineExceeded) ends in core.RunCancelled rather than
+// core.RunFailed: stopping a drill is an operator's decision, not evidence
+// that the backup is bad. See markCancelled.
 // Unlike run.Err (a flattened string, for display), the returned error
 // preserves the original chain, so callers can errors.Is/As it against core
 // sentinels (core.ErrNoBackup, core.ErrNetworkNotIsolated, core.ErrTimeout,
@@ -176,14 +182,36 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, opts RunOptions) (run *c
 	)
 
 	defer func() {
+		panicked := false
 		if r := recover(); r != nil {
 			// An orphaned VM is worse than a crash: turn the panic into a
 			// failed run instead of letting it skip cleanup entirely.
+			panicked = true
 			e.log.Error("panic recovered in recovery engine", "run_id", run.ID, "panic", r)
 			perr := fmt.Errorf("internal error (recovered panic): %v", r)
 			e.markFailed(run, perr)
 			workflowErr = perr
 		}
+
+		// Cancellation is decided from the CONTEXT, never from the error.
+		// The error chain is not a reliable witness: retry deliberately
+		// returns the provider's original error rather than ctx.Err() when
+		// the context is cancelled during a backoff, because that error is
+		// the more useful one to show. So we ask the context directly, here,
+		// at the one point every exit path from the workflow goes through.
+		//
+		// Only context.Canceled counts. A context.DeadlineExceeded run
+		// FAILED: a drill that blew its deadline is a recovery that did not
+		// happen in time, which is precisely what this product exists to
+		// report — not a decision somebody made.
+		//
+		// A recovered panic is an internal defect and stays FAILED even if
+		// the run was also cancelled: "we crashed" is the news, not "you
+		// pressed Ctrl-C".
+		if !panicked && workflowErr != nil && errors.Is(ctx.Err(), context.Canceled) {
+			e.markCancelled(run, workflowErr)
+		}
+
 		cleanupErr := e.cleanup(ctx, run, p, opts, tempID, node, needsCleanup)
 		e.finalize(run)
 		err = combineErrors(workflowErr, cleanupErr)
@@ -291,6 +319,30 @@ func (e *Engine) markFailed(run *core.RecoveryRun, err error) {
 	e.log.Error("recovery run failed", "run_id", run.ID, "err", err)
 }
 
+// markCancelled records a run that ended because a human stopped it (Ctrl-C,
+// an API cancel), as opposed to one that failed on its own. It runs after
+// markFailed on the same run and deliberately overrides it — the distinction
+// only becomes knowable once the workflow has unwound.
+//
+// It is called BEFORE cleanup, on purpose: cleanup snapshots the graded
+// state and restores it when it succeeds, so a cancelled run ends CANCELLED
+// — and, when the delete fails, cleanup still overrides it with
+// core.RunCleanupFailed. An orphan on the cluster is more urgent news than
+// an operator's decision to stop.
+func (e *Engine) markCancelled(run *core.RecoveryRun, err error) {
+	run.State = core.RunCancelled
+	// A cancelled drill reached no verdict about the workload, so it carries
+	// none: SUCCESS, DEGRADED and FAILED are all claims about whether the
+	// backup restores, and a run that was stopped proves nothing either way.
+	// Grading it FAILED would charge the workload's confidence score
+	// (report.Score penalises core.ResultFailed) for a human decision, and
+	// would make the history lie about how often recovery actually works.
+	// The store already persists an empty result as NULL.
+	run.Result = ""
+	run.Err = fmt.Sprintf("run cancelled: %v", err)
+	e.log.Warn("recovery run cancelled", "run_id", run.ID, "err", err)
+}
+
 // gradeSuccess grades a run that completed the workflow without a fatal step
 // error: SUCCESS when every critical check passed and the RTO target was
 // met, DEGRADED when the workload recovered but a non-critical check failed
@@ -339,7 +391,10 @@ func (e *Engine) beginStep(run *core.RecoveryRun, name string, state core.RunSta
 		Status:    core.StepRunning,
 		StartedAt: started,
 	})
-	e.emit(Event{RunID: run.ID, At: started, State: state, Step: name, Status: core.StepRunning, Message: humanStepStart(name)})
+	ev := eventFor(run)
+	ev.At, ev.State, ev.Step = started, state, name
+	ev.Status, ev.Message = core.StepRunning, humanStepStart(name)
+	e.emit(ev)
 	return len(run.Steps) - 1
 }
 
@@ -351,7 +406,9 @@ func (e *Engine) endStep(run *core.RecoveryRun, idx int, status core.StepStatus,
 	st.Duration = st.CompletedAt.Sub(st.StartedAt)
 	st.Status = status
 	st.Message = message
-	ev := Event{RunID: run.ID, At: st.CompletedAt, State: st.State, Step: st.Name, Status: status, Message: message}
+	ev := eventFor(run)
+	ev.At, ev.State, ev.Step = st.CompletedAt, st.State, st.Name
+	ev.Status, ev.Message = status, message
 	if err != nil {
 		st.Err = err.Error()
 		ev.Err = err.Error()

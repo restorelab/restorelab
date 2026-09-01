@@ -219,6 +219,60 @@ func failedRunAt(completedAt time.Time) *core.RecoveryRun {
 	return r
 }
 
+// A cancelled run carries no verdict (recovery.Engine.markCancelled leaves
+// Result empty). It must stay out of the failure rate entirely: counting it
+// as a failure would mean that stopping a drill lowers the score that says
+// whether recovery works, which would teach operators not to stop drills.
+func TestScore_CancelledRunsAreNotFailures(t *testing.T) {
+	cancelled := neutralSuccess(fixtureBase.Add(-3 * time.Hour))
+	cancelled.State = core.RunCancelled
+	cancelled.Result = ""
+
+	in := ConfidenceInput{
+		LastRun: neutralSuccess(fixtureBase.Add(-1 * time.Hour)),
+		History: []*core.RecoveryRun{
+			neutralSuccess(fixtureBase.Add(-2 * time.Hour)),
+			cancelled,
+		},
+		LatestBackupAt: fixtureBase.Add(-2 * time.Hour),
+		Now:            fixtureBase,
+	}
+
+	c := Score(in, DefaultWeights())
+
+	if c.Score != 100 {
+		t.Errorf("Score = %d, want 100: a cancelled run is not evidence of failure (reasons: %v)",
+			c.Score, c.Reasons)
+	}
+	if len(c.Reasons) != 0 {
+		t.Errorf("a cancelled run produced a penalty: %v", c.Reasons)
+	}
+}
+
+// The same run graded FAILED must still cost, so the test above is proving
+// the empty verdict and not simply that the penalty is broken.
+func TestScore_FailedRunsStillCountAgainstTheRate(t *testing.T) {
+	failed := neutralSuccess(fixtureBase.Add(-3 * time.Hour))
+	failed.State = core.RunFailed
+	failed.Result = core.ResultFailed
+
+	in := ConfidenceInput{
+		LastRun: neutralSuccess(fixtureBase.Add(-1 * time.Hour)),
+		History: []*core.RecoveryRun{
+			neutralSuccess(fixtureBase.Add(-2 * time.Hour)),
+			failed,
+		},
+		LatestBackupAt: fixtureBase.Add(-2 * time.Hour),
+		Now:            fixtureBase,
+	}
+
+	c := Score(in, DefaultWeights())
+
+	if c.Score == 100 {
+		t.Error("a failed run in the history cost nothing")
+	}
+}
+
 func TestScore_ClampsAtZero(t *testing.T) {
 	failed := neutralSuccess(fixtureBase.Add(-1 * time.Hour))
 	failed.Result = core.ResultFailed

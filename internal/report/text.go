@@ -319,7 +319,13 @@ func looksSensitive(key string) bool {
 func writeVerdict(buf *bytes.Buffer, run *core.RecoveryRun, opts Options) {
 	buf.WriteString("\n")
 
+	// A run that reached no verdict - a cancelled one - has an empty Result.
+	// Its state is the honest answer there; a blank line beside "Result"
+	// would read as a rendering bug.
 	resultWord := string(run.Result)
+	if resultWord == "" {
+		resultWord = string(run.State)
+	}
 	fmt.Fprintf(buf, "Result   %s\n", colorize(resultWord, resultColor(run.Result), opts))
 
 	fmt.Fprintf(buf, "RTO      %s", FormatDuration(run.RTO))

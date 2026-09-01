@@ -67,6 +67,21 @@ func (s *sqlStore) UpdateRun(ctx context.Context, run *core.RecoveryRun) error {
 	)
 }
 
+const setTempWorkloadSQL = `
+UPDATE runs SET temp_workload_id = ?, node = ? WHERE id = ?`
+
+// SetTempWorkload records the temporary workload a run has just created, as
+// soon as it exists. See the Store interface for why this writes only these
+// two columns.
+//
+// An unknown runID is not an error: like UpdateRun, this is a best-effort
+// write against a run the caller believes already exists, made from an event
+// rather than a full run - there is nothing more specific to report, and
+// nothing here should ever become a reason to abort a drill.
+func (s *sqlStore) SetTempWorkload(ctx context.Context, runID, tempWorkloadID, node string) error {
+	return s.exec(ctx, setTempWorkloadSQL, nullString(tempWorkloadID), nullString(node), runID)
+}
+
 const selectRunSQL = `
 SELECT id, plan_name, provider_id, backup_provider_id,
 	source_workload_id, source_name, temp_workload_id, temp_name, node,

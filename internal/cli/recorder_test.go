@@ -27,6 +27,10 @@ func (b *brokenStore) UpdateRun(context.Context, *core.RecoveryRun) error {
 	b.calls++
 	return errBroken
 }
+func (b *brokenStore) SetTempWorkload(context.Context, string, string, string) error {
+	b.calls++
+	return errBroken
+}
 func (b *brokenStore) SaveStep(context.Context, string, int, core.Step) error {
 	b.calls++
 	return errBroken
@@ -71,14 +75,22 @@ func (b *brokenStore) Close() error     { return errBroken }
 
 var _ store.Store = (*brokenStore)(nil)
 
+// tempWorkloadCall records one SetTempWorkload invocation seen by spyStore.
+type tempWorkloadCall struct {
+	runID          string
+	tempWorkloadID string
+	node           string
+}
+
 // spyStore records what it was asked to write.
 type spyStore struct {
 	store.Noop
-	events []store.Event
-	steps  []core.Step
-	checks []core.CheckResult
-	runs   []*core.RecoveryRun
-	plans  []string
+	events        []store.Event
+	steps         []core.Step
+	checks        []core.CheckResult
+	runs          []*core.RecoveryRun
+	plans         []string
+	tempWorkloads []tempWorkloadCall
 }
 
 func (s *spyStore) CreateRun(_ context.Context, run *core.RecoveryRun, planYAML string) error {
@@ -96,6 +108,10 @@ func (s *spyStore) SaveStep(_ context.Context, _ string, _ int, step core.Step) 
 }
 func (s *spyStore) SaveCheck(_ context.Context, _ string, _ int, check core.CheckResult) error {
 	s.checks = append(s.checks, check)
+	return nil
+}
+func (s *spyStore) SetTempWorkload(_ context.Context, runID, tempWorkloadID, node string) error {
+	s.tempWorkloads = append(s.tempWorkloads, tempWorkloadCall{runID: runID, tempWorkloadID: tempWorkloadID, node: node})
 	return nil
 }
 
@@ -260,5 +276,78 @@ func TestRecorderFinishOnANilRunDoesNothing(t *testing.T) {
 
 	if len(spy.runs) != 0 {
 		t.Fatalf("a nil run was recorded: %+v", spy.runs)
+	}
+}
+
+// An event carrying the identity of the temporary workload must reach the
+// store before that workload is ever created on the cluster — that ordering
+// is the whole point of TempWorkloadID/Node existing on Event at all.
+func TestRecorderRecordsTempWorkloadAsSoonAsItIsKnown(t *testing.T) {
+	spy := &spyStore{}
+	rec := quietRecorder(spy)
+	rec.Prepare("adhoc-110", "proxmox-main", "110", "linux-test", "name: x\n")
+
+	rec.Emit(recovery.Event{
+		RunID: "abc", At: time.Now().UTC(), State: core.RunRestoring,
+		TempWorkloadID: "9099", Node: "private-other",
+	})
+
+	if len(spy.tempWorkloads) != 1 {
+		t.Fatalf("store received %d SetTempWorkload calls, want 1", len(spy.tempWorkloads))
+	}
+	got := spy.tempWorkloads[0]
+	if got.runID != "abc" || got.tempWorkloadID != "9099" || got.node != "private-other" {
+		t.Errorf("SetTempWorkload call = %+v, want {abc 9099 private-other}", got)
+	}
+}
+
+// The engine repeats TempWorkloadID/Node on every event once they are known,
+// so the recorder must not write them to the store more than once per run.
+func TestRecorderWritesTempWorkloadOnlyOnce(t *testing.T) {
+	spy := &spyStore{}
+	rec := quietRecorder(spy)
+	rec.Prepare("adhoc-110", "proxmox-main", "110", "linux-test", "name: x\n")
+
+	for i := 0; i < 5; i++ {
+		rec.Emit(recovery.Event{
+			RunID: "abc", At: time.Now().UTC(), State: core.RunRestoring,
+			TempWorkloadID: "9099", Node: "private-other",
+		})
+	}
+
+	if len(spy.tempWorkloads) != 1 {
+		t.Fatalf("store received %d SetTempWorkload calls, want exactly 1", len(spy.tempWorkloads))
+	}
+}
+
+// The events emitted before prepare_environment has allocated an identity
+// carry no TempWorkloadID, and must not trigger a write at all.
+func TestRecorderSkipsTempWorkloadWhenNotYetAllocated(t *testing.T) {
+	spy := &spyStore{}
+	rec := quietRecorder(spy)
+	rec.Prepare("adhoc-110", "proxmox-main", "110", "linux-test", "name: x\n")
+
+	rec.Emit(recovery.Event{RunID: "abc", At: time.Now().UTC(), State: core.RunDiscoveringBackup})
+
+	if len(spy.tempWorkloads) != 0 {
+		t.Fatalf("store received %d SetTempWorkload calls, want 0: no identity was allocated yet", len(spy.tempWorkloads))
+	}
+}
+
+// The same guarantee as TestRecorderSwallowsEveryStoreFailure, but focused on
+// SetTempWorkload: a store that fails it must not surface anything to the
+// caller, and the drill carries on.
+func TestRecorderSwallowsTempWorkloadFailure(t *testing.T) {
+	broken := &brokenStore{}
+	rec := quietRecorder(broken)
+	rec.Prepare("adhoc-110", "proxmox-main", "110", "linux-test", "name: adhoc-110\n")
+
+	rec.Emit(recovery.Event{
+		RunID: "abc", At: time.Now().UTC(), State: core.RunRestoring,
+		TempWorkloadID: "9099", Node: "private-other",
+	})
+
+	if broken.calls == 0 {
+		t.Fatal("the recorder never tried to write; this test would prove nothing")
 	}
 }

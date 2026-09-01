@@ -45,6 +45,25 @@ func isolatedNetwork() core.NetworkConfig {
 	return core.NetworkConfig{Bridge: "vmbr99", Isolated: true}
 }
 
+// newTestEngineWithEmit is newTestEngine plus a Deps.Emit sink, for the tests
+// that assert on the live event stream rather than on the finished run.
+func newTestEngineWithEmit(t *testing.T, hv core.HypervisorProvider, backups core.BackupProvider, checks CheckRunner, clock *fakeClock, emit func(Event)) *Engine {
+	t.Helper()
+	e, err := New(Deps{
+		Hypervisor: hv,
+		Backups:    backups,
+		Checks:     checks,
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:        clock.Now,
+		Sleep:      fakeSleepFn(clock),
+		Emit:       emit,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return e
+}
+
 func hasCallPrefix(calls []string, prefix string) bool {
 	for _, c := range calls {
 		if strings.HasPrefix(c, prefix) {
@@ -580,6 +599,17 @@ func TestRun_CtxCancelledMidRun_CleanupStillRuns(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("err = %v, want it to wrap context.Canceled", err)
 	}
+	// A run stopped by a human is not a failed backup: it ends CANCELLED,
+	// and carries no verdict at all about the workload's recoverability.
+	if run.State != core.RunCancelled {
+		t.Errorf("run.State = %s, want %s", run.State, core.RunCancelled)
+	}
+	if run.Result != "" {
+		t.Errorf("run.Result = %q, want empty: a cancelled run reached no verdict", run.Result)
+	}
+	if !strings.Contains(strings.ToLower(run.Err), "cancel") {
+		t.Errorf("run.Err = %q, want it to say the run was cancelled", run.Err)
+	}
 	// The proof that cleanup runs on its own detached context: it still
 	// completes successfully even though the run's own ctx is cancelled.
 	if !run.CleanupDone {
@@ -587,6 +617,169 @@ func TestRun_CtxCancelledMidRun_CleanupStillRuns(t *testing.T) {
 	}
 	if got, want := hv.deleteCalls, []string{run.TempWorkloadID}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Delete calls = %v, want %v", got, want)
+	}
+}
+
+// A drill that blew its deadline FAILED — it did not get cancelled. Only a
+// deliberate cancellation (context.Canceled) earns CANCELLED; a timeout is a
+// recovery that did not happen in time, which is exactly the thing this
+// product exists to report.
+func TestRun_CtxDeadlineExceeded_IsFailedNotCancelled(t *testing.T) {
+	clock := newFakeClock()
+	hv := &fakeProvider{
+		idStr:          "fake-hv",
+		latestBackup:   &core.Backup{ID: "backup-1", WorkloadID: "100", CreatedAt: clock.Now().Add(-time.Hour)},
+		startChecksCtx: true,
+	}
+	e := newTestEngine(t, hv, hv, &fakeCheckRunner{}, clock)
+	p := mustParsePlan(t, planNoChecksYAML)
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
+	defer cancel() // the deadline is already in the past: ctx is done, not cancelled
+
+	run, err := e.Run(ctx, p, RunOptions{Network: isolatedNetwork()})
+	if err == nil {
+		t.Fatal("expected an error (the run blew its deadline)")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want it to wrap context.DeadlineExceeded", err)
+	}
+	if run.State != core.RunFailed {
+		t.Errorf("run.State = %s, want %s: a timeout is a failure, not a cancellation", run.State, core.RunFailed)
+	}
+	if run.Result != core.ResultFailed {
+		t.Errorf("run.Result = %s, want %s", run.Result, core.ResultFailed)
+	}
+	if got, want := hv.deleteCalls, []string{run.TempWorkloadID}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Delete calls = %v, want %v", got, want)
+	}
+}
+
+// An orphaned VM is more urgent information than a cancellation: when the
+// cleanup of a cancelled run fails, CLEANUP_FAILED must still win.
+func TestRun_CancelledWithCleanupFailure_IsCleanupFailed(t *testing.T) {
+	clock := newFakeClock()
+	hv := &fakeProvider{
+		idStr:          "fake-hv",
+		latestBackup:   &core.Backup{ID: "backup-1", WorkloadID: "100", CreatedAt: clock.Now().Add(-time.Hour)},
+		startChecksCtx: true,
+		deleteErr:      errors.New("provider unreachable"),
+	}
+	e := newTestEngine(t, hv, hv, &fakeCheckRunner{}, clock)
+	p := mustParsePlan(t, planNoChecksYAML)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	run, err := e.Run(ctx, p, RunOptions{Network: isolatedNetwork()})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if run.State != core.RunCleanupFailed {
+		t.Errorf("run.State = %s, want %s: an orphan outranks a cancellation", run.State, core.RunCleanupFailed)
+	}
+	if run.CleanupDone {
+		t.Error("expected CleanupDone == false")
+	}
+	if !strings.Contains(run.Err, run.TempWorkloadID) {
+		t.Errorf("run.Err = %q, want it to name the exact VMID %q", run.Err, run.TempWorkloadID)
+	}
+	if !strings.Contains(run.Err, "node-a") {
+		t.Errorf("run.Err = %q, want it to name the node", run.Err)
+	}
+}
+
+// A cancelled run still honours the plan's explicit keep_on_failure opt-in,
+// exactly as it did when a Ctrl-C was graded FAILED: the state changed, the
+// cleanup policy did not.
+func TestRun_CancelledHonoursKeepOnFailure(t *testing.T) {
+	clock := newFakeClock()
+	hv := &fakeProvider{
+		idStr:          "fake-hv",
+		latestBackup:   &core.Backup{ID: "backup-1", WorkloadID: "100", CreatedAt: clock.Now().Add(-time.Hour)},
+		startChecksCtx: true,
+	}
+	e := newTestEngine(t, hv, hv, &fakeCheckRunner{}, clock)
+	p := planWithKeepOnFailure(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	run, err := e.Run(ctx, p, RunOptions{Network: isolatedNetwork()})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if run.State != core.RunCancelled {
+		t.Errorf("run.State = %s, want %s", run.State, core.RunCancelled)
+	}
+	if len(hv.deleteCalls) != 0 {
+		t.Fatalf("Delete calls = %v, want none (keep_on_failure)", hv.deleteCalls)
+	}
+}
+
+// ---- events carry the temporary workload's identity ----------------------
+
+// The rule this test freezes: nothing is created on the cluster before a
+// listener has been told how to find it. The restore step is the first one
+// that creates anything, so the event that OPENS it must already name the
+// temporary workload and its node — otherwise a process killed mid-drill
+// leaves an orphan the database cannot name.
+func TestRun_EventsCarryTempWorkloadIdentityBeforeRestore(t *testing.T) {
+	clock := newFakeClock()
+	hv := &fakeProvider{
+		idStr:        "fake-hv",
+		latestBackup: &core.Backup{ID: "backup-1", WorkloadID: "100", CreatedAt: clock.Now().Add(-time.Hour)},
+		allocIDs:     []string{"9042"},
+	}
+
+	var events []Event
+	e := newTestEngineWithEmit(t, hv, hv, &fakeCheckRunner{}, clock, func(ev Event) {
+		events = append(events, ev)
+	})
+	p := mustParsePlan(t, planSkipStartupYAML)
+
+	run, err := e.Run(context.Background(), p, RunOptions{Network: isolatedNetwork()})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if run.TempWorkloadID != "9042" {
+		t.Fatalf("run.TempWorkloadID = %q, want 9042", run.TempWorkloadID)
+	}
+
+	var restoreStart *Event
+	for i := range events {
+		if events[i].Step == StepRestore && events[i].Status == core.StepRunning {
+			restoreStart = &events[i]
+			break
+		}
+	}
+	if restoreStart == nil {
+		t.Fatalf("no %q event with status %q in %d events", StepRestore, core.StepRunning, len(events))
+	}
+	if restoreStart.TempWorkloadID != "9042" {
+		t.Errorf("restore-start event TempWorkloadID = %q, want %q — the database must know the id before the restore creates it",
+			restoreStart.TempWorkloadID, "9042")
+	}
+	if restoreStart.Node != "node-a" {
+		t.Errorf("restore-start event Node = %q, want %q", restoreStart.Node, "node-a")
+	}
+
+	// And not just that one event: everything from the allocation onward
+	// carries the identity, so any listener joining late still gets it.
+	seenAlloc := false
+	for _, ev := range events {
+		if ev.TempWorkloadID != "" {
+			seenAlloc = true
+		}
+		if seenAlloc && ev.TempWorkloadID != "9042" {
+			t.Fatalf("event %q/%q lost the temp workload id after it was known", ev.Step, ev.Status)
+		}
+		if seenAlloc && ev.Node != "node-a" {
+			t.Fatalf("event %q/%q lost the node after it was known", ev.Step, ev.Status)
+		}
+	}
+	if !seenAlloc {
+		t.Fatal("no event ever carried the temporary workload id")
 	}
 }
 

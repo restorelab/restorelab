@@ -20,6 +20,7 @@ var _ Store = Noop{}
 
 func (Noop) CreateRun(context.Context, *core.RecoveryRun, string) error     { return nil }
 func (Noop) UpdateRun(context.Context, *core.RecoveryRun) error             { return nil }
+func (Noop) SetTempWorkload(context.Context, string, string, string) error  { return nil }
 func (Noop) SaveStep(context.Context, string, int, core.Step) error         { return nil }
 func (Noop) SaveCheck(context.Context, string, int, core.CheckResult) error { return nil }
 func (Noop) AppendEvent(context.Context, string, Event) error               { return nil }

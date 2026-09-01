@@ -121,6 +121,14 @@ type Store interface {
 	CreateRun(ctx context.Context, run *core.RecoveryRun, planYAML string) error
 	// UpdateRun overwrites the mutable fields of a run already created.
 	UpdateRun(ctx context.Context, run *core.RecoveryRun) error
+	// SetTempWorkload records the temporary workload a run has just created,
+	// as soon as it exists.
+	//
+	// It writes those two columns and nothing else: UpdateRun overwrites the
+	// whole mutable row from a *core.RecoveryRun, and the caller here has only
+	// an event. A run that dies before finishing must still leave the
+	// database able to name what it left on the cluster.
+	SetTempWorkload(ctx context.Context, runID, tempWorkloadID, node string) error
 	// SaveStep records one step at position seq, replacing any previous
 	// value at that position.
 	SaveStep(ctx context.Context, runID string, seq int, step core.Step) error

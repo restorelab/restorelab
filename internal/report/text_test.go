@@ -47,6 +47,23 @@ func TestText_KeyLines(t *testing.T) {
 	}
 }
 
+// A cancelled run has no verdict to print. Its state is the honest answer;
+// a blank beside "Result" would read as a rendering bug.
+func TestText_CancelledRunShowsItsState(t *testing.T) {
+	run := fixtureRunSuccess()
+	run.State = core.RunCancelled
+	run.Result = ""
+
+	var buf bytes.Buffer
+	if err := Text(&buf, run, Options{}); err != nil {
+		t.Fatalf("Text: %v", err)
+	}
+
+	if got := buf.String(); !strings.Contains(got, "Result   CANCELLED") {
+		t.Errorf("the report does not name the cancelled state:\n%s", got)
+	}
+}
+
 func TestText_ColorOffProducesNoEscapes(t *testing.T) {
 	var buf bytes.Buffer
 	if err := Text(&buf, fixtureRunFailed(), Options{Color: false}); err != nil {

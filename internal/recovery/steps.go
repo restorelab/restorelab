@@ -422,10 +422,10 @@ func (e *Engine) runChecks(ctx context.Context, run *core.RecoveryRun, p *plan.P
 
 	for _, r := range results {
 		cr := r
-		e.emit(Event{
-			RunID: run.ID, At: e.now(), State: core.RunRunningChecks, Step: StepRunChecks,
-			Status: stepStatusForCheck(r.Status), Message: checkMessage(r), Check: &cr,
-		})
+		ev := eventFor(run)
+		ev.At, ev.State, ev.Step = e.now(), core.RunRunningChecks, StepRunChecks
+		ev.Status, ev.Message, ev.Check = stepStatusForCheck(r.Status), checkMessage(r), &cr
+		e.emit(ev)
 	}
 
 	critical := criticalMap(p)

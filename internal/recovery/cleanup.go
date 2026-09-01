@@ -20,8 +20,9 @@ const cleanupTimeout = 10 * time.Minute
 //
 //   - needsCleanup == false: nothing was ever created on the provider
 //     (failed before Restore was submitted, or this was a dry run) — a no-op.
-//   - opts.KeepWorkload, or plan.Cleanup.KeepOnFailure on a failed run, or
-//     !plan.Cleanup.CleanupAlways() on a run that isn't failed: the workload
+//   - opts.KeepWorkload, or plan.Cleanup.KeepOnFailure on a run that failed
+//     or was cancelled, or !plan.Cleanup.CleanupAlways() on a run that did
+//     complete: the workload
 //     is deliberately left running, logged loudly because it is now the
 //     operator's responsibility to remove it.
 //   - otherwise: Stop then Delete, always by the TEMPORARY id — never the
@@ -69,16 +70,22 @@ func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan,
 		return nil
 	}
 
-	failed := run.Result == core.ResultFailed || run.State == core.RunFailed
-	if failed && p.Cleanup.KeepOnFailure {
-		e.logKept(run, tempID, node, "plan.cleanup.keep_on_failure is set and the run failed")
+	// A cancelled run counts as "did not complete" for cleanup policy, the
+	// same as a failed one did back when a Ctrl-C was graded FAILED. Both
+	// halves of that matter: keep_on_failure (an explicit debugging opt-in)
+	// keeps applying to an interrupted drill, and "cleanup.always: false" —
+	// which only ever meant "leave a healthy drill up so I can poke at it" —
+	// must never become a way for a Ctrl-C to leak a temporary VM.
+	incomplete := run.Result == core.ResultFailed || run.State == core.RunFailed || run.State == core.RunCancelled
+	if incomplete && p.Cleanup.KeepOnFailure {
+		e.logKept(run, tempID, node, "plan.cleanup.keep_on_failure is set and the run did not complete")
 		e.recordCleanupSkipped(run, fmt.Sprintf(
 			"cleanup skipped: keep_on_failure is set — workload %s on node %s left running for debugging, remove it by hand", tempID, node))
 		run.State = gradedState
 		return nil
 	}
 
-	if !failed && !p.Cleanup.CleanupAlways() {
+	if !incomplete && !p.Cleanup.CleanupAlways() {
 		// Always defaults to true; an explicit "always: false" on a run that
 		// didn't fail means the operator wants to inspect it.
 		e.recordCleanupSkipped(run, fmt.Sprintf(

@@ -195,6 +195,14 @@ func Score(in ConfidenceInput, w ConfidenceWeights) Confidence {
 			if r == nil {
 				continue
 			}
+			// A run that reached no verdict is not evidence either way, so it
+			// is not in the denominator. A cancelled drill carries an empty
+			// Result on purpose (see recovery.Engine.markCancelled): counting
+			// it as a failure would let stopping a drill lower the very score
+			// that says whether recovery works.
+			if r.Result == "" {
+				continue
+			}
 			counted++
 			if r.Result != core.ResultSuccess {
 				failed++

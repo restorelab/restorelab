@@ -32,10 +32,11 @@ type recorder struct {
 	sourceName string
 	planYAML   string
 
-	mu       sync.Mutex
-	runID    string
-	eventSeq int64
-	checkSeq int
+	mu             sync.Mutex
+	runID          string
+	tempWorkloadID string
+	eventSeq       int64
+	checkSeq       int
 }
 
 func newRecorder(s store.Store, log *slog.Logger) *recorder {
@@ -85,6 +86,23 @@ func (r *recorder) Emit(e recovery.Event) {
 		if err := r.store.CreateRun(ctx, start, planYAML); err != nil {
 			r.warn("could not record the start of this run", err)
 		}
+		r.mu.Lock()
+	}
+
+	// Name the temporary workload the moment the engine has allocated one,
+	// and never again: nothing may be created on the cluster before the
+	// database can already point back to this run.
+	if e.TempWorkloadID != "" && r.tempWorkloadID == "" {
+		r.tempWorkloadID = e.TempWorkloadID
+		runID := r.runID
+		tempWorkloadID := e.TempWorkloadID
+		node := e.Node
+		r.mu.Unlock()
+
+		if err := r.store.SetTempWorkload(ctx, runID, tempWorkloadID, node); err != nil {
+			r.warn("could not record the temporary workload for this run", err)
+		}
+
 		r.mu.Lock()
 	}
 
