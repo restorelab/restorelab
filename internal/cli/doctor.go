@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -11,7 +10,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/restorelab/restorelab/internal/core"
+	"github.com/restorelab/restorelab/internal/diag"
 	"github.com/restorelab/restorelab/internal/providers/proxmox"
+	"github.com/restorelab/restorelab/internal/store"
 )
 
 func newDoctorCmd(a *app) *cobra.Command {
@@ -43,6 +44,13 @@ It changes nothing.`,
 	return cmd
 }
 
+// doctor runs the readiness diagnostic and prints it.
+//
+// The findings come from internal/diag, which the HTTP API serialises from
+// the same call: there is one definition of "ready for a drill", and both
+// surfaces read it. What stays here is the debugging output nobody would put
+// in an API - raw Proxmox responses, effective permissions, the tour of why
+// a backup someone swears they took is not visible.
 func (a *app) doctor(ctx context.Context, providerID, workloadID string) error {
 	cfg, err := a.config()
 	if err != nil {
@@ -56,283 +64,157 @@ func (a *app) doctor(ctx context.Context, providerID, workloadID string) error {
 
 	fmt.Fprintf(a.out, "%s  %s\n\n", a.paint(colorBold, entry.ID), a.paint(colorDim, entry.Endpoint))
 
-	problems := 0
-	fail := func(format string, args ...any) {
-		problems++
-		fmt.Fprintf(a.out, "  %s %s\n", a.fail(), fmt.Sprintf(format, args...))
+	in := diag.Input{
+		Provider:    hv,
+		ProviderID:  entry.ID,
+		Endpoint:    entry.Endpoint,
+		Node:        entry.Node,
+		WorkloadID:  workloadID,
+		HistoryDesc: store.Describe(a.storeConfig()),
 	}
-	warn := func(format string, args ...any) {
-		fmt.Fprintf(a.out, "  %s %s\n", a.warn(), fmt.Sprintf(format, args...))
+	// A missing backup provider is a finding, not a reason to stop.
+	if bp, _, err := a.backups(providerID); err == nil {
+		in.Backups = bp
 	}
-	ok := func(format string, args ...any) {
-		fmt.Fprintf(a.out, "  %s %s\n", a.ok(), fmt.Sprintf(format, args...))
+	in.NetworkName = cfg.Defaults.Network
+	if in.NetworkName == "" {
+		in.NetworkName = "isolated"
+	}
+	in.Network, in.NetworkErr = cfg.ResolveNetwork(in.NetworkName)
+
+	rep := diag.Run(ctx, in)
+	for _, f := range rep.Findings {
+		a.printFinding(f)
 	}
 
-	// --- credentials and nodes ---
-	if err := hv.Ping(ctx); err != nil {
-		fail("cannot reach the API: %v", err)
-		return fmt.Errorf("%d problem(s) found", problems)
-	}
-	ok("API reachable, credentials accepted")
-
-	nodes, err := hv.ListNodes(ctx)
-	if err != nil {
-		fail("cannot list nodes: %v", err)
-	} else {
-		online := 0
-		for _, n := range nodes {
-			if n.Online {
-				online++
-			}
-		}
-		ok("%d node(s), %d online", len(nodes), online)
-	}
-
-	// --- effective permissions ---
-	if isPVEProvider(hv) && a.verbose {
-		probes := []string{"/storage"}
-		if workloadID != "" {
-			probes = append(probes, "/vms/"+workloadID)
-		}
-		a.doctorPermissions(ctx, hv.(*proxmox.Provider), probes)
-	}
-
-	// --- storages holding backups ---
-	pve, isPVE := hv.(*proxmox.Provider)
-	if isPVE {
-		a.doctorStorages(ctx, pve, entry.Node, workloadID, ok, warn, fail)
-	}
-
-	// --- isolated network ---
-	networkName := cfg.Defaults.Network
-	if networkName == "" {
-		networkName = "isolated"
-	}
-	network, err := cfg.ResolveNetwork(networkName)
-	switch {
-	case err != nil:
-		fail("no network profile %q in the config", networkName)
-	case !network.Isolated:
-		fail("network profile %q is not marked isolated; a drill would be refused", networkName)
-	default:
-		validator, canValidate := hv.(core.NetworkValidator)
-		node := entry.Node
-		if node == "" && len(nodes) > 0 {
-			node = nodes[0].ID
-		}
-		switch {
-		case !canValidate || node == "":
-			warn("cannot verify bridge %q from here", network.Bridge)
-		default:
-			if a.rawAPI {
-				if perms, permErr := pve.EffectivePermissions(ctx, "/nodes/"+node); permErr == nil {
-					for path, privs := range perms {
-						granted := make([]string, 0, len(privs))
-						for priv, on := range privs {
-							if on {
-								granted = append(granted, priv)
-							}
-						}
-						sort.Strings(granted)
-						fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
-							fmt.Sprintf("perm %-24s %s", path, strings.Join(granted, ","))))
-					}
-				}
-				if raw, rawErr := pve.Raw(ctx, "/nodes/"+node+"/network", url.Values{"type": {"bridge"}}); rawErr == nil {
-					fmt.Fprintf(a.out, "      raw type=bridge %s\n", a.paint(colorDim, string(raw)))
-				} else {
-					fmt.Fprintf(a.out, "      raw type=bridge error: %v\n", rawErr)
-				}
-				if raw, rawErr := pve.Raw(ctx, "/nodes/"+node+"/network", nil); rawErr == nil {
-					body := string(raw)
-					if len(body) > 3000 {
-						body = body[:3000] + "..."
-					}
-					fmt.Fprintf(a.out, "      raw %s\n", a.paint(colorDim, body))
-				}
-			}
-			err := validator.ValidateIsolation(ctx, node, network)
-			switch {
-			case errors.Is(err, core.ErrIsolationUnverified):
-				warn("cannot verify bridge %q on %s with these credentials", network.Bridge, node)
-				fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
-					"Proxmox does not show this token the node's bridges; a drill will proceed on the plan's assertion that the network is isolated"))
-			case err != nil:
-				fail("bridge %q on %s: %v", network.Bridge, node, err)
-				fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim, "see docs/network-isolation.md to create a bridge with no uplink"))
-			default:
-				ok("isolated bridge %q present on %s", network.Bridge, node)
-			}
-		}
-	}
-
-	// --- one workload in detail ---
-	if workloadID != "" {
-		a.doctorWorkload(ctx, hv, providerID, workloadID, ok, warn, fail)
-	}
+	a.doctorDetails(ctx, hv, providerID, entry.Node, workloadID, rep)
 
 	fmt.Fprintln(a.out)
-	if problems > 0 {
-		return fmt.Errorf("%d problem(s) found", problems)
+	if n := rep.Problems(); n > 0 {
+		return fmt.Errorf("%d problem(s) found", n)
 	}
 	fmt.Fprintf(a.out, "%s ready to run a recovery drill\n", a.ok())
 	return nil
 }
 
-func (a *app) doctorStorages(ctx context.Context, pve *proxmox.Provider, node, workloadID string,
-	ok, warn, fail func(string, ...any)) {
-
-	storages, err := pve.ListStorages(ctx, node)
-	if err != nil {
-		fail("cannot list storages: %v", err)
-		return
+// printFinding renders one finding, with its detail indented underneath.
+func (a *app) printFinding(f diag.Finding) {
+	glyph := a.ok()
+	switch f.Level {
+	case diag.LevelFail:
+		glyph = a.fail()
+	case diag.LevelWarn:
+		glyph = a.warn()
 	}
-
-	var backupStorages []proxmox.Storage
-	for _, s := range storages {
-		if s.HoldsBackups() {
-			backupStorages = append(backupStorages, s)
-		}
-	}
-
-	// Every storage, not only the backup-capable ones: when a backup seems to
-	// be missing, the first thing to rule out is that it landed somewhere
-	// RestoreLab is not looking.
-	if a.verbose || len(backupStorages) == 0 {
-		for _, s := range storages {
-			role := "no backup content"
-			if s.HoldsBackups() {
-				role = "holds backups"
-			}
-			state := "active"
-			if !s.Active {
-				state = a.paint(colorYellow, "inactive")
-			}
-			fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
-				fmt.Sprintf("storage %-16s %-10s %-18s %s", s.ID, s.Type, role, state)))
-		}
-	}
-
-	if len(backupStorages) == 0 {
-		fail("no storage on this cluster advertises backup content")
-		fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
-			"RestoreLab restores from Proxmox backups: configure a backup job, or attach a Proxmox Backup Server"))
-		return
-	}
-
-	if node == "" {
-		if nodes, err := pve.ListNodes(ctx); err == nil {
-			for _, n := range nodes {
-				if n.Online {
-					node = n.ID
-					break
-				}
-			}
-		}
-	}
-
-	total := 0
-	for _, s := range backupStorages {
-		count, err := pve.CountBackups(ctx, node, s.ID, workloadID)
-		switch {
-		case err != nil:
-			warn("storage %q (%s): cannot read contents: %v", s.ID, s.Type, err)
-		case !s.Active:
-			warn("storage %q (%s) is not active", s.ID, s.Type)
-		case a.verbose:
-			total += count
-			if a.rawAPI {
-				if raw, rawErr := pve.Raw(ctx, "/nodes/"+node+"/storage/"+s.ID+"/content", nil); rawErr == nil {
-					body := string(raw)
-					if len(body) > 2000 {
-						body = body[:2000] + "..."
-					}
-					fmt.Fprintf(a.out, "      raw %s\n", a.paint(colorDim, body))
-				}
-			}
-			all, allErr := pve.ListContentIDs(ctx, node, s.ID, "", "")
-			if allErr != nil {
-				warn("storage %q: unfiltered content listing failed: %v", s.ID, allErr)
-			} else {
-				ok("storage %q (%s): %d backup(s), %d volume(s) of any kind", s.ID, s.Type, count, len(all))
-				for i, v := range all {
-					if i >= 10 {
-						break
-					}
-					fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim, "volume "+v))
-				}
-			}
-		default:
-			total += count
-			scope := "backup(s)"
-			if workloadID != "" {
-				scope = fmt.Sprintf("backup(s) for workload %s", workloadID)
-			}
-			ok("storage %q (%s): %d %s", s.ID, s.Type, count, scope)
-		}
-	}
-	if total == 0 {
-		fail("no backups found on any storage — there is nothing to recovery-test yet")
-		a.reportRunningBackups(ctx, pve, node)
+	fmt.Fprintf(a.out, "  %s %s\n", glyph, f.Title)
+	if f.Detail != "" {
+		fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim, f.Detail))
 	}
 }
 
-func (a *app) doctorWorkload(ctx context.Context, hv core.HypervisorProvider, providerID, id string,
-	ok, warn, fail func(string, ...any)) {
-
-	w, err := hv.GetWorkload(ctx, id)
-	if err != nil {
-		fail("workload %s: %v", id, err)
-		return
-	}
-	ok("workload %s (%s) on %s", w.ID, w.Name, w.Node)
-
-	status, err := hv.GetStatus(ctx, id)
-	switch {
-	case err != nil:
-		warn("cannot read the status of %s: %v", id, err)
-	case status.PowerState != core.PowerStateRunning:
-		warn("workload %s is %s; the guest agent can only be checked while it runs", id, status.PowerState)
-	case !status.AgentReady:
-		warn("no QEMU guest agent responding on %s", id)
-		fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
-			"in-guest checks and address discovery need it: apt install qemu-guest-agent, then enable the agent in the VM options"))
-	default:
-		ok("guest agent responding on %s (%v)", id, status.IPs)
-	}
-
-	bp, _, err := a.backups(providerID)
-	if err != nil {
-		warn("no backup provider available: %v", err)
-		return
-	}
-	backup, err := bp.GetLatestBackup(ctx, id)
-	if err == nil && a.rawAPI {
-		if pve, isPVE := hv.(*proxmox.Provider); isPVE {
-			if w, werr := hv.GetWorkload(ctx, id); werr == nil {
-				if cfg, cerr := pve.BackupConfig(ctx, w.Node, backup.ID); cerr == nil {
-					nets := proxmox.BackupNetworkDevices(cfg)
-					fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
-						fmt.Sprintf("backup carries %d network interface(s): %v", len(nets), nets)))
-					for _, n := range nets {
-						fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim, "  "+n+": "+cfg[n]))
-					}
-				} else {
-					fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow,
-						fmt.Sprintf("cannot read the config stored in the backup: %v", cerr)))
-				}
-			}
+// hasFinding reports whether the diagnostic said something matching text in
+// an area. It is how the extra explanations know when they are wanted.
+func hasFinding(r diag.Report, area, text string) bool {
+	for _, f := range r.Findings {
+		if f.Area == area && strings.Contains(f.Title, text) {
+			return true
 		}
 	}
-	switch {
-	case errors.Is(err, core.ErrNoBackup):
-		fail("workload %s has no backup to restore", id)
-		a.explainMissingBackup(ctx, hv, id)
-	case err != nil:
-		fail("cannot look up backups of %s: %v", id, err)
-	default:
-		ok("latest backup of %s: %s (%s old, %s)", id,
-			backup.CreatedAt.Local().Format("2006-01-02 15:04"), humanAge(backup.Age()), humanBytes(backup.SizeBytes))
+	return false
+}
+
+// doctorDetails prints what only a human staring at a terminal wants: the
+// explanations behind a failure, and under --raw, what Proxmox actually
+// answered.
+func (a *app) doctorDetails(ctx context.Context, hv core.HypervisorProvider,
+	providerID, node, workloadID string, rep diag.Report) {
+
+	// "You have no backups" is worth turning into "your backup is still
+	// running" or "your last backup task failed", both of which are visible
+	// through the API and neither of which is a finding.
+	if hasFinding(rep, diag.AreaStorage, "no backups found") {
+		if pve, ok := hv.(*proxmox.Provider); ok {
+			a.reportRunningBackups(ctx, pve, node)
+		}
+	}
+	if workloadID != "" && hasFinding(rep, diag.AreaWorkload, "no backup to restore") {
+		a.explainMissingBackup(ctx, hv, workloadID)
+	}
+
+	if !a.verbose && !a.rawAPI {
+		return
+	}
+
+	fmt.Fprintf(a.out, "\n%s\n", a.paint(colorDim, "-- diagnostics --"))
+
+	if pve, ok := hv.(*proxmox.Provider); ok {
+		probes := []string{"/storage"}
+		if workloadID != "" {
+			probes = append(probes, "/vms/"+workloadID)
+		}
+		a.doctorPermissions(ctx, pve, probes)
+
+		if storages, err := pve.ListStorages(ctx, node); err == nil {
+			for _, s := range storages {
+				role := "no backup content"
+				if s.HoldsBackups() {
+					role = "holds backups"
+				}
+				state := "active"
+				if !s.Active {
+					state = "inactive"
+				}
+				fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
+					fmt.Sprintf("storage %-16s %-10s %-18s %s", s.ID, s.Type, role, state)))
+			}
+		}
+
+		if a.rawAPI && node != "" {
+			if raw, err := pve.Raw(ctx, "/nodes/"+node+"/network", url.Values{"type": {"bridge"}}); err == nil {
+				fmt.Fprintf(a.out, "      raw type=bridge %s\n", a.paint(colorDim, string(raw)))
+			} else {
+				fmt.Fprintf(a.out, "      raw type=bridge error: %v\n", err)
+			}
+		}
+
+		if a.rawAPI && workloadID != "" {
+			a.reportBackupNICs(ctx, pve, providerID, workloadID)
+		}
+	}
+}
+
+// reportBackupNICs prints the network interfaces stored inside the workload's
+// latest backup.
+//
+// This is the view that caught the multi-NIC defect: a backup carrying a
+// second interface on a production bridge is refused at creation time, and
+// nothing else shows what the backup actually holds before a drill touches
+// it. It is deliberately --raw only: it costs two extra API calls.
+func (a *app) reportBackupNICs(ctx context.Context, pve *proxmox.Provider, providerID, workloadID string) {
+	bp, _, err := a.backups(providerID)
+	if err != nil {
+		return
+	}
+	backup, err := bp.GetLatestBackup(ctx, workloadID)
+	if err != nil || backup == nil {
+		return
+	}
+	w, err := pve.GetWorkload(ctx, workloadID)
+	if err != nil {
+		return
+	}
+
+	cfg, err := pve.BackupConfig(ctx, w.Node, backup.ID)
+	if err != nil {
+		fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow,
+			fmt.Sprintf("cannot read the config stored in the backup: %v", err)))
+		return
+	}
+	nets := proxmox.BackupNetworkDevices(cfg)
+	fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim,
+		fmt.Sprintf("backup carries %d network interface(s): %v", len(nets), nets)))
+	for _, n := range nets {
+		fmt.Fprintf(a.out, "      %s\n", a.paint(colorDim, "  "+n+": "+cfg[n]))
 	}
 }
 
@@ -413,11 +295,6 @@ func (a *app) explainMissingBackup(ctx context.Context, hv core.HypervisorProvid
 			return
 		}
 	}
-}
-
-func isPVEProvider(hv core.HypervisorProvider) bool {
-	_, ok := hv.(*proxmox.Provider)
-	return ok
 }
 
 // doctorPermissions prints what Proxmox says this token can do, which is the
