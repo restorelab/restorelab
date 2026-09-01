@@ -44,8 +44,15 @@ func parseNullTime(s *string) (time.Time, error) {
 	return parseTime(*s)
 }
 
-// encodeJSON renders a value as compact JSON for a text column. A nil value
-// encodes as the empty string, which nullString then turns into SQL NULL.
+// encodeJSON renders a value as compact JSON for a text column. Anything
+// absent encodes as the empty string, which nullString then turns into SQL
+// NULL.
+//
+// The "null" check is not redundant with the nil check above it. Callers pass
+// typed pointers - a *core.Backup, a *core.CheckResult - and a nil pointer
+// wrapped in an interface is not == nil in Go. Without this, a run with no
+// backup stored the four bytes "null" and read back as an empty Backup rather
+// than as no backup at all.
 func encodeJSON(v any) (string, error) {
 	if v == nil {
 		return "", nil
@@ -53,6 +60,9 @@ func encodeJSON(v any) (string, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return "", err
+	}
+	if string(b) == "null" {
+		return "", nil
 	}
 	return string(b), nil
 }

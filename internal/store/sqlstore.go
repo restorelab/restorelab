@@ -3,9 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
-
-	"github.com/restorelab/restorelab/internal/core"
 )
 
 // sqlStore implements Store over database/sql.
@@ -39,29 +36,4 @@ func (s *sqlStore) query(ctx context.Context, q string, args ...any) (*sql.Rows,
 // queryRow runs a single-row SELECT, rebinding placeholders for the dialect.
 func (s *sqlStore) queryRow(ctx context.Context, q string, args ...any) *sql.Row {
 	return s.db.QueryRowContext(ctx, rebind(s.dialect, q), args...)
-}
-
-// errNotImplemented marks the methods tasks 5 to 7 still have to fill in. A
-// grep for it is the check that none survive.
-var errNotImplemented = errors.New("store: not implemented yet")
-
-func (s *sqlStore) CreateRun(context.Context, *core.RecoveryRun, string) error {
-	return errNotImplemented
-}
-func (s *sqlStore) UpdateRun(context.Context, *core.RecoveryRun) error { return errNotImplemented }
-func (s *sqlStore) SaveStep(context.Context, string, int, core.Step) error {
-	return errNotImplemented
-}
-func (s *sqlStore) SaveCheck(context.Context, string, int, core.CheckResult) error {
-	return errNotImplemented
-}
-func (s *sqlStore) AppendEvent(context.Context, string, Event) error { return errNotImplemented }
-func (s *sqlStore) GetRun(context.Context, string) (*core.RecoveryRun, error) {
-	return nil, errNotImplemented
-}
-func (s *sqlStore) ListRuns(context.Context, Filter) ([]RunSummary, error) {
-	return nil, errNotImplemented
-}
-func (s *sqlStore) Events(context.Context, string, int64) ([]Event, error) {
-	return nil, errNotImplemented
 }

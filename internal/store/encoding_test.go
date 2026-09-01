@@ -156,3 +156,19 @@ func TestNowUTCIsUTC(t *testing.T) {
 		t.Fatal("nowUTC must return a UTC instant")
 	}
 }
+
+// A nil pointer wrapped in an interface is not == nil in Go, so encodeJSON
+// has to catch it after marshalling too. Without this, a run with no backup
+// stored "null" and read back as an empty Backup instead of as no backup.
+func TestEncodeJSONOfATypedNilPointerIsEmpty(t *testing.T) {
+	type payload struct{ Field string }
+	var p *payload
+
+	got, err := encodeJSON(p)
+	if err != nil {
+		t.Fatalf("encodeJSON: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("encodeJSON(typed nil) = %q, want the empty string so it lands as SQL NULL", got)
+	}
+}
