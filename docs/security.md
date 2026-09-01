@@ -130,10 +130,23 @@ choices about it are worth stating explicitly:
 
 ### Scopes
 
-A token holds `read`, or it holds `read` and `operate`. `read` covers every
-`GET` route, including the live event stream. `operate` adds the three writes:
-triggering a drill, cancelling one, and destroying a temporary workload that
-was left behind.
+A token holds `read`, and may additionally hold `operate`, `manage`, or both.
+`read` covers every `GET` route, including the live event stream and the plan
+catalogue. `operate` adds the three writes that touch the cluster: triggering
+a drill, cancelling one, and destroying a temporary workload that was left
+behind. `manage` adds the three that touch the catalogue: creating, changing
+and deleting stored plans.
+
+**`operate` and `manage` do not imply each other, in either direction.** That
+separation is the reason `manage` is its own scope rather than more room
+inside `operate`. Triggering a drill and deciding what a drill *is* are
+different powers over different things: one restores backups and destroys
+machines, the other rewrites the definition of what will be restored — and,
+once the scheduler exists, of what will be restored *unattended*. A token
+given to a dashboard so it can launch and cancel should not be able to
+redefine what it launches; a token given to a CI job so it can apply a
+directory of plans from git should not be able to restore anything by itself.
+A token that genuinely needs both says so, explicitly, at creation.
 
 **`read` is the default, and `--operate` has to be asked for.** A read token
 can look at a dashboard. An operate token can make RestoreLab restore backups,
@@ -153,21 +166,28 @@ nothing appears to break during an upgrade — would silently promote every
 dashboard token in the fleet. If one of those tokens is meant to trigger
 drills, issue a new one with `--operate` and revoke the old.
 
+Adding `manage` cost no migration at all, and could not have widened anything
+even if it had: the `scopes` column already existed, nothing writes `manage`
+into a row that did not ask for it, and no scope implies it. An existing
+`operate` token is exactly as powerful the day after the upgrade as the day
+before.
+
 **A refused write is 403, never 401.** Authentication runs first: a request
 with no token, or an unknown one, gets `401` and the same single message every
-failed authentication gets. A request whose token is valid but lacks `operate`
-gets `403`. Collapsing the two would be an operational trap, not a cosmetic
+failed authentication gets. A request whose token is valid but lacks the scope
+the route needs gets `403`. Collapsing the two would be an operational trap, not a cosmetic
 one — `401` tells the caller its credential is broken, and the honest response
 to that is to regenerate the token, revoke the old one, and redeploy, none of
 which fixes anything here. `403` says the token is exactly who it claims to
 be and simply was not granted this, which points at the one action that does
 help.
 
-Scopes are not RBAC and are not sold as such. There is no per-workload
-restriction and no per-provider restriction: an operate token can drill
-anything RestoreLab can see. Finer-grained access control is a roadmap item
-(`v0.4`, with RBAC and OIDC), and until it exists an operate token should be
-scoped by *who holds it*, not by what it can reach.
+Scopes are not RBAC and are not sold as such. **They bound verbs, not
+reach.** There is no per-workload restriction and no per-provider
+restriction: an operate token can drill anything RestoreLab can see, and a
+manage token can rewrite any plan in the catalogue. Finer-grained access
+control is a roadmap item (`v0.4`, with RBAC and OIDC), and until it exists a
+token should be scoped by *who holds it*, not by what it can reach.
 
 ## Destructive-operation guardrails
 

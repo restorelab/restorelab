@@ -10,6 +10,10 @@ restorelab recovery run examples/plans/postgres-prod.yaml
 Everything except `name` and `workload` has a safe default. Unknown fields are
 rejected, so a typo fails the plan instead of silently changing its meaning.
 
+A plan can also be **stored** in RestoreLab's database, which is what lets the
+API trigger it by name and what the scheduler will reference. Storing one is
+not a condition for running it — see [Stored plans](#stored-plans) below.
+
 ## Full reference
 
 ```yaml
@@ -303,6 +307,72 @@ The same applies to anything that reaches outward: a health endpoint that
 calls a payment API or a message broker will fail in isolation for reasons
 that have nothing to do with your backup. Test what the workload *is*, not
 what it can reach.
+
+## Stored plans
+
+A plan file runs directly, and always will:
+
+```bash
+restorelab recovery run examples/plans/postgres-prod.yaml
+```
+
+That path needs no database at all. It is deliberate: a drill must never
+depend on the journal — a locked database or a full disk cannot be allowed to
+stop a recovery test — and a plan under git, applied by a CI job, is a
+perfectly sound way to work.
+
+Storing a plan is how it becomes something *other machines* can name:
+
+```bash
+restorelab plan apply examples/plans/postgres-prod.yaml   # created postgres-prod
+restorelab plan apply examples/plans/postgres-prod.yaml   # updated postgres-prod to v2
+restorelab plan list
+restorelab plan show postgres-prod > postgres-prod.yaml
+restorelab plan delete postgres-prod
+restorelab recovery run --plan postgres-prod
+```
+
+`plan apply` is an upsert **by name**: the name in the document decides
+whether a plan is created or replaced, and each replacement increments the
+plan's version. Several files in one call, because a directory of plans under
+git is the normal case.
+
+`plan validate` is the only one of these that works without a database. It
+parses and validates and stores nothing, which is exactly what a CI wants to
+run before it applies anything, on a machine that has no RestoreLab
+configuration.
+
+`recovery run` takes **either** a file **or** `--plan <name>`, never both. A
+file argument and a stored name are two different plans, and picking one
+silently is how the wrong drill ends up running.
+
+### What is stored, and what a run remembers
+
+The document is stored **verbatim** — comments, key order, the lot. `plan show`
+gives back what was written, not a re-serialised approximation of it.
+
+Each run keeps its own **snapshot** of the plan it actually executed, defaults
+applied, in the `runs` table. The two are different on purpose:
+
+| | Answers |
+| --- | --- |
+| `plans.plan_yaml` | what somebody wrote, and what will run next time |
+| `runs.plan_snapshot` | what actually ran, on that day |
+
+That is why editing a plan never rewrites history, and why deleting one does
+not either. A run keeps its plan's name and its snapshot; only the link goes.
+A drill already in flight is untouched, because the worker executes the
+snapshot taken when the run was queued, never the catalogue row.
+
+### Node, storage and pool are not in the plan
+
+A plan describes a **drill**, not a deployment. Where the temporary workload
+lands — node, storage, resource pool — comes from the configuration of
+whoever executes it, not from the plan. The fields exist in `restore:` as
+overrides for the case where one plan genuinely must pin its placement, but
+leaving them out is the normal thing to do: it is what lets the same plan run
+from a laptop, from `serve`, and from the scheduler without being three
+different files.
 
 ## Writing a good plan
 

@@ -92,15 +92,43 @@ the shared query — never to write a second one.
 
 ## Schema
 
-Five tables. `schema_migrations` tracks what has been applied.
+Six tables. `schema_migrations` tracks what has been applied.
 
 **`runs`** — one row per drill. Beyond the obvious fields it carries
 `plan_snapshot`: the plan **in full**, as it was when the drill started.
 
-That copy is not a convenience. Plans become editable once they live in the
+That copy is not a convenience. Plans are editable now that they live in the
 database, and a run that only referenced its plan would let a report from
 March describe checks that were never performed. The history would lie, on a
 tool whose entire value is that its journal can be trusted.
+
+`plan_id` and `plan_version` sit beside it and answer a different question:
+*where did this run come from*. They are provenance and nothing else — the
+engine never reads them, and an ad-hoc drill has neither. `plan_id` is a
+foreign key with `ON DELETE SET NULL`, so deleting a plan unlinks its runs
+and changes nothing else about them: the name, the snapshot, the timeline,
+the checks and the confidence score are identical before and after. Deleting
+a plan whose drill is in flight is equally harmless, because the worker
+executes the snapshot, never the catalogue row.
+
+**`plans`** — the catalogue. `plan_yaml` holds the document **exactly as it
+was submitted**, bytes included, so exporting a plan gives back what somebody
+wrote, comments and key order intact. `name` is unique and is the human key:
+it is what `plan apply` matches on to decide between creating and updating,
+and what `POST /recovery-runs` names to trigger a drill.
+
+`description`, `workload_id` and `provider_id` are **derived** from the
+document at write time. They exist to list and filter — "which plans cover
+workload 110" must not mean parsing fifty YAML files — and they are rewritten
+on every update, in one place. The text is what carries authority; if the two
+ever disagreed, the text would be right.
+
+`version` starts at 1 and is incremented **in SQL**, not in Go: two writers
+cannot produce the same version whatever each of them read beforehand. There
+is deliberately no table of immutable plan versions. The history of a plan's
+*content* already exists — every run carries the copy it executed — and a
+second table recording the same fact would be a second thing to keep in step
+with the first.
 
 **`run_steps`** and **`run_checks`** — the timeline and the verdicts, keyed by
 `(run_id, seq)` and upserted at that position. A step is written twice, once

@@ -102,6 +102,7 @@ it starts.
 ```
 restorelab token create <name>              mints a read-only token, prints it once
 restorelab token create <name> --operate    ... one that can also trigger drills
+restorelab token create <name> --manage     ... one that can also write the plan catalogue
 restorelab token list                       name, scopes, created, last used, state
 restorelab token revoke <name>
 ```
@@ -140,16 +141,25 @@ to the second.
 
 ## Scopes
 
-A token holds one of two levels of access:
+A token holds one or more levels of access:
 
 | Scope | What it allows |
 | --- | --- |
-| `read` | every `GET` route, including the live event stream |
+| `read` | every `GET` route, including the live event stream and the plan catalogue |
 | `operate` | `read`, plus triggering a drill, cancelling one, and cleaning up a temporary workload |
+| `manage` | `read`, plus creating, changing and deleting stored plans |
 
 `read` is the default and is implied by every token, including an `operate`
 one: an account that could start a drill but not watch it would be a strange
 thing to hand anyone.
+
+**`operate` and `manage` do not imply each other**, in either direction, and
+that is the whole reason `manage` exists as a separate scope rather than as
+more room inside `operate`. Triggering a drill and deciding what a drill *is*
+are two different powers. A token handed to a dashboard so it can launch and
+cancel has no business rewriting the definition of what it launches — and a
+token given to a CI job so it can `plan apply` from a git repository has no
+business restoring backups by itself. A token can hold both; it has to say so.
 
 `--operate` is opt-in because of what it actually is. A token that can `POST
 /recovery-runs` can make RestoreLab restore backups, boot machines and delete
@@ -198,15 +208,25 @@ GET  /api/v1/workloads/{id}/backups        provider
 GET  /api/v1/workloads/{id}/confidence     provider
 GET  /api/v1/providers
 GET  /api/v1/doctor                        provider, workload
+GET  /api/v1/plans                         workload, limit
+GET  /api/v1/plans/{ref}                   format=yaml for the document itself
 
-POST /api/v1/recovery-runs                 operate — queue a drill
-POST /api/v1/recovery-runs/{id}/cancel     operate — stop one
-POST /api/v1/cleanup/{vmid}                operate — destroy a leftover workload
+POST   /api/v1/recovery-runs               operate — queue a drill
+POST   /api/v1/recovery-runs/{id}/cancel   operate — stop one
+POST   /api/v1/cleanup/{vmid}              operate — destroy a leftover workload
+POST   /api/v1/plans                       manage  — store a new plan
+PUT    /api/v1/plans/{ref}                 manage  — replace one, version=N to guard
+DELETE /api/v1/plans/{ref}                 manage  — remove one
 ```
 
 `{id}` on a run accepts a prefix, exactly like `restorelab runs show`: an
 exact match wins, an ambiguous prefix comes back as a 409 rather than a
 guess. That applies to `/cancel` as much as to the reads.
+
+`{ref}` on a plan is a **name first**, then a full id, then a unique id
+prefix. The name wins outright, because it is what a human types and what a
+plan is called everywhere else; an ambiguous id prefix is a 409, never a
+guess.
 
 ### `GET /api/v1/health`
 
@@ -343,14 +363,33 @@ $ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/d
 
 ### `POST /api/v1/recovery-runs`
 
-Queues a drill. Needs the `operate` scope. The body describes the drill in the
-same terms `restorelab recovery test` takes on the command line — the two
-build the same plan through the same code, so a drill triggered over HTTP and
-one triggered from a terminal are the same drill.
+Queues a drill. Needs the `operate` scope. A body either **names a stored
+plan** or **describes a drill**:
+
+```json
+{"plan": "web-tier"}
+```
 
 | Field | Meaning |
 | --- | --- |
-| `workload_id` | **required** — the source workload to recovery-test |
+| `plan` | a stored plan, by name or id. Exclusive of every field below |
+
+Naming a plan is enough on its own: the workload, the provider, the checks and
+the RTO target all come from the plan, so the body says nothing the plan
+already says. The plan is loaded, defaulted and validated inside the request;
+an unknown one is a `404`, and one that no longer parses is a `400` naming the
+field at fault, never a queued row that fails an hour later. Triggering stays
+in `operate` — naming a plan in order to run it does not require the right to
+write one.
+
+The other form describes the drill in the same terms `restorelab recovery
+test` takes on the command line — the two build the same plan through the same
+code, so a drill triggered over HTTP and one triggered from a terminal are the
+same drill.
+
+| Field | Meaning |
+| --- | --- |
+| `workload_id` | **required** in this form — the source workload to recovery-test |
 | `provider` | provider id; the configured default when omitted |
 | `backup` | a specific restore point; the most recent one when omitted |
 | `checks` | shorthand specs: `tcp:22`, `ping`, `dns:name`, `cmd:...`, or an `http(s)://` URL. Defaults to `tcp:22` |
@@ -374,6 +413,30 @@ Location: /api/v1/recovery-runs/94bce70d-36c1-470c-b02f-1fa17b6d7714
 The response is the same shape a run reads back as, so a client that already
 parses `GET /recovery-runs` needs no second parser. `started_at` on a queued
 run is the moment it was queued; it is rewritten when a worker picks it up.
+
+A run queued from a stored plan carries `plan_id` — in this response, in
+every listing afterwards, and in the run's own report, which adds
+`plan_version` so a report can say *which version* of the plan ran. A
+dashboard can therefore group drills by plan without fetching each one, and a
+report read six months later still names the plan revision it was graded
+against. An ad-hoc drill has neither field, and both are simply absent rather
+than empty.
+
+Deleting the plan clears `plan_id` and nothing else: the name, the version
+that ran, the timeline, the checks and the verdict are untouched, because the
+plan a run executed is copied into the run rather than referenced.
+
+**The two forms cannot be mixed.** A body carrying both `plan` and an ad-hoc
+field is a `400` that names the fields in conflict:
+
+```json
+{"type":"https://restorelab.dev/problems/bad-request","title":"That request cannot be served as written","status":400,"detail":"a request either names a plan or describes a drill, not both: drop checks, workload_id, or drop \"plan\""}
+```
+
+Merging them would be convenient and expensive. Two runs of the same plan
+could then differ with nothing to signal it, and "what does this plan do"
+would stop having a single answer. A drill that deviates from a plan is an
+ad-hoc drill, and this endpoint already knows how to make one.
 
 The plan is built and validated **synchronously, inside the request**, before
 any row is written. A body that cannot become a drill — no `workload_id`, an
@@ -477,6 +540,100 @@ with no `worker` is still waiting for one. A `lease_expires_at` in the past
 means the worker holding that run stopped renewing and reconciliation has not
 swept it yet — which is exactly the moment an operator wants to be looking at
 this endpoint.
+
+## The plan catalogue
+
+A stored plan is what `POST /recovery-runs` triggers by name and what the
+scheduler will reference. Storing one is not a condition for running it: a
+plan file on disk still runs directly with `restorelab recovery run <file>`,
+with no database involved. Storing it is how it becomes something other
+machines can name.
+
+### `GET /api/v1/plans`
+
+The catalogue, ordered by name. `read` is enough.
+
+```
+$ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/plans
+{"items":[{"id":"2f1a4c76-...","name":"web-tier","description":"nightly drill","workload_id":"110","provider_id":"proxmox-main","version":3,"created_at":"2026-08-14T09:12:00Z","updated_at":"2026-09-01T07:41:00Z"}]}
+```
+
+`?workload=110` narrows it to one workload's plans. The listing carries **no
+documents**: a catalogue of fifty plans must not ship fifty YAML files to draw
+a table. There is no cursor either — the catalogue is dozens of rows on a
+stable ordering, and a keyset over that would be ceremony. `limit` exists so a
+listing is never unbounded.
+
+### `GET /api/v1/plans/{ref}`
+
+One plan, document included.
+
+```
+$ curl -H "Authorization: Bearer rl_..." \
+    https://restorelab.example.com/api/v1/plans/web-tier?format=yaml > web-tier.yaml
+```
+
+`format=yaml` returns the document naked, as `application/yaml`, so a plan can
+be written straight to a file without pulling a string out of a JSON object
+and unescaping it. Without it, the JSON carries the document in `yaml`.
+
+**The document comes back exactly as it was submitted** — comments, key order,
+everything. A plan exported and re-imported is the same bytes. What each run
+actually executed is kept separately, in that run's snapshot, so there is no
+information to gain from canonicalising the text and a comment to lose.
+
+### `POST /api/v1/plans`
+
+Stores a new plan. Needs `manage`.
+
+**The body is the plan document itself**, not an envelope around it. `yaml.v3`
+reads JSON as YAML, so a dashboard can send JSON without this project
+inventing and maintaining a second schema for the same thing.
+
+```
+$ curl -i -X POST \
+    -H "Authorization: Bearer rl_..." \
+    -H "Content-Type: application/yaml" \
+    --data-binary @web-tier.yaml \
+    https://restorelab.example.com/api/v1/plans
+HTTP/1.1 201 Created
+Location: /api/v1/plans/2f1a4c76-0b1e-4d2a-9a51-1d0f8c2b3e44
+```
+
+The document is parsed, defaulted and validated before anything is written; an
+invalid one is a `400` carrying **every** problem `Validate` found, not just
+the first. A name another plan already holds is a `409`: creating means
+creating, and a `POST` must never quietly replace somebody else's plan.
+
+### `PUT /api/v1/plans/{ref}`
+
+Replaces a plan and increments its version. Needs `manage`.
+
+```
+$ curl -i -X PUT -H "Authorization: Bearer rl_..." \
+    --data-binary @web-tier.yaml \
+    "https://restorelab.example.com/api/v1/plans/web-tier?version=3"
+```
+
+`?version=N` is an optional guard: if the plan is no longer at that version,
+somebody wrote in between and the answer is a `409` rather than an overwrite.
+Omit it to overwrite whatever is there — which is what a CI applying a
+directory of plans wants, since it has no idea what the current version is.
+
+A document naming a *different* plan than the URL is a `409`, and nothing is
+written. Renaming a plan is deleting one and creating another; it is worth
+saying out loud rather than doing quietly behind a `PUT`.
+
+### `DELETE /api/v1/plans/{ref}`
+
+Removes a plan. Needs `manage`. Answers `204`.
+
+**Its runs are not touched.** They keep their name and the copy of the plan
+they actually executed, so their reports, their timelines and the confidence
+score read identically before and after — only the `plan_id` link goes. A
+drill in flight is unaffected too: the worker executes the snapshot taken when
+the run was queued, never the catalogue row, so deleting a plan cannot disturb
+an execution or rewrite a report.
 
 ## Following a drill live
 
@@ -599,11 +756,18 @@ Every error is `application/problem+json` ([RFC 9457](https://www.rfc-editor.org
 | Situation | Status |
 | --- | --- |
 | Your API token is missing or invalid | 401 |
-| **Your token is valid but lacks the `operate` scope** | **403** |
+| **Your token is valid but lacks the `operate` or `manage` scope** | **403** |
 | The run id prefix matches nothing | 404 |
 | The run id prefix is ambiguous | 409 |
 | A query parameter, or a trigger body, is malformed | 400 |
 | The workload already has a drill queued or running | 409 |
+| A plan reference matches nothing | 404 |
+| A plan id prefix is ambiguous | 409 |
+| A plan document does not parse, or `Validate` rejects it | 400 |
+| A `POST /plans` uses a name another plan already holds | 409 |
+| A `PUT /plans` carries a `version` that is no longer current | 409 |
+| A `PUT /plans` document names a different plan than the URL | 409 |
+| A trigger body carries both `plan` and an ad-hoc field | 400 |
 | The run you tried to cancel has already settled | 409 |
 | A cleanup was asked for outside the reserved temporary range | 400 |
 | **Proxmox refuses RestoreLab's own provider token** | **502** |
@@ -618,7 +782,11 @@ against this API. Answering 401 when Proxmox is the one that said no would
 send you hunting through your own token for a problem that lives entirely on
 RestoreLab's side of the connection, which is the classic way to burn an
 afternoon on nothing. The 403 row is the same principle applied to
-authorisation: your token is fine, it simply does not carry `operate`.
+authorisation: your token is fine, it simply does not carry the scope.
+
+The same reasoning shapes the plan rows. A `404` on a plan says "No such
+plan", not "No such recovery run": the two are different tables, and pointing
+a reader at the wrong one costs the same afternoon.
 
 No error response carries a secret. Every `detail` passes through the same
 redaction the CLI uses before it is written: no API token, no sealed
