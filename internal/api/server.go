@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net/http"
 	"sync"
 	"time"
@@ -113,6 +114,13 @@ type Options struct {
 	// way the catalogue does, rather than pretending a login failed.
 	Sessions SessionStore
 
+	// UI is the compiled dashboard, or nil for an API-only deployment.
+	//
+	// An fs.FS rather than a concrete type: this package serves what it is
+	// handed and never learns where the bytes came from. internal/cli passes
+	// ui.FS(); the tests pass an fstest.MapFS.
+	UI fs.FS
+
 	// Weights tunes the confidence score. The zero value means
 	// report.DefaultWeights().
 	Weights report.ConfidenceWeights
@@ -131,6 +139,7 @@ type Server struct {
 	providers ProviderSet
 	plans     Plans
 	sessions  SessionStore
+	ui        fs.FS
 	cfg       *config.Config
 	weights   report.ConfidenceWeights
 	now       func() time.Time
@@ -161,6 +170,7 @@ func New(opts Options) *Server {
 		providers: opts.Providers,
 		plans:     opts.Plans,
 		sessions:  opts.Sessions,
+		ui:        opts.UI,
 		cfg:       opts.Config,
 		weights:   opts.Weights,
 		now:       opts.Now,
@@ -277,10 +287,11 @@ func (s *Server) routes() *http.ServeMux {
 	mux.Handle("POST /api/v1/recovery-runs/{id}/cancel", s.requireScope(store.ScopeOperate, s.handleCancelRun))
 	mux.Handle("POST /api/v1/cleanup/{vmid}", s.requireScope(store.ScopeOperate, s.handleCleanup))
 
-	// Anything else: a problem document, not net/http's plain-text 404. A
-	// client that parses problem+json must not have to special-case the one
-	// response that is not.
-	mux.HandleFunc("/", s.handleUnknown)
+	// Anything else: the dashboard, or - for a path under /api/ that matched
+	// no route, and for an API-only deployment - a problem document, not
+	// net/http's plain-text 404. A client that parses problem+json must not
+	// have to special-case the one response that is not.
+	mux.HandleFunc("/", s.handleRoot)
 	return mux
 }
 
