@@ -14,6 +14,7 @@ import (
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/report"
 	"github.com/restorelab/restorelab/internal/store"
+	"github.com/restorelab/restorelab/internal/ui"
 	"github.com/restorelab/restorelab/internal/worker"
 )
 
@@ -190,20 +191,17 @@ func (a *app) serve(ctx context.Context, opts serveOptions) error {
 		return nil
 	}
 
-	srv := api.New(api.Options{
-		History:   history,
-		Tokens:    history,
-		Plans:     history,
-		Providers: provs,
-		Config:    cfg,
-		Weights:   report.DefaultWeights(),
-	})
+	srv := api.New(serveAPIOptions(history, cfg, provs))
 
 	fmt.Fprintf(a.out, "%s listening on http://%s/api/v1\n", a.ok(), opts.listen)
 	fmt.Fprintf(a.out, "  history: %s\n", history.Describe())
 	if opts.noWorker {
 		fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
 			"no worker here: queued drills wait for the worker you said runs elsewhere"))
+	}
+	if !ui.Built() {
+		fmt.Fprintf(a.out, "  %s\n", a.paint(colorDim,
+			"no dashboard in this binary: the API answers, / explains how to build one"))
 	}
 	if isLoopbackAddr(opts.listen) {
 		fmt.Fprintf(a.out, "  %s\n", a.paint(colorDim,
@@ -213,6 +211,25 @@ func (a *app) serve(ctx context.Context, opts serveOptions) error {
 	return api.Serve(ctx, opts.listen, srv, func(format string, args ...any) {
 		fmt.Fprintf(a.err, format+"\n", args...)
 	})
+}
+
+// serveAPIOptions assembles what the HTTP server needs.
+//
+// It is a function rather than a literal inline so a test can read it. A
+// dependency left out of api.Options does not fail a build and does not fail
+// a handler: it answers 503 forever, and every test that never asked stays
+// green. That happened once already, to the whole plan catalogue.
+func serveAPIOptions(history store.Store, cfg *config.Config, provs api.ProviderSet) api.Options {
+	return api.Options{
+		History:   history,
+		Tokens:    history,
+		Sessions:  history,
+		Plans:     history,
+		Providers: provs,
+		Config:    cfg,
+		Weights:   report.DefaultWeights(),
+		UI:        ui.FS(),
+	}
 }
 
 // isLoopbackAddr reports whether addr binds to loopback only.

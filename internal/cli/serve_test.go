@@ -108,6 +108,38 @@ func TestServeWorkerOnlyNeedsNoAcknowledgement(t *testing.T) {
 	}
 }
 
+// The e2e harness of B3 shipped five routes that answered ErrNoHistory in
+// every test, with nothing to signal it: a nil-safe Options makes a test
+// green and wrong. This test reads the wiring itself.
+func TestServeWiresSessionsAndUI(t *testing.T) {
+	// store.Noop is enough: the assertion is that the field is not nil, not
+	// that the store behaves. A real store would test the store, not the
+	// wiring.
+	opts := serveAPIOptions(store.Noop{}, &config.Config{}, &cliProviders{})
+
+	if opts.Sessions == nil {
+		t.Error("Options.Sessions is nil: every login would answer 503")
+	}
+	if opts.UI == nil {
+		t.Error("Options.UI is nil: serve would answer 404 on /")
+	}
+	if opts.Plans == nil {
+		t.Error("Options.Plans is nil: the catalogue routes would answer 503")
+	}
+	if opts.History == nil {
+		t.Error("Options.History is nil: every listing would answer 503")
+	}
+	if opts.Tokens == nil {
+		t.Error("Options.Tokens is nil: every authenticated request would fail")
+	}
+	if opts.Providers == nil {
+		t.Error("Options.Providers is nil: the provider routes would answer 503")
+	}
+	if opts.Config == nil {
+		t.Error("Options.Config is nil")
+	}
+}
+
 // --- tokens ------------------------------------------------------------------
 
 func TestTokenCreateOperateGrantsOperate(t *testing.T) {
