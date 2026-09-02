@@ -58,11 +58,12 @@ whoever is comfortable in a terminal — so the goal is one binary, one command,
 and a browser that sets itself up and runs everything from there. The command
 line keeps every capability; it is what automation drives.
 
-The dashboard reads today: it shows what is running, what has run, what is
-protected and whether the cluster is configured correctly, and a drill's
-phases fill in live while it happens. Starting and cancelling drills from the
-browser comes next, then the first-run setup that removes the install
-commands below.
+The dashboard runs the tool today. It shows what is running, what has run,
+what is protected and whether the cluster is configured correctly, with a
+drill's phases filling in live while it happens - and it starts drills,
+cancels them, destroys what they leave behind, and writes the plan catalogue
+with the binary itself validating each document as you type. What comes next
+is the first-run setup that removes the install commands below.
 
 Two things in the list below are implemented and unit-tested but have never
 run against real infrastructure, because the cluster this was built on has
@@ -88,8 +89,9 @@ been driven against a live Proxmox VE 9 cluster.
 | Triggering and cancelling drills over HTTP, worker, queue, live event stream | done |
 | Recovery plans stored in the database, edited over HTTP or with `plan` | done |
 | Browser session cookie, so a dashboard can authenticate and read the event stream | done |
-| Web dashboard, served from the binary: overview, history, live drill, workloads, diagnostics | done, read-only |
-| Launching and cancelling drills from the browser, editing the plan catalogue there | next |
+| Web dashboard, served from the binary: overview, history, live drill, workloads, diagnostics | done |
+| Launching and cancelling drills from the browser, and destroying what they leave behind | done |
+| Writing the plan catalogue in the browser, validated by the binary as you type | done |
 | First-run setup in the browser, replacing the install commands | next |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
 | Remote probes, RBAC, OIDC | planned |

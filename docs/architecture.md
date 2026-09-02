@@ -232,15 +232,31 @@ editor. The confidence score and any dashboard need a history to read before
 anything else can be built on them, and a dashboard that can only watch drills
 it cannot start is half a product.
 
-The interface is being built in four slices: **C1** the server half (done),
-**C2** the read-only interface (done), **C3** the write paths, **C4** the
-first-run setup.
+The interface is being built in five slices: **C1** the server half (done),
+**C2** the read-only interface (done), **C3** the write paths (done),
+**C3b** the plan catalogue (done), **C4** the first-run setup.
 
-C2 is what a browser now shows: an overview that says whether anything needs
-attention, the drill history, a drill's phases filling in live over the event
-stream, the workload inventory with its confidence scores, and the cluster
-diagnostic. It reads; it starts nothing. Every screen is served by routes that
-already existed — C2 added no HTTP surface at all.
+C2 is what a browser first showed: an overview that says whether anything
+needs attention, the drill history, a drill's phases filling in live over the
+event stream, the workload inventory with its confidence scores, and the
+cluster diagnostic.
+
+C3 gave those screens their verbs — start a drill, cancel one in flight,
+destroy what a drill left behind — and C3b added the catalogue, where a plan
+is written in the browser with the binary validating each document as it is
+typed. Neither added a single HTTP route: everything they drive existed
+already, and the interface only had to grow the buttons.
+
+C3b was split out of C3 rather than planned from the start. An editor with
+live validation, versioned saves and a conflict path weighs about as much as
+the three buttons put together, and the day-one journey is unblocked by the
+buttons alone.
+
+What C3 did add is the guard that stops the two halves drifting: the Go tests
+capture the real body of every route the dashboard reads, and the TypeScript
+types are checked against those captures. It is one-directional — it catches a
+key the server renamed or dropped, not one it added — and that limit is
+written where somebody will read it.
 
 The compiled interface is embedded in the binary, but its absence is not a
 failure: a build made without the front-end toolchain still runs, and `/`
