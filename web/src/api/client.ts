@@ -65,7 +65,14 @@ async function toProblem(res: Response): Promise<Problem> {
   }
 }
 
-async function request<T>(path: string, init: RequestInit): Promise<T> {
+/**
+ * Sends, and raises the one error shape on failure.
+ *
+ * request() and apiSendWithStatus() are both built on this, so there is one
+ * place that turns a 401 into an UnauthorizedError and no second copy of the
+ * problem+json handling to keep in step.
+ */
+async function send(path: string, init: RequestInit): Promise<Response> {
   let res: Response
   try {
     res = await fetch(BASE + path, {
@@ -89,11 +96,19 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
       ? new UnauthorizedError(problem)
       : new ApiError(problem)
   }
+  return res
+}
 
+/** Reads a successful response's body, or undefined when it has none. */
+async function decode<T>(res: Response): Promise<T> {
   if (res.status === 204 || res.headers.get("content-length") === "0") {
     return undefined as T
   }
   return (await res.json()) as T
+}
+
+async function request<T>(path: string, init: RequestInit): Promise<T> {
+  return decode<T>(await send(path, init))
 }
 
 /** GET a JSON resource. */
@@ -122,6 +137,32 @@ export function apiSend<T>(
           body: JSON.stringify(body),
         }),
   })
+}
+
+/**
+ * POST or DELETE, keeping the status.
+ *
+ * For the one route whose two successes are different states of the world:
+ * cancelling a queued drill ends it (200), while cancelling a running one only
+ * asks (202) and a worker is still tearing the temporary workload down. A
+ * caller that reported "done" on a 202 would announce a machine gone while it
+ * still exists.
+ */
+export async function apiSendWithStatus<T>(
+  method: "POST" | "DELETE",
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; data: T }> {
+  const res = await send(path, {
+    method,
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+  })
+  return { status: res.status, data: await decode<T>(res) }
 }
 
 /** The URL of a run's HTML report, for a download link. */

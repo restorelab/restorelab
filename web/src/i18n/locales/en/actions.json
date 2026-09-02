@@ -1,0 +1,35 @@
+{
+  "dismiss": "Cancel",
+  "working": "Working…",
+  "readOnly": "This session can read but not act.",
+  "trigger": {
+    "button": "Run a drill",
+    "title": "Run a drill on {{name}}",
+    "willRestore": "Restores {{backup}} into an isolated network, boots it, checks it, then destroys it.",
+    "willRestoreLatest": "Restores the most recent backup into an isolated network, boots it, checks it, then destroys it.",
+    "noBackup": "No backup has been taken of this workload yet, so there is nothing to restore.",
+    "options": "Options",
+    "submit": "Start",
+    "alreadyRunning": "A drill is already running on this workload.",
+    "viewRunning": "View it"
+  },
+  "cancel": {
+    "button": "Cancel drill",
+    "title": "Stop this drill?",
+    "willDestroy": "The drill stops. The temporary workload {{id}} on {{node}} is destroyed on the way out.",
+    "nothingYet": "Nothing has been created on the cluster yet.",
+    "stopped": "The drill is over.",
+    "stopping": "The worker has been told. It is still tearing the temporary workload down.",
+    "submit": "Stop it"
+  },
+  "cleanup": {
+    "button": "Destroy",
+    "banner_one": "{{count}} temporary workload is still on the cluster.",
+    "banner_other": "{{count}} temporary workloads are still on the cluster.",
+    "title": "Destroy {{id}}?",
+    "willDestroy": "{{id}} {{name}} on {{node}}. This cannot be undone.",
+    "fromRun": "Left behind by drill {{run}}.",
+    "fromNoRun": "No drill claims it.",
+    "submit": "Destroy"
+  }
+}
