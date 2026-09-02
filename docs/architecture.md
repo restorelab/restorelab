@@ -234,7 +234,7 @@ it cannot start is half a product.
 
 The interface is being built in five slices: **C1** the server half (done),
 **C2** the read-only interface (done), **C3** the write paths (done),
-**C3b** the plan catalogue (done), **C4** the first-run setup.
+**C3b** the plan catalogue (done), **C4** the first-run setup (done).
 
 C2 is what a browser first showed: an overview that says whether anything
 needs attention, the drill history, a drill's phases filling in live over the
@@ -263,16 +263,35 @@ failure: a build made without the front-end toolchain still runs, and `/`
 explains itself rather than 404ing. That is what lets `go build ./...` work
 with no Node installed.
 
-C4 is what turns installation into one command. Started with no
-configuration, `serve` prints a URL carrying a single-use setup token, and
-the browser walks through connecting a cluster, creating the isolated bridge
-and minting the first API token — the work `init`, `connect`, `network
-create` and `token create` do today.
+C4 turned installation into one command. With no configuration, `serve`
+starts anyway and prints a URL carrying a single-use setup token; the browser
+collects the cluster, the administrator's password and the storage, and the
+server does in one call what `init`, `connect`, `network create` and
+`token create` did in five.
 
-That endpoint accepts a Proxmox administrator's password, so two things hold
-it in place. It exists only until a configuration does, and reaching it needs
-the token printed on the console of the machine running the server: the
-person setting RestoreLab up is at that console, and nobody else is. The
-master key stays where it is — behind the same interface `ProviderSet` uses,
-implemented by the CLI, so `internal/api` still imports neither `crypto` nor
-`internal/providers`.
+That endpoint accepts a Proxmox administrator's password, so four things hold
+it in place: the token is spent on first use whatever the outcome, the
+request is refused in clear off loopback by the same function `POST /session`
+uses, the routes are not mounted at all once a cluster is connected, and the
+master key stays behind the interface the CLI implements — `internal/api`
+imports neither `crypto` nor `internal/providers`, and a test now reads the
+package's own imports and fails if either appears.
+
+The setup server does not become the real one. A `Server`'s dependencies are
+built once in `api.New` and never rewritten, which is what makes it simple to
+reason about; making them mutable for something that happens once in the life
+of an installation would be a permanent cost for a momentary convenience. So
+`serve` hands the port over instead: the wizard's success closes a channel,
+the setup server is torn down, and the configured one opens on the same
+address. The browser never reloads — it holds the API token it was handed,
+polls until the new server answers, and exchanges it for a session.
+
+Two things C4 found are worth keeping. Provisioning writes the configuration
+and the master key *before* it logs in to Proxmox, because a token must have
+somewhere to be sealed; a wrong password therefore leaves a configuration with
+no providers, and treating that as "configured" locked somebody out of the
+only screen that could fix their typo. "Configured" means there is a provider,
+not that there is a file. And `connect` and the wizard share one provisioning
+sequence rather than two: the order in it is load-bearing — the provider is
+stored before the token is verified, because Proxmox reveals a secret exactly
+once — and two copies would have drifted on somebody's cluster.

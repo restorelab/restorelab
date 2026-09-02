@@ -327,6 +327,55 @@ internet, or because a policy demands one — the right place for it is the
 reverse proxy already terminating TLS, where it can be tuned and disabled
 without a redeploy.
 
+## The first-run setup token
+
+Installing RestoreLab from a browser means one endpoint accepts a Proxmox
+administrator's password. That is worth being precise about.
+
+`restorelab serve` with no configuration starts in setup mode: it exposes
+`/api/v1/health`, the dashboard's files, and two setup routes. Every other
+route answers 503 — there is no database and no provider to answer with, and
+saying so is better than asking for a token that could not exist yet.
+
+The setup routes are guarded four ways, and the fourth is the strongest:
+
+1. **A one-time token, printed on the console.** It is generated from
+   `crypto/rand` at startup, held in the process — there is no database to
+   keep it in — and compared in constant time. The person installing is the
+   one sitting at that console; nobody else is.
+
+2. **Spent on first use, whatever the outcome.** A token still live after a
+   wrong password would be a secret printed on a console and valid until the
+   process ends, which is not what one-time means. A failed attempt therefore
+   costs a restart to get a new token, and that is the intended trade.
+
+3. **Refused in clear off loopback.** The same rule `POST /session` applies,
+   through the same function: without TLS, and to anything but this machine,
+   the request is refused naming TLS before the body is read. An
+   administrator password does not travel in clear to another host.
+
+4. **Gone once a cluster is connected.** The routes are not mounted at all on
+   a configured server — not 403, absent. This is an absence rather than an
+   authorisation check, which is a stronger thing to be: there is no code path
+   to get wrong.
+
+The administrator password is used in memory to create the service account
+and is never stored, never logged, and never echoed back — refusals are
+scrubbed on their way out, and a test asserts the password does not appear in
+the response.
+
+The structural guarantee behind that is the package boundary. `internal/api`
+imports neither `internal/crypto` nor `internal/providers`; provisioning
+happens on the other side of an interface the CLI implements, so a handler
+cannot reach the master key or a sealed secret even by accident. A test reads
+the package's own import statements and fails if either appears.
+
+The token the wizard leaves you with is an ordinary API token named
+`dashboard`, with the read, operate and manage scopes — the person who just
+installed RestoreLab. It is returned exactly once, to the page that asked, and
+exchanged immediately for a session cookie. Revoke it like any other:
+`restorelab token revoke dashboard`.
+
 ## Destructive-operation guardrails
 
 RestoreLab only ever destroys what it created. Concretely:

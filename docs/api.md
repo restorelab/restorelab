@@ -523,6 +523,38 @@ Its restore points, from the configured backup provider. A workload with no
 backup at all comes back as an empty `items` list, not a 404 — the workload
 exists, and "you have nothing to restore" is the honest answer.
 
+### `GET /api/v1/setup` and `POST /api/v1/setup`
+
+**These two exist only on a server that has no cluster connected.** They are
+not mounted otherwise — a configured RestoreLab answers 404, not 403, because
+the absence of a route is a stronger guarantee than a check on one.
+
+`GET` says that installing is possible and needs no token: somebody who
+opened the bare address has to be told what to paste, and the answer reveals
+nothing they could not learn from the port being open.
+
+`POST` provisions the cluster. It needs the one-time token `serve` printed on
+its console, as `Authorization: Bearer rls_...`, and that token is spent by
+this request whether it succeeds or fails. Over plain HTTP to anything but
+this machine it is refused with a 400 naming TLS, before the body is read.
+
+```
+$ curl -X POST -H "Authorization: Bearer rls_..." -H "content-type: application/json" \
+    -d '{"endpoint":"https://pve.example.com:8006","admin_user":"root@pam",
+         "admin_password":"...","storages":["local-zfs"],
+         "create_bridge":true,"apply_bridge":true}' \
+    http://127.0.0.1:8080/api/v1/setup
+```
+
+The answer carries the provisioning steps in the order they were performed,
+the provider it stored, the bridge it created, and — exactly once — an API
+token named `dashboard` with the read, operate and manage scopes. A refusal
+is a `problem+json` carrying the same `steps`, so a caller can show how far it
+got; every step is idempotent, so running it again is safe.
+
+The administrator password is used in memory and never stored, logged or
+echoed back. See `docs/security.md`, "The first-run setup token".
+
 ### `GET /api/v1/providers`
 
 The configured providers, with every secret already stripped — no sealed

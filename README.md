@@ -92,7 +92,7 @@ been driven against a live Proxmox VE 9 cluster.
 | Web dashboard, served from the binary: overview, history, live drill, workloads, diagnostics | done |
 | Launching and cancelling drills from the browser, and destroying what they leave behind | done |
 | Writing the plan catalogue in the browser, validated by the binary as you type | done |
-| First-run setup in the browser, replacing the install commands | next |
+| First-run setup in the browser, replacing the install commands | done |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
 | Remote probes, RBAC, OIDC | planned |
 
@@ -102,31 +102,57 @@ been driven against a live Proxmox VE 9 cluster.
 
 ```bash
 go build -o bin/restorelab ./cmd/restorelab
+bin/restorelab serve
+```
 
-# Connect your cluster. RestoreLab asks for an administrator's password once,
-# uses it in memory to create its own least-privilege service account, and
-# throws it away. Only the resulting token is stored, sealed.
-bin/restorelab connect https://pve.example.com:8006
+That is the whole of it. With nothing configured, `serve` starts anyway and
+prints an address carrying a one-time setup token:
+
+```text
+! RestoreLab is not configured yet.
+  Open this address to set it up. The token is printed once, and used once:
+
+      http://127.0.0.1:8080/setup?token=rls_...
+```
+
+Open it and the browser asks for your cluster's address, an administrator's
+password, and the storage drills restore onto. RestoreLab uses that password
+once, in memory, to create its own least-privilege service account, then
+throws it away — only the resulting token is stored, sealed with a master key
+it generates for you. It offers to create the isolated bridge on the same
+screen, saying plainly that no existing interface is touched and that the
+node's network configuration will be reloaded.
+
+When it finishes, the server restarts itself and the page you are already on
+opens your session. You land on the dashboard, connected, without going back
+to the terminal.
+
+The token is printed on the console of the machine running the server,
+because the person installing is the one sitting at it. It is spent by the
+first request that uses it, whether that request succeeds or fails, and the
+setup page stops existing entirely the moment a cluster is connected.
+
+A binary built without the front-end toolchain has no interface compiled in
+and says so instead of 404ing; `make ui` is what compiles it.
+
+### The same thing from a terminal
+
+Every capability stays on the command line — it is what automation drives:
+
+```bash
+# Connect your cluster. Same password handling, same service account.
+bin/restorelab connect https://pve.example.com:8006 --storage local-zfs
 
 # see what can be recovery-tested
 bin/restorelab workloads list --backups
 
 # run a drill on VM 101, from its latest backup
 bin/restorelab recovery test 101
+
+# mint a token for the dashboard, then serve
+bin/restorelab token create dashboard --operate
+bin/restorelab serve
 ```
-
-Then watch it from a browser. Mint a read-only token, start the server, and
-open it:
-
-```bash
-bin/restorelab token create dashboard   # read-only unless --operate or --manage
-bin/restorelab serve                    # binds 127.0.0.1:8080
-```
-
-Open <http://127.0.0.1:8080>, paste the token once, and the session cookie
-keeps you signed in for twelve hours. A binary built without the front-end
-toolchain has no interface compiled in and says so on that page instead of
-404ing; `make ui` is what compiles it.
 
 Start read-only if you would rather look before touching anything —
 `connect --read-only` produces a token that cannot create or destroy, and is
