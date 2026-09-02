@@ -16,6 +16,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"io"
 	"net/http"
@@ -544,6 +545,26 @@ func fixtureCases() []fixtureCase {
 			return recorded(t, send(s, http.MethodPut, manageSecret,
 				"/api/v1/plans/web-tier?version=1", fixturePlanYAML),
 				http.StatusConflict)
+		}},
+
+		{"setup-result", func(t *testing.T) []byte {
+			s := setupServer(t, &fakeSetup{result: okResult()})
+			return recorded(t, postSetup(s, setupSecret, validSetupBody), http.StatusOK)
+		}},
+
+		{"setup-failed", func(t *testing.T) []byte {
+			// The refusal carries the steps already performed: that is what
+			// lets the wizard show partial progress instead of a dead end,
+			// and every one of those steps is idempotent so running it again
+			// is safe.
+			s := setupServer(t, &fakeSetup{
+				result: &SetupResult{Steps: []SetupStep{
+					{Description: "create role RestoreLabDrill", Status: "created"},
+					{Description: "create user restorelab@pve", Status: "failed"},
+				}},
+				err: errors.New("proxmox: create user: 403 Permission check failed"),
+			})
+			return recorded(t, postSetup(s, setupSecret, validSetupBody), http.StatusBadGateway)
 		}},
 
 		{"problem-401", func(t *testing.T) []byte {

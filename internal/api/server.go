@@ -121,6 +121,15 @@ type Options struct {
 	// way the catalogue does, rather than pretending a login failed.
 	Sessions SessionStore
 
+	// Setup drives first-run provisioning. Nil means a server that has no
+	// business offering to install anything - which is every server but the
+	// one `serve` builds when it finds no configuration.
+	Setup Setup
+
+	// SetupToken is the one-time secret printed on the console of the machine
+	// running `serve`. Empty means no setup request is ever accepted.
+	SetupToken string
+
 	// UI is the compiled dashboard, or nil for an API-only deployment.
 	//
 	// An fs.FS rather than a concrete type: this package serves what it is
@@ -155,12 +164,23 @@ type Server struct {
 	plans     Plans
 	sessions  SessionStore
 	ui        fs.FS
-	cfg       *config.Config
-	weights   report.ConfidenceWeights
-	now       func() time.Time
-	newID     func() string
-	touch     *touchThrottle
-	mux       *http.ServeMux
+
+	// The first-run half. setupToken is cleared by the request that spends
+	// it, under setupMu; unconfigured is decided once, in New, and read by
+	// every route afterwards.
+	setup        Setup
+	setupToken   string
+	setupMu      sync.Mutex
+	unconfigured bool
+	setupDoneC   chan struct{}
+	setupDone    sync.Once
+
+	cfg     *config.Config
+	weights report.ConfidenceWeights
+	now     func() time.Time
+	newID   func() string
+	touch   *touchThrottle
+	mux     *http.ServeMux
 
 	// The event stream's rhythm. Fields rather than the constants they are
 	// built from so that a test can drive the loop instead of waiting a real
@@ -187,10 +207,14 @@ func New(opts Options) *Server {
 		plans:     opts.Plans,
 		sessions:  opts.Sessions,
 		ui:        opts.UI,
-		cfg:       opts.Config,
-		weights:   opts.Weights,
-		now:       opts.Now,
-		newID:     opts.NewID,
+		setup:     opts.Setup,
+
+		setupToken: opts.SetupToken,
+		setupDoneC: make(chan struct{}),
+		cfg:        opts.Config,
+		weights:    opts.Weights,
+		now:        opts.Now,
+		newID:      opts.NewID,
 
 		ssePoll:      ssePoll,
 		sseHeartbeat: sseHeartbeat,
@@ -215,6 +239,12 @@ func New(opts Options) *Server {
 	if s.sessions == nil {
 		s.sessions = store.Noop{}
 	}
+	// A server in setup mode has no database and no providers: it was built
+	// before there was a configuration to build them from. Every route but
+	// health, the dashboard and setup answers 503 rather than dereferencing
+	// what it does not have.
+	s.unconfigured = s.setup != nil && !s.setup.Configured()
+
 	if s.weights == (report.ConfidenceWeights{}) {
 		s.weights = report.DefaultWeights()
 	}
@@ -265,6 +295,14 @@ func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
+
+	// Mounted only while there is nothing configured. A server that has a
+	// cluster does not offer to install one, and it does not answer 403
+	// either: the routes are not there.
+	if s.unconfigured {
+		mux.HandleFunc("GET /api/v1/setup", s.handleSetupState)
+		mux.HandleFunc("POST /api/v1/setup", s.handleSetup)
+	}
 
 	mux.Handle("GET /api/v1/recovery-runs", s.authed(s.handleListRuns))
 	mux.Handle("GET /api/v1/recovery-runs/{id}", s.authed(s.handleGetRun))

@@ -101,6 +101,19 @@ func (s *Server) authed(h http.HandlerFunc) http.Handler {
 // caller ends up regenerating a token that was never the problem.
 func (s *Server) requireScope(scope string, h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A server in setup mode was built before there was a configuration
+		// to build a database or a provider from, so this route has nothing
+		// to answer with. It says so rather than dereferencing what it does
+		// not have - and it says so *before* authenticating, because asking
+		// for a token here would send somebody to create one on a deployment
+		// with no database to create it in.
+		if s.unconfigured {
+			writeProblem(w, r, newProblem("not-configured", "This RestoreLab is not configured yet",
+				http.StatusServiceUnavailable,
+				"no cluster is connected: open the setup page this server printed on its console"))
+			return
+		}
+
 		tok, sess, ok := s.authenticate(w, r)
 		if !ok {
 			return
