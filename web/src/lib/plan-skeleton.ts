@@ -20,14 +20,21 @@ export function defaultProviderID(providers: Provider[]): string | undefined {
  * the dashboard already had, the provider from GET /providers, and everything
  * else is a constant of the format.
  *
- * It must pass POST /plans/validate. A skeleton that drifted from what the Go
- * side accepts would teach a format that does not exist - which has already
- * happened twice in this project, once with a CLI command the dashboard
- * printed and once with a diagnostic level no code emits. It happened a third
- * time while this file was being written: the first version left the provider
- * out, on the assumption that the server would resolve its default the way it
- * does for an ad-hoc drill. It does not. `workload.provider` is required, and
- * only running the real validator said so.
+ * It must pass POST /plans/validate, and the drill it describes must be one
+ * that can actually succeed. Both were found the hard way:
+ *
+ *   - the first version left the provider out, on the assumption that the
+ *     server resolves its default the way it does for an ad-hoc drill. It
+ *     does not: `workload.provider` is required, and only running the real
+ *     validator said so;
+ *   - the second checked the clone with `ping`, which cannot reach a bridge
+ *     that is isolated by design. The drill restored, booted and cleaned up
+ *     perfectly and was graded FAILED on a check that could never pass.
+ *
+ * So the default check runs *inside* the guest through the QEMU agent, where
+ * the isolation is not in the way. `hostname` is the one command that answers
+ * on both Windows and Linux, which is why it is the one this project used to
+ * validate its own Windows support.
  */
 export function planSkeleton(workload: Workload, providerID: string): string {
   return `# A recovery drill for ${workload.name} (${workload.id}).
@@ -52,9 +59,20 @@ backup:
 restore:
   network: isolated
 
+startup:
+  # The check below runs inside the guest, so the run waits for the agent to
+  # answer rather than for an address on a network nothing can reach.
+  wait_for_ip: false
+  wait_for_agent: true
+
 checks:
-  # ping, tcp, http, dns, or a command run inside the guest through the agent.
-  - type: ping
+  # Proves the restored machine booted far enough to answer. Replace it with
+  # what actually matters for this workload - "systemctl is-active postgresql",
+  # a query against the database, a request to the application - because a
+  # drill is only worth the check it ends on.
+  - type: command
+    name: guest responds
+    run: hostname
 
 cleanup:
   # The default anyway. Spelled out because destroying the clone is the

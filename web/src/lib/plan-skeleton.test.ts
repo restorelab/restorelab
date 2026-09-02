@@ -66,6 +66,19 @@ describe("planSkeleton", () => {
     )
   })
 
+  // A check that has to reach the clone over the network cannot pass on a
+  // bridge that is isolated by design. The first skeleton used ping, and the
+  // drill it produced restored, booted and cleaned up perfectly before being
+  // graded FAILED on a check that could never succeed.
+  it("checks the guest from inside it, not across the isolated bridge", () => {
+    const doc = planSkeleton(workload, providerID)
+    expect(doc).toContain("type: command")
+    expect(doc).not.toContain("type: ping")
+    // And the run must wait for the agent rather than for an address.
+    expect(doc).toContain("wait_for_agent: true")
+    expect(doc).toContain("wait_for_ip: false")
+  })
+
   // The check the editor runs on the very first keystroke has to have
   // something valid to run on: an empty or half-written skeleton would make
   // the panel open on a refusal.
