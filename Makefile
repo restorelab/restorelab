@@ -10,6 +10,17 @@ LDFLAGS     := -s -w \
 
 GO          ?= go
 BIN_DIR     := bin
+DIST_DIR    := dist
+
+# What a release ships.
+#
+# linux/amd64 is the one that matters: it is where Proxmox runs, and where a
+# drill is launched from. The rest cost one line each.
+#
+# Every archive is a .tar.gz, Windows included, so this target needs nothing
+# but tar and works the same on every machine. Windows has shipped bsdtar
+# since Windows 10, so nothing is lost by not producing a zip.
+PLATFORMS   := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
 
 # golangci-lint is run from source, with this project's own Go toolchain.
 #
@@ -88,9 +99,29 @@ tidy: ## Tidy go.mod / go.sum
 .PHONY: check
 check: fmt-check vet test ## Everything CI runs
 
+.PHONY: dist
+dist: ## Cross-compile the release archives and their checksums into dist/
+	@rm -rf $(DIST_DIR) && mkdir -p $(DIST_DIR)
+	@echo "building $(VERSION)"
+	@set -e; for p in $(PLATFORMS); do \
+		os=$${p%/*}; arch=$${p#*/}; ext=""; \
+		if [ "$$os" = "windows" ]; then ext=".exe"; fi; \
+		name="$(BINARY)_$(VERSION)_$${os}_$${arch}"; \
+		stage="$(DIST_DIR)/$$name"; \
+		echo "  $$os/$$arch"; \
+		mkdir -p "$$stage"; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -trimpath \
+			-ldflags "$(LDFLAGS)" -o "$$stage/$(BINARY)$$ext" ./cmd/restorelab; \
+		cp LICENSE README.md "$$stage/"; \
+		( cd $(DIST_DIR) && tar -czf "$$name.tar.gz" "$$name" ); \
+		rm -rf "$$stage"; \
+	done
+	@cd $(DIST_DIR) && sha256sum *.tar.gz > SHA256SUMS
+	@echo "$(DIST_DIR)/ holds $$(ls $(DIST_DIR)/*.tar.gz | wc -l) archive(s) and their checksums"
+
 .PHONY: clean
 clean: ## Remove build artefacts
-	rm -rf $(BIN_DIR) coverage.out
+	rm -rf $(BIN_DIR) $(DIST_DIR) coverage.out
 
 .PHONY: docker
 docker: ## Build the container image

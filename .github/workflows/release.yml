@@ -1,0 +1,58 @@
+name: Release
+
+# A tag is the trigger, and the tag name is the version. Nothing else
+# publishes: pushing to master builds and tests, it does not release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # creating a release and uploading its archives
+
+env:
+  GO_VERSION: "1.27"
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags and full history: --generate-notes reads the commits since
+          # the previous tag, and it cannot do that from a shallow clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # A tag is not a promise that the code is green.
+      #
+      # This is a gate against tagging a broken commit, not a second CI: the
+      # race detector and the PostgreSQL conformance run on every push to
+      # master already, and re-running them here would double a five-minute
+      # job to catch something that push has just caught.
+      - name: go test
+        run: go test ./...
+
+      # The version comes from the tag, not from `git describe`.
+      #
+      # describe would work here - fetch-depth: 0 brought the tags - but it
+      # would also quietly produce a binary stamped with a commit sha if that
+      # ever changed. The tag is what the release is named after, so it is
+      # what the binary should say when asked.
+      - name: make dist
+        run: make dist VERSION=${{ github.ref_name }}
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/*.tar.gz dist/SHA256SUMS \
+            --verify-tag \
+            --generate-notes \
+            --title "${{ github.ref_name }}"
