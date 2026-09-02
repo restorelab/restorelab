@@ -209,3 +209,44 @@ func TestJSON_ProvenanceIsOmittedForAnAdhocDrill(t *testing.T) {
 		}
 	}
 }
+
+// A report of a finished drill must read the same every time it is rendered.
+//
+// The backup's age used to be time.Since(CreatedAt), recomputed at render
+// time, so the same archived run reported a slightly older backup on every
+// read - and two renders taken microseconds apart were not byte-identical.
+// That is what broke TestNewDocumentIsTheDocumentJSONWrites the first time CI
+// ran it on Linux: Windows' coarse clock had been returning the same instant
+// to both calls and hiding it.
+//
+// The age that belongs in a drill's report is the age at the moment the drill
+// used the backup, which is a fact about the drill and does not move.
+func TestBackupAgeIsMeasuredAtTheStartOfTheRun(t *testing.T) {
+	run := fixtureRunSuccess()
+	doc := NewDocument(run)
+
+	want := run.StartedAt.Sub(run.Backup.CreatedAt).Seconds()
+	if doc.Backup.AgeSeconds != want {
+		t.Errorf("age_seconds = %v, want %v (the backup's age when the drill restored it)",
+			doc.Backup.AgeSeconds, want)
+	}
+	if doc.Backup.Age != FormatDuration(run.StartedAt.Sub(run.Backup.CreatedAt)) {
+		t.Errorf("age = %q, want %q", doc.Backup.Age,
+			FormatDuration(run.StartedAt.Sub(run.Backup.CreatedAt)))
+	}
+}
+
+func TestRenderingTheSameRunTwiceGivesTheSameBytes(t *testing.T) {
+	run := fixtureRunSuccess()
+
+	var first, second bytes.Buffer
+	if err := JSON(&first, run); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	if err := JSON(&second, run); err != nil {
+		t.Fatalf("JSON: %v", err)
+	}
+	if first.String() != second.String() {
+		t.Error("two renders of one finished run differ: an archived report must not move")
+	}
+}

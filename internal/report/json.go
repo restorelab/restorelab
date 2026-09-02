@@ -170,7 +170,8 @@ func NewDocument(run *core.RecoveryRun) Document {
 		TempName:         run.TempName,
 		Node:             run.Node,
 
-		Backup: NewBackupDTO(run.Backup),
+		// Measured at the start of the run, not now: see NewBackupDTOAt.
+		Backup: NewBackupDTOAt(run.Backup, run.StartedAt),
 
 		State:  string(run.State),
 		Result: string(run.Result),
@@ -207,13 +208,38 @@ func NewDocument(run *core.RecoveryRun) Document {
 	return doc
 }
 
-// NewBackupDTO renders a backup in the wire form every RestoreLab surface
-// uses. It returns nil for a nil backup: "no backup" and "an empty backup"
-// must stay distinguishable to a consumer.
+// NewBackupDTO renders a backup as it stands now.
+//
+// This is the form a listing wants: someone browsing what could be restored
+// is asking how old these backups are at this moment. A drill's report wants
+// the other question, and calls NewBackupDTOAt - see there.
+//
+// It returns nil for a nil backup: "no backup" and "an empty backup" must
+// stay distinguishable to a consumer.
 func NewBackupDTO(b *core.Backup) *BackupDTO {
+	return NewBackupDTOAt(b, time.Now())
+}
+
+// NewBackupDTOAt renders a backup as it stood at a given instant.
+//
+// The age of a backup is the one field in this document that is not a
+// property of the backup: it is a subtraction, and what it means depends
+// entirely on what it is subtracted from. In a drill's report the honest
+// reference is the moment the drill used the backup - "it was two hours old
+// when we restored it" is a fact about that drill, and it does not move.
+//
+// Measuring from time.Now() instead made an archived report age its own
+// backup a little more on every read, and made two renders of one finished
+// run differ in their last decimals. A zero instant falls back to now, so a
+// run that never started is still described sensibly.
+func NewBackupDTOAt(b *core.Backup, at time.Time) *BackupDTO {
 	if b == nil {
 		return nil
 	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	age := at.Sub(b.CreatedAt)
 	return &BackupDTO{
 		ID:         b.ID,
 		WorkloadID: b.WorkloadID,
@@ -222,8 +248,8 @@ func NewBackupDTO(b *core.Backup) *BackupDTO {
 		Node:       b.Node,
 
 		CreatedAt:  b.CreatedAt,
-		AgeSeconds: b.Age().Seconds(),
-		Age:        FormatDuration(b.Age()),
+		AgeSeconds: age.Seconds(),
+		Age:        FormatDuration(age),
 
 		SizeBytes: b.SizeBytes,
 		Size:      FormatBytes(b.SizeBytes),
