@@ -178,6 +178,13 @@ func TestSetupRefusesWithoutAStorage(t *testing.T) {
 	if fake.calls != 0 {
 		t.Error("provisioning ran with no storage to restore onto")
 	}
+
+	// And the token survives. A form that forgot a field must not cost the
+	// one token somebody was printed: they have already proved they hold it,
+	// and spending it here would mean restarting the server over a typo.
+	if rec := postSetup(s, setupSecret, validSetupBody); rec.Code != http.StatusOK {
+		t.Errorf("after a refused body, the token no longer works: %d", rec.Code)
+	}
 }
 
 // A failure is worth more than an error string: the steps say how far it got,

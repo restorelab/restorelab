@@ -160,8 +160,13 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Checked before the body is parsed - a caller with no token has no
+	// business having its JSON read - but not yet spent. A token is spent by
+	// an attempt to provision, not by a form that forgot a field: the caller
+	// has already proved it holds the token, and making a typo cost a restart
+	// of the whole server buys nothing.
 	offered, _ := bearerToken(r.Header.Get("Authorization"))
-	if !s.spendSetupToken(offered) {
+	if !s.setupTokenMatches(offered) {
 		writeUnauthorized(w, r)
 		return
 	}
@@ -175,6 +180,16 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeBadRequest(w, r,
 			"at least one storage is required: it is where a drill restores its clone, "+
 				"and without one no real drill can run")
+		return
+	}
+
+	// Spent here, at the last moment before the cluster is touched, and
+	// atomically: two requests arriving together must not both provision.
+	// From this line on it is spent whatever happens, because a token still
+	// live after a wrong password would be a secret printed on a console and
+	// valid until the process ends.
+	if !s.consumeSetupToken(offered) {
+		writeUnauthorized(w, r)
 		return
 	}
 
@@ -201,23 +216,36 @@ func stepsOf(r *SetupResult) []SetupStep {
 	return r.Steps
 }
 
-// spendSetupToken accepts the console token exactly once.
-//
-// Once whatever the outcome: a token still live after a failed attempt would
-// be a password printed on a console and valid until the process ends, which
-// is not what "one-time" means. The comparison is constant-time for the same
-// reason the session's is.
-func (s *Server) spendSetupToken(offered string) bool {
+// setupTokenMatches reports whether this is the console token, without
+// spending it. It is the early reject, before a body is parsed.
+func (s *Server) setupTokenMatches(offered string) bool {
 	s.setupMu.Lock()
 	defer s.setupMu.Unlock()
-	if s.setupToken == "" || offered == "" {
-		return false
-	}
-	if subtle.ConstantTimeCompare([]byte(s.setupToken), []byte(offered)) != 1 {
+	return s.matchLocked(offered)
+}
+
+// consumeSetupToken accepts the console token and spends it, atomically.
+//
+// Compare and clear under one lock: two requests arriving together must not
+// both get through to a cluster. The comparison is constant-time for the same
+// reason the session's is.
+func (s *Server) consumeSetupToken(offered string) bool {
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+	if !s.matchLocked(offered) {
 		return false
 	}
 	s.setupToken = ""
 	return true
+}
+
+// matchLocked compares the offered token with the live one. The caller holds
+// setupMu.
+func (s *Server) matchLocked(offered string) bool {
+	if s.setupToken == "" || offered == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(s.setupToken), []byte(offered)) == 1
 }
 
 // SetupDone is closed once first-run provisioning has succeeded.
