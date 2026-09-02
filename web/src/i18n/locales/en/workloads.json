@@ -64,7 +64,7 @@
       "empty": {
         "title": "This workload has never been drilled",
         "description": "Run the first drill from the machine running restorelab. It will appear here live.",
-        "command": "restorelab drill --workload {{id}}"
+        "command": "restorelab recovery test {{id}}"
       }
     }
   }

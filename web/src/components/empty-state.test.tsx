@@ -14,14 +14,14 @@ describe("EmptyState", () => {
       <EmptyState
         title="No drills yet"
         description="Run the first one from the machine running restorelab."
-        command="restorelab drill --workload web-01"
+        command="restorelab recovery test web-01"
       />,
     )
     expect(screen.getByText("No drills yet")).toBeInTheDocument()
-    expect(screen.getByText("restorelab drill --workload web-01")).toBeInTheDocument()
+    expect(screen.getByText("restorelab recovery test web-01")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /copy/i }))
-    expect(write).toHaveBeenCalledWith("restorelab drill --workload web-01")
+    expect(write).toHaveBeenCalledWith("restorelab recovery test web-01")
     vi.unstubAllGlobals()
   })
 

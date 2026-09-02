@@ -22,6 +22,6 @@
   "empty": {
     "title": "No drill has run yet",
     "description": "Drill the first machine now, or run it from a terminal. Either way it appears here live.",
-    "command": "restorelab drill --workload {{workload}}"
+    "command": "restorelab recovery test {{workload}}"
   }
 }

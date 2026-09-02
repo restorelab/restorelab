@@ -55,7 +55,7 @@ describe("OverviewContent", () => {
     expect(screen.getByRole("button", { name: /run a drill/i })).toBeInTheDocument()
     // And the command stays, because someone who drives this from a terminal
     // must not lose the line they were going to copy.
-    expect(screen.getByText("restorelab drill --workload 101")).toBeInTheDocument()
+    expect(screen.getByText("restorelab recovery test 101")).toBeInTheDocument()
   })
 
   // A read-only session gets the explanation and the command, and no button.
@@ -74,7 +74,7 @@ describe("OverviewContent", () => {
       ),
     )
     expect(screen.queryByRole("button", { name: /run a drill/i })).toBeNull()
-    expect(screen.getByText("restorelab drill --workload 101")).toBeInTheDocument()
+    expect(screen.getByText("restorelab recovery test 101")).toBeInTheDocument()
   })
 
   it("keeps the health strip in the empty case, because it has something to say", () => {

@@ -12,7 +12,7 @@
   "empty": {
     "title": "No drill has run yet",
     "description": "Run the first one from the machine running restorelab.",
-    "command": "restorelab drill --workload <workload>"
+    "command": "restorelab recovery test <workload-id>"
   },
   "noMatch": { "title": "No drill matches these filters" }
 }
