@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/restorelab/restorelab/internal/core"
+	"github.com/restorelab/restorelab/internal/report"
 	"github.com/restorelab/restorelab/internal/store"
 )
 
@@ -408,5 +409,42 @@ func TestWorkloadDetailCarriesTheLastDrill(t *testing.T) {
 	// absent rather than empty, which is what omitempty gives.
 	if dto.LastRunResult != "" {
 		t.Errorf("last_run_result = %q, want empty", dto.LastRunResult)
+	}
+}
+
+// The backup listing must age its rows against the server's clock, not
+// against a wall clock read inside the renderer.
+//
+// A handler whose output moves while its injected clock stands still cannot
+// be captured, and the golden fixtures found this: the backups page had to be
+// captured empty because every run produced a different age.
+func TestBackupListingAgesAgainstTheServerClock(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	backups := []core.Backup{{
+		ID:         "local:backup/vzdump-qemu-110",
+		WorkloadID: "110",
+		CreatedAt:  now.Add(-5 * time.Hour),
+		SizeBytes:  1 << 20,
+	}}
+	s, _ := newTestServer(t, Options{
+		Providers: fakeProviders{hv: testFleet(t), bp: backupSource{backups: backups}},
+		Now:       func() time.Time { return now },
+	})
+
+	rec := do(s, http.MethodGet, "/api/v1/workloads/110/backups")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+
+	var p page[report.BackupDTO]
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatalf("body is not a page: %v", err)
+	}
+	if len(p.Items) != 1 {
+		t.Fatalf("items = %+v, want one", p.Items)
+	}
+	if got := p.Items[0].AgeSeconds; got != (5 * time.Hour).Seconds() {
+		t.Errorf("age_seconds = %v, want %v: the age must be measured against the injected clock",
+			got, (5 * time.Hour).Seconds())
 	}
 }

@@ -265,7 +265,11 @@ func (s *Server) handleWorkloadBackups(w http.ResponseWriter, r *http.Request) {
 	// have nothing to restore" is the answer, not the absence of one.
 	out := page[*report.BackupDTO]{Items: []*report.BackupDTO{}}
 	for i := range backups {
-		out.Items = append(out.Items, report.NewBackupDTO(&backups[i]))
+		// Aged against the server's own clock rather than a wall clock read
+		// inside the renderer: a handler whose output moves while its
+		// injected clock stands still cannot be captured, and the golden
+		// fixtures need this one to hold still.
+		out.Items = append(out.Items, report.NewBackupDTOAt(&backups[i], s.now()))
 	}
 	writeJSON(w, r, out)
 }
