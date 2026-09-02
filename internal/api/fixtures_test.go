@@ -73,6 +73,47 @@ func recorded(t *testing.T, rec *httptest.ResponseRecorder, want int) []byte {
 // timestamp its provider id spells out; a report renders its age against the
 // run's start, never against now, so the document does not move between two
 // reads.
+// fixturePlanYAML is a plan a human wrote: a leading comment, quoted ids, and
+// defaults left out. The comment is load-bearing - the catalogue stores a
+// document verbatim, and a capture without one would let an editor be written
+// as though comments did not survive a round trip.
+const fixturePlanYAML = `# the web tier, restored nightly
+name: web-tier
+description: nightly drill of the web tier
+workload:
+  provider: proxmox-main
+  id: "110"
+backup:
+  strategy: latest
+checks:
+  - type: tcp
+    port: 22
+cleanup:
+  always: true
+rto_target: 5m
+`
+
+// fixturePlan is the catalogue row those bytes make, with an id that does not
+// move between runs.
+//
+// It is seeded into the fake rather than created through POST: catalog.Save
+// generates a UUID, and a capture carrying one would differ on every run. The
+// alternative - making that generator injectable too - would be production
+// code changed for a capture that does not need it.
+func fixturePlan() store.Plan {
+	return store.Plan{
+		ID:          "1f0b2a44-0000-4000-8000-00000000000a",
+		Name:        "web-tier",
+		Description: "nightly drill of the web tier",
+		WorkloadID:  "110",
+		ProviderID:  "proxmox-main",
+		YAML:        fixturePlanYAML,
+		Version:     2,
+		CreatedAt:   fixtureNow.Add(-72 * time.Hour),
+		UpdatedAt:   fixtureNow.Add(-2 * time.Hour),
+	}
+}
+
 func fixtureBackup() *core.Backup {
 	return &core.Backup{
 		ID:         "local:backup/vzdump-qemu-110-2026_09_01-07_00_00.vma.zst",
@@ -455,6 +496,54 @@ func fixtureCases() []fixtureCase {
 			s := operatingServer(t, newFakeHistory(),
 				fakeProviders{hv: &cleanableFleet{fleet: testFleet(t)}})
 			return recorded(t, post(s, operateSecret, "/api/v1/cleanup/9001", ""), http.StatusOK)
+		}},
+
+		{"plans-page", func(t *testing.T) []byte {
+			s, plans := planServer(t)
+			p := fixturePlan()
+			plans.stored[p.ID] = p
+			// A listing ships no documents: fifty plans must not become fifty
+			// YAML blobs to draw a table. The absence of "yaml" in this
+			// capture is the contract, and capturing it is how it stays one.
+			return recorded(t, do(s, http.MethodGet, "/api/v1/plans"), http.StatusOK)
+		}},
+
+		{"plan", func(t *testing.T) []byte {
+			s, plans := planServer(t)
+			p := fixturePlan()
+			plans.stored[p.ID] = p
+			return recorded(t, do(s, http.MethodGet, "/api/v1/plans/web-tier"), http.StatusOK)
+		}},
+
+		{"validate-ok", func(t *testing.T) []byte {
+			s, _ := planServer(t)
+			// normalized_yaml comes back longer than what went in: that is the
+			// defaulting, and showing it is the editor panel's whole point.
+			return recorded(t, send(s, http.MethodPost, manageSecret,
+				"/api/v1/plans/validate", fixturePlanYAML), http.StatusOK)
+		}},
+
+		{"validate-invalid", func(t *testing.T) []byte {
+			s, _ := planServer(t)
+			// A document that is valid YAML and is not a plan: no workload id.
+			// The editor's job is to render this refusal, so it must render
+			// the one the Go side actually words rather than a generic
+			// "invalid" invented in TypeScript.
+			return recorded(t, send(s, http.MethodPost, manageSecret,
+				"/api/v1/plans/validate", "name: broken\nworkload:\n  provider: proxmox-main\n"),
+				http.StatusBadRequest)
+		}},
+
+		{"problem-409-version", func(t *testing.T) []byte {
+			s, plans := planServer(t)
+			p := fixturePlan()
+			plans.stored[p.ID] = p
+			// Version 2 is stored; this PUT still believes in 1. It is the
+			// conflict the editor must tell apart from a rename, which is the
+			// other 409 this route answers.
+			return recorded(t, send(s, http.MethodPut, manageSecret,
+				"/api/v1/plans/web-tier?version=1", fixturePlanYAML),
+				http.StatusConflict)
 		}},
 
 		{"problem-401", func(t *testing.T) []byte {

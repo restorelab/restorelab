@@ -1,0 +1,11 @@
+{
+  "id": "1f0b2a44-0000-4000-8000-00000000000a",
+  "name": "web-tier",
+  "description": "nightly drill of the web tier",
+  "workload_id": "110",
+  "provider_id": "proxmox-main",
+  "version": 2,
+  "created_at": "2026-08-29T12:00:00Z",
+  "updated_at": "2026-09-01T10:00:00Z",
+  "yaml": "# the web tier, restored nightly\nname: web-tier\ndescription: nightly drill of the web tier\nworkload:\n  provider: proxmox-main\n  id: \"110\"\nbackup:\n  strategy: latest\nchecks:\n  - type: tcp\n    port: 22\ncleanup:\n  always: true\nrto_target: 5m\n"
+}

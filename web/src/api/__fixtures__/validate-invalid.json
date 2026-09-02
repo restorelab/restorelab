@@ -1,0 +1,7 @@
+{
+  "type": "https://restorelab.dev/problems/invalid-plan",
+  "title": "This document is not a valid recovery plan",
+  "status": 400,
+  "detail": "catalog: the plan is not valid: invalid plan:\n  - workload.id is required",
+  "instance": "/api/v1/plans/validate"
+}
