@@ -1,6 +1,8 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "files": { "ignore": ["src/routeTree.gen.ts", "dist"] },
+  "files": {
+    "ignore": ["src/routeTree.gen.ts", "src/api/__fixtures__", "dist"]
+  },
   "organizeImports": { "enabled": true },
   "linter": {
     "enabled": true,

@@ -1,36 +1,27 @@
+import { confidenceFixture, first, workloadsPageFixture } from "@/api/fixtures"
 import type { Confidence, Page, Workload } from "@/api/types"
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { WorkloadsContent } from "./index"
 
+// The shape comes from the wire, not from this file: workloadsPageFixture is
+// the captured body of GET /workloads. Only the identity a given assertion
+// reads is overridden, because which machine it is has nothing to do with
+// what these tests check.
+const capturedWorkload = first(workloadsPageFixture.items, "workloads")
+
 function workload(over: Partial<Workload> = {}): Workload {
-  return {
-    id: "101",
-    name: "web-01",
-    kind: "qemu",
-    node: "pve1",
-    cpu_cores: 2,
-    memory_bytes: 4 * 1024 ** 3,
-    disk_bytes: 32 * 1024 ** 3,
-    power_state: "running",
-    template: false,
-    managed: false,
-    ...over,
-  }
+  return { ...capturedWorkload, id: "101", name: "web-01", ...over }
 }
 
-const tested: Confidence = {
-  workload_id: "101",
-  score: 82,
-  tested: true,
-  reasons: [],
-  runs_considered: 3,
-}
+const tested: Confidence = { ...confidenceFixture, workload_id: "101", score: 82 }
 const untested: Confidence = {
+  ...confidenceFixture,
   workload_id: "202",
   score: null,
   tested: false,
   reasons: ["never drilled"],
+  last_run_id: undefined,
   runs_considered: 0,
 }
 

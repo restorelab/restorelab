@@ -1,3 +1,4 @@
+import { first, runsPageFixture } from "@/api/fixtures"
 import type { Page, RunSummary } from "@/api/types"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
@@ -5,20 +6,19 @@ import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { RunsContent } from "./index"
 
+// The shape comes from the wire: runsPageFixture is the captured body of
+// GET /recovery-runs, and its first item is a drill that ran to the end.
+// Only the identity a given assertion reads is overridden here.
+const capturedRun =
+  runsPageFixture.items.find((r) => r.state === "SUCCESS") ??
+  first(runsPageFixture.items, "runs page")
+
 function run(over: Partial<RunSummary> = {}): RunSummary {
   return {
+    ...capturedRun,
     id: "r1",
-    plan_name: "nightly",
     source_workload_id: "101",
     source_name: "web-01",
-    state: "SUCCESS",
-    result: "SUCCESS",
-    started_at: "2026-09-01T03:12:00Z",
-    completed_at: "2026-09-01T03:16:21Z",
-    rto_seconds: 261,
-    rto: "4m21s",
-    rto_exceeded: false,
-    cleanup_done: true,
     ...over,
   }
 }

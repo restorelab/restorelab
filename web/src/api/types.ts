@@ -1,11 +1,15 @@
 /**
  * The wire types, mirrored by hand from the Go DTOs.
  *
- * There is no OpenAPI document, so nothing enforces that this file and
- * internal/api agree. That is a known debt, written down in the C2 spec: a
- * renamed key on the Go side passes every test here, because the tests answer
- * with fixtures built from these same types. The parade is an end-to-end
- * browser test against the real binary, and it is C3's problem.
+ * What keeps this file and internal/api in step is the captured fixtures next
+ * door: internal/api/fixtures_test.go writes the real body of every route
+ * into __fixtures__, and fixtures.ts reads them back under these types, which
+ * tsc checks. A renamed or dropped key fails there, on the day it changes.
+ *
+ * What that does NOT catch is a key the server added and this file has not
+ * heard of: TypeScript only flags excess properties on object literals, and a
+ * fixture is an imported module. When you add a field to a DTO, add it here
+ * too - the fixture will not remind you.
  *
  * Sources: internal/api/{runs,workloads,meta,trigger,session,problem}.go and
  * internal/report/json.go.
@@ -202,6 +206,22 @@ export interface Workload {
   template: boolean
   managed: boolean
   recovery_run_id?: string
+
+  /**
+   * The workload's most recent drill, all four absent when it has never had
+   * one. last_run_at is when that drill *started*: a drill still running has
+   * no completion time, and "last tested" has to have an answer while it is
+   * in flight.
+   *
+   * The state is here as well as the result because a run still going and a
+   * run that was cancelled both carry an empty result, and they are not the
+   * same news.
+   */
+  last_run_id?: string
+  last_run_at?: string
+  last_run_state?: RunState
+  last_run_result?: RunResult
+
   status?: WorkloadStatus
 }
 
@@ -234,8 +254,16 @@ export interface Provider {
   default?: boolean
 }
 
+/**
+ * One diagnostic finding.
+ *
+ * internal/diag emits exactly three levels - a cluster in perfect health
+ * comes back as a list of "ok" findings, not as an empty list. The union is
+ * written out rather than left as `string` because C2 spent a screen on a
+ * fourth level, "error", that no Go code has ever produced.
+ */
 export interface Finding {
-  level: string
+  level: "ok" | "warn" | "fail"
   area: string
   title: string
   detail?: string
@@ -280,4 +308,12 @@ export interface DoneFrame {
 export interface DisconnectedFrame {
   state: RunState
   reason: string
+}
+
+// ------------------------------------------------------------------- writes
+
+/** POST /cleanup/{vmid} - what was destroyed. */
+export interface CleanupResult {
+  workload_id: string
+  removed: boolean
 }

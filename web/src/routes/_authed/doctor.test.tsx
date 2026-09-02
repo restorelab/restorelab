@@ -1,24 +1,23 @@
+import { doctorFixture } from "@/api/fixtures"
 import type { Doctor } from "@/api/types"
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { DoctorContent, findingTone } from "./doctor"
 
+// The envelope comes from the captured GET /doctor; each test then states the
+// findings it is about. The findings are the subject here, so they are
+// written out - but the shape around them is the wire's, not this file's.
+
 describe("DoctorContent", () => {
   it("says everything is fine when there are no findings", () => {
-    const d: Doctor = {
-      provider_id: "pve",
-      endpoint: "https://pve:8006",
-      ok: true,
-      problems: 0,
-      findings: [],
-    }
+    const d: Doctor = { ...doctorFixture, ok: true, problems: 0, findings: [] }
     render(<DoctorContent doctor={d} />)
     expect(screen.getByText(/no problems found/i)).toBeInTheDocument()
   })
 
   it("lists each finding with its area and detail", () => {
     const d: Doctor = {
-      provider_id: "pve",
+      ...doctorFixture,
       ok: false,
       problems: 1,
       findings: [
@@ -38,7 +37,7 @@ describe("DoctorContent", () => {
 
   it("distinguishes a warning from an error", () => {
     const d: Doctor = {
-      provider_id: "pve",
+      ...doctorFixture,
       ok: false,
       problems: 1,
       findings: [

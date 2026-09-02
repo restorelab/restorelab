@@ -1,24 +1,28 @@
+import {
+  doctorFixture,
+  first,
+  queueFixture,
+  runsPageFixture,
+  workloadsPageFixture,
+} from "@/api/fixtures"
 import type { Doctor, Page, QueueEntry, RunSummary, Workload } from "@/api/types"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { OverviewContent } from "./index"
 
-const doctor: Doctor = { provider_id: "pve", ok: true, problems: 0, findings: [] }
+// Every payload below starts from a captured response. Only the identity an
+// assertion reads is overridden - which machine it is has nothing to do with
+// what these tests check.
+const doctor: Doctor = { ...doctorFixture, ok: true, problems: 0, findings: [] }
 const noRuns: Page<RunSummary> = { items: [] }
 const noQueue: Page<QueueEntry> = { items: [] }
 const workloads: Page<Workload> = {
   items: [
     {
+      ...first(workloadsPageFixture.items, "workloads"),
       id: "101",
       name: "web-01",
-      kind: "qemu",
-      cpu_cores: 2,
-      memory_bytes: 0,
-      disk_bytes: 0,
-      power_state: "running",
-      template: false,
-      managed: false,
     },
   ],
 }
@@ -62,17 +66,12 @@ describe("OverviewContent", () => {
     const queue: Page<QueueEntry> = {
       items: [
         {
-          id: "r1",
-          plan_name: "nightly",
-          source_workload_id: "101",
+          ...first(queueFixture.items, "queue"),
           source_name: "web-01",
           state: "RESTORING",
+          // Relative on purpose: the assertion below is about the elapsed
+          // time the row computes, which only means something against now.
           started_at: new Date(Date.now() - 134_000).toISOString(),
-          completed_at: null,
-          rto_seconds: 0,
-          rto: "0s",
-          rto_exceeded: false,
-          cleanup_done: false,
         },
       ],
     }
@@ -92,23 +91,11 @@ describe("OverviewContent", () => {
   })
 
   it("does not show the day-one empty state once a drill exists", () => {
+    const captured =
+      runsPageFixture.items.find((r) => r.state === "SUCCESS") ??
+      first(runsPageFixture.items, "runs page")
     const runs: Page<RunSummary> = {
-      items: [
-        {
-          id: "r0",
-          plan_name: "nightly",
-          source_workload_id: "101",
-          source_name: "web-01",
-          state: "SUCCESS",
-          result: "SUCCESS",
-          started_at: "2026-09-01T03:12:00Z",
-          completed_at: "2026-09-01T03:16:21Z",
-          rto_seconds: 261,
-          rto: "4m21s",
-          rto_exceeded: false,
-          cleanup_done: true,
-        },
-      ],
+      items: [{ ...captured, source_name: "web-01", rto: "4m21s" }],
     }
     render(
       wrap(
@@ -126,10 +113,10 @@ describe("OverviewContent", () => {
 
   it("says the cluster has problems when the diagnostic does", () => {
     const sick: Doctor = {
-      provider_id: "pve",
+      ...doctorFixture,
       ok: false,
       problems: 2,
-      findings: [{ level: "error", area: "network", title: "no isolated bridge" }],
+      findings: [{ level: "fail", area: "network", title: "no isolated bridge" }],
     }
     render(
       wrap(

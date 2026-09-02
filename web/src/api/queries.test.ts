@@ -1,20 +1,14 @@
 import { describe, expect, it } from "vitest"
+import { first, runsPageFixture } from "./fixtures"
 import { FAST_MS, SLOW_MS, anyRunActive, runQuery, runsQuery } from "./queries"
 import type { Page, RunDocument, RunSummary } from "./types"
 
+// The shape comes from the wire: runsPageFixture is the captured body of
+// GET /recovery-runs. Only the state under test is set here.
+const capturedRun = first(runsPageFixture.items, "runs page")
+
 function run(state: string): RunSummary {
-  return {
-    id: "r1",
-    plan_name: "nightly",
-    source_workload_id: "101",
-    state: state as RunSummary["state"],
-    started_at: "2026-09-02T12:00:00Z",
-    completed_at: null,
-    rto_seconds: 0,
-    rto: "0s",
-    rto_exceeded: false,
-    cleanup_done: false,
-  }
+  return { ...capturedRun, state: state as RunSummary["state"] }
 }
 
 describe("anyRunActive", () => {
