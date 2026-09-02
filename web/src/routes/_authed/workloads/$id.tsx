@@ -1,9 +1,17 @@
 import { backupsQuery, confidenceQuery, runsQuery, workloadQuery } from "@/api/queries"
-import type { Backup, Confidence, Page, RunSummary, Workload } from "@/api/types"
+import {
+  type Backup,
+  type Confidence,
+  type Page,
+  type RunSummary,
+  type Workload,
+  isTerminal,
+} from "@/api/types"
 import { ConfidenceScore } from "@/components/confidence"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { RunStatusBadge } from "@/components/run-status"
+import { TriggerDrill } from "@/components/trigger-drill"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -20,7 +28,12 @@ import workloadsLocale from "@/i18n/locales/en/workloads.json"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useQuery, useSuspenseQuery } from "@tanstack/react-query"
-import { Link, createFileRoute } from "@tanstack/react-router"
+import {
+  Link,
+  createFileRoute,
+  useNavigate,
+  useRouteContext,
+} from "@tanstack/react-router"
 import { Archive, ArrowLeft } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -54,7 +67,19 @@ function formatBytes(bytes: number): string {
   return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`
 }
 
-function Header({ workload }: { workload: Workload }) {
+function Header({
+  workload,
+  backups,
+  canOperate,
+  activeRunID,
+  onStarted,
+}: {
+  workload: Workload
+  backups: Backup[]
+  canOperate: boolean
+  activeRunID?: string
+  onStarted: (runID: string) => void
+}) {
   const { t } = useTranslation("workloads")
   return (
     <header className="space-y-2">
@@ -67,6 +92,17 @@ function Header({ workload }: { workload: Workload }) {
       </Link>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="font-semibold text-lg">{workload.name}</h1>
+        {/* This screen already loads the backups, so unlike the listing it
+            can name the one a drill would restore. */}
+        <span className="ml-auto">
+          <TriggerDrill
+            workload={workload}
+            backups={backups}
+            canOperate={canOperate}
+            activeRunID={activeRunID}
+            onStarted={onStarted}
+          />
+        </span>
         <span className="tabular text-muted-foreground text-sm">{workload.id}</span>
         <Badge variant="outline">{workload.kind}</Badge>
         <Badge variant="outline">{workload.power_state}</Badge>
@@ -303,10 +339,23 @@ function WorkloadDetailPage() {
   const workload = useSuspenseQuery(workloadQuery(id)).data
   const confidence = useSuspenseQuery(confidenceQuery(id)).data
   const runs = useSuspenseQuery(runsQuery({ workload: id, limit: 20 })).data
+  const backups = useQuery(backupsQuery(id)).data
+  const { can } = useRouteContext({ from: "/_authed" })
+  const navigate = useNavigate()
+
+  // A drill in flight on this machine is already in the listing above; there
+  // is no reason to ask the queue for it a second time.
+  const active = runs.items.find((r) => !isTerminal(r.state))
 
   return (
     <div className="space-y-6">
-      <Header workload={workload} />
+      <Header
+        workload={workload}
+        backups={backups?.items ?? []}
+        canOperate={can("operate")}
+        activeRunID={active?.id}
+        onStarted={(runID) => void navigate({ to: "/runs/$id", params: { id: runID } })}
+      />
       <ConfidenceCard confidence={confidence} />
       <BackupsCard id={id} />
       <RunsCard id={id} runs={runs} />

@@ -5,6 +5,7 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { HealthStrip } from "@/components/health-strip"
 import { RunStatusBadge, toneClass } from "@/components/run-status"
+import { TriggerDrill } from "@/components/trigger-drill"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { addNamespace } from "@/i18n"
@@ -12,7 +13,7 @@ import overview from "@/i18n/locales/en/overview.json"
 import { elapsedSeconds, formatDuration, formatRelative } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSuspenseQuery } from "@tanstack/react-query"
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, useNavigate, useRouteContext } from "@tanstack/react-router"
 import { FlaskConical } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -96,16 +97,21 @@ export function OverviewContent({
   queue,
   runs,
   workloads,
+  canOperate,
+  onStarted,
 }: {
   doctor: Doctor
   queue: Page<QueueEntry>
   runs: Page<RunSummary>
   workloads: Page<Workload>
+  canOperate: boolean
+  onStarted: (runID: string) => void
 }) {
   const { t } = useTranslation("overview")
   // Day one: nothing has ever run, and nothing is running. The health strip
   // still has something to say, so only the two lists below are replaced.
   const dayOne = queue.items.length === 0 && runs.items.length === 0
+  const [firstWorkload] = workloads.items
 
   return (
     <div className="flex flex-col gap-6">
@@ -117,8 +123,18 @@ export function OverviewContent({
           title={t("empty.title")}
           description={t("empty.description")}
           command={t("empty.command", {
-            workload: workloads.items[0]?.id ?? "<workload>",
+            workload: firstWorkload?.id ?? "<workload>",
           })}
+          action={
+            firstWorkload ? (
+              <TriggerDrill
+                workload={firstWorkload}
+                backups={[]}
+                canOperate={canOperate}
+                onStarted={onStarted}
+              />
+            ) : undefined
+          }
         />
       ) : null}
 
@@ -170,7 +186,17 @@ function OverviewPage() {
   const queue = useSuspenseQuery(queueQuery()).data
   const runs = useSuspenseQuery(runsQuery({ limit: 10 })).data
   const workloads = useSuspenseQuery(workloadsQuery()).data
+  const { can } = useRouteContext({ from: "/_authed" })
+  const navigate = useNavigate()
+
   return (
-    <OverviewContent doctor={doctor} queue={queue} runs={runs} workloads={workloads} />
+    <OverviewContent
+      doctor={doctor}
+      queue={queue}
+      runs={runs}
+      workloads={workloads}
+      canOperate={can("operate")}
+      onStarted={(runID) => void navigate({ to: "/runs/$id", params: { id: runID } })}
+    />
   )
 }

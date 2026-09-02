@@ -6,7 +6,8 @@
     "id": "ID",
     "node": "Node",
     "confidence": "Confidence",
-    "lastDrill": "Last drill"
+    "lastDrill": "Last drill",
+    "action": " "
   },
   "neverDrilled": "Never drilled",
   "viewLastDrill": "View",

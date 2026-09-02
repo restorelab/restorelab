@@ -1,9 +1,10 @@
-import { confidenceQuery, workloadsQuery } from "@/api/queries"
+import { confidenceQuery, queueQuery, workloadsQuery } from "@/api/queries"
 import type { Confidence, Page, Workload } from "@/api/types"
 import { AppLink } from "@/components/app-link"
 import { ConfidenceScore } from "@/components/confidence"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { TriggerDrill } from "@/components/trigger-drill"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -16,7 +17,7 @@ import {
 import { addNamespace } from "@/i18n"
 import workloadsLocale from "@/i18n/locales/en/workloads.json"
 import { useQueries, useSuspenseQuery } from "@tanstack/react-query"
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, useNavigate, useRouteContext } from "@tanstack/react-router"
 import { Server } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -24,7 +25,12 @@ addNamespace("workloads", workloadsLocale)
 
 export const Route = createFileRoute("/_authed/workloads/")({
   loader: ({ context: { queryClient } }) =>
-    queryClient.ensureQueryData(workloadsQuery()),
+    Promise.all([
+      queryClient.ensureQueryData(workloadsQuery()),
+      // The queue says which machines are already being drilled, which is what
+      // decides whether a row offers a button at all.
+      queryClient.ensureQueryData(queueQuery()),
+    ]),
   component: WorkloadsPage,
   errorComponent: ({ error }) => <ErrorState error={error} />,
 })
@@ -58,9 +64,16 @@ function LastDrill({ confidence }: { confidence: Confidence | undefined }) {
 export function WorkloadsContent({
   workloads,
   confidences,
+  canOperate,
+  activeRuns,
+  onStarted,
 }: {
   workloads: Page<Workload>
   confidences: Map<string, Confidence>
+  canOperate: boolean
+  /** Workload id to the id of the drill already in flight on it, if any. */
+  activeRuns: Map<string, string>
+  onStarted: (runID: string) => void
 }) {
   const { t } = useTranslation("workloads")
 
@@ -88,6 +101,7 @@ export function WorkloadsContent({
                 <TableHead>{t("columns.node")}</TableHead>
                 <TableHead>{t("columns.confidence")}</TableHead>
                 <TableHead>{t("columns.lastDrill")}</TableHead>
+                <TableHead className="text-right">{t("columns.action")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -124,6 +138,19 @@ export function WorkloadsContent({
                     <TableCell className="text-muted-foreground text-sm">
                       <LastDrill confidence={confidence} />
                     </TableCell>
+                    <TableCell className="text-right">
+                      {/* No backups are loaded here: naming the one a drill
+                          would restore costs a request per row, which is the
+                          N+1 this table is already paying once for the score.
+                          The panel says "the most recent backup" instead. */}
+                      <TriggerDrill
+                        workload={w}
+                        backups={[]}
+                        canOperate={canOperate}
+                        activeRunID={activeRuns.get(w.id)}
+                        onStarted={onStarted}
+                      />
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -137,6 +164,16 @@ export function WorkloadsContent({
 
 function WorkloadsPage() {
   const page = useSuspenseQuery(workloadsQuery()).data
+  const queue = useSuspenseQuery(queueQuery()).data
+  const { can } = useRouteContext({ from: "/_authed" })
+  const navigate = useNavigate()
+
+  // Which machines already have a drill in flight, so the button can be absent
+  // rather than earn a 409.
+  const activeRuns = new Map<string, string>()
+  for (const entry of queue.items) {
+    activeRuns.set(entry.source_workload_id, entry.id)
+  }
 
   // One request per workload, declared together. useQueries keeps them
   // parallel and individually cached; the same thing written as a useQuery
@@ -152,5 +189,13 @@ function WorkloadsPage() {
     if (data) confidences.set(w.id, data)
   })
 
-  return <WorkloadsContent workloads={page} confidences={confidences} />
+  return (
+    <WorkloadsContent
+      workloads={page}
+      confidences={confidences}
+      canOperate={can("operate")}
+      activeRuns={activeRuns}
+      onStarted={(runID) => void navigate({ to: "/runs/$id", params: { id: runID } })}
+    />
+  )
 }

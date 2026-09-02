@@ -15,6 +15,7 @@ import { OverviewContent } from "./index"
 // assertion reads is overridden - which machine it is has nothing to do with
 // what these tests check.
 const doctor: Doctor = { ...doctorFixture, ok: true, problems: 0, findings: [] }
+const noop = () => undefined
 const noRuns: Page<RunSummary> = { items: [] }
 const noQueue: Page<QueueEntry> = { items: [] }
 const workloads: Page<Workload> = {
@@ -41,10 +42,35 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={noRuns}
           workloads={workloads}
+          canOperate
+          onStarted={noop}
         />,
       ),
     )
     expect(screen.getByText(/no drill has run yet/i)).toBeInTheDocument()
+    // The button is the point of C3: day one ends on an action, not on a line
+    // to copy into a terminal somewhere else.
+    expect(screen.getByRole("button", { name: /run a drill/i })).toBeInTheDocument()
+    // And the command stays, because someone who drives this from a terminal
+    // must not lose the line they were going to copy.
+    expect(screen.getByText("restorelab drill --workload 101")).toBeInTheDocument()
+  })
+
+  // A read-only session gets the explanation and the command, and no button.
+  it("offers no button to a session that cannot operate", () => {
+    render(
+      wrap(
+        <OverviewContent
+          doctor={doctor}
+          queue={noQueue}
+          runs={noRuns}
+          workloads={workloads}
+          canOperate={false}
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.queryByRole("button", { name: /run a drill/i })).toBeNull()
     expect(screen.getByText("restorelab drill --workload 101")).toBeInTheDocument()
   })
 
@@ -56,6 +82,8 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={noRuns}
           workloads={workloads}
+          canOperate
+          onStarted={noop}
         />,
       ),
     )
@@ -82,6 +110,8 @@ describe("OverviewContent", () => {
           queue={queue}
           runs={noRuns}
           workloads={workloads}
+          canOperate
+          onStarted={noop}
         />,
       ),
     )
@@ -104,6 +134,8 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={runs}
           workloads={workloads}
+          canOperate
+          onStarted={noop}
         />,
       ),
     )
@@ -125,6 +157,8 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={noRuns}
           workloads={workloads}
+          canOperate
+          onStarted={noop}
         />,
       ),
     )

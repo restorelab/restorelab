@@ -14,11 +14,19 @@ export function EmptyState({
   title,
   description,
   command,
+  action,
   icon,
 }: {
   title: string
   description?: string
   command?: string
+  /**
+   * The button that does the thing, when there is one.
+   *
+   * It sits above the command rather than replacing it: someone who drives
+   * this from a terminal must not lose the line they were going to copy.
+   */
+  action?: ReactNode
   icon?: ReactNode
 }) {
   const { t } = useTranslation()
@@ -41,6 +49,7 @@ export function EmptyState({
       {description ? (
         <p className="max-w-prose text-muted-foreground text-sm">{description}</p>
       ) : null}
+      {action ? <div className="mt-2">{action}</div> : null}
       {command ? (
         <div className="mt-2 flex items-center gap-2 rounded-md border bg-muted px-3 py-2">
           <code className="font-mono text-sm">{command}</code>

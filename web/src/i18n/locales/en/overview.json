@@ -19,7 +19,7 @@
   },
   "empty": {
     "title": "No drill has run yet",
-    "description": "Run the first one from the machine running restorelab. It will appear here live.",
+    "description": "Drill the first machine now, or run it from a terminal. Either way it appears here live.",
     "command": "restorelab drill --workload {{workload}}"
   }
 }

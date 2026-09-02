@@ -1,8 +1,20 @@
 import { confidenceFixture, first, workloadsPageFixture } from "@/api/fixtures"
 import type { Confidence, Page, Workload } from "@/api/types"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen } from "@testing-library/react"
+import type { ReactNode } from "react"
 import { describe, expect, it } from "vitest"
 import { WorkloadsContent } from "./index"
+
+// TriggerDrill lives in a cell of this table and holds a mutation, so the
+// table needs a client even in the tests that never press its button.
+function wrap(ui: ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return <QueryClientProvider client={qc}>{ui}</QueryClientProvider>
+}
+
+const noop = () => undefined
+const noActiveRuns = new Map<string, string>()
 
 // The shape comes from the wire, not from this file: workloadsPageFixture is
 // the captured body of GET /workloads. Only the identity a given assertion
@@ -31,15 +43,20 @@ describe("WorkloadsContent", () => {
       items: [workload(), workload({ id: "202", name: "db-02" })],
     }
     render(
-      <WorkloadsContent
-        workloads={workloads}
-        confidences={
-          new Map([
-            ["101", tested],
-            ["202", untested],
-          ])
-        }
-      />,
+      wrap(
+        <WorkloadsContent
+          workloads={workloads}
+          confidences={
+            new Map([
+              ["101", tested],
+              ["202", untested],
+            ])
+          }
+          canOperate
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
     )
     expect(screen.getByText("web-01")).toBeInTheDocument()
     expect(screen.getByText("db-02")).toBeInTheDocument()
@@ -50,15 +67,20 @@ describe("WorkloadsContent", () => {
       items: [workload(), workload({ id: "202", name: "db-02" })],
     }
     render(
-      <WorkloadsContent
-        workloads={workloads}
-        confidences={
-          new Map([
-            ["101", tested],
-            ["202", untested],
-          ])
-        }
-      />,
+      wrap(
+        <WorkloadsContent
+          workloads={workloads}
+          confidences={
+            new Map([
+              ["101", tested],
+              ["202", untested],
+            ])
+          }
+          canOperate
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
     )
     expect(screen.getByText("82")).toBeInTheDocument()
     expect(screen.getByText("—")).toBeInTheDocument()
@@ -66,13 +88,83 @@ describe("WorkloadsContent", () => {
 
   it("does not invent a score while one is still loading", () => {
     render(
-      <WorkloadsContent workloads={{ items: [workload()] }} confidences={new Map()} />,
+      wrap(
+        <WorkloadsContent
+          workloads={{ items: [workload()] }}
+          confidences={new Map()}
+          canOperate
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
     )
     expect(screen.queryByText("0")).toBeNull()
   })
 
+  it("offers a drill on every row", () => {
+    const workloads: Page<Workload> = { items: [workload()] }
+    render(
+      wrap(
+        <WorkloadsContent
+          workloads={workloads}
+          confidences={new Map()}
+          canOperate
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.getByRole("button", { name: /run a drill/i })).toBeInTheDocument()
+  })
+
+  // A read-only session sees no button at all, not a dead one.
+  it("offers nothing to a session that cannot operate", () => {
+    const workloads: Page<Workload> = { items: [workload()] }
+    render(
+      wrap(
+        <WorkloadsContent
+          workloads={workloads}
+          confidences={new Map()}
+          canOperate={false}
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.queryByRole("button", { name: /run a drill/i })).toBeNull()
+  })
+
+  // A machine already being drilled points at that drill rather than offering
+  // a second one the backend would refuse with a 409.
+  it("points at the drill already running on a row", () => {
+    const workloads: Page<Workload> = { items: [workload()] }
+    render(
+      wrap(
+        <WorkloadsContent
+          workloads={workloads}
+          confidences={new Map()}
+          canOperate
+          activeRuns={new Map([["101", "run-in-flight"]])}
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.queryByRole("button", { name: /run a drill/i })).toBeNull()
+    expect(screen.getByText(/already running/i)).toBeInTheDocument()
+  })
+
   it("explains an empty inventory rather than showing an empty table", () => {
-    render(<WorkloadsContent workloads={{ items: [] }} confidences={new Map()} />)
+    render(
+      wrap(
+        <WorkloadsContent
+          workloads={{ items: [] }}
+          confidences={new Map()}
+          canOperate
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
+    )
     expect(screen.getByText(/no workloads/i)).toBeInTheDocument()
     expect(screen.getByText("restorelab connect")).toBeInTheDocument()
   })
