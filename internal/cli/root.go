@@ -106,6 +106,13 @@ cleans everything up.`,
 	cmd.SetOut(a.out)
 	cmd.SetErr(a.err)
 
+	// version.String() already begins with the program name, and cobra's
+	// default template prefixes "<use> version " to whatever Version holds -
+	// so `--version` answered "restorelab version restorelab v0.1.0 (...)".
+	// It shipped that way in v0.1.0, in the first command anyone runs on a
+	// fresh install. The flag now prints exactly what `version` prints.
+	cmd.SetVersionTemplate("{{.Version}}\n")
+
 	cmd.AddCommand(
 		newInitCmd(a),
 		newConnectCmd(a),
