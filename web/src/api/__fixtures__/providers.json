@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "id": "pve",
+      "kind": "proxmox",
+      "roles": [
+        "hypervisor",
+        "backup"
+      ],
+      "endpoint": "https://192.0.2.10:8006",
+      "node": "pve1",
+      "insecure": false,
+      "default": true
+    }
+  ]
+}

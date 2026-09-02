@@ -1,0 +1,12 @@
+{
+  "id": "8f1c6d20-0000-4000-8000-00000000000f",
+  "plan_name": "adhoc-110",
+  "source_workload_id": "110",
+  "state": "QUEUED",
+  "started_at": "2026-09-01T12:00:00Z",
+  "completed_at": null,
+  "rto_seconds": 0,
+  "rto": "0s",
+  "rto_exceeded": false,
+  "cleanup_done": false
+}

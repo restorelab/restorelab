@@ -1,0 +1,24 @@
+{
+  "provider_id": "pve",
+  "endpoint": "https://192.0.2.10:8006",
+  "ok": true,
+  "problems": 0,
+  "findings": [
+    {
+      "level": "ok",
+      "area": "credentials",
+      "title": "API reachable, credentials accepted"
+    },
+    {
+      "level": "ok",
+      "area": "nodes",
+      "title": "1 node(s), 1 online"
+    },
+    {
+      "level": "warn",
+      "area": "network",
+      "title": "cannot verify bridge \"vmbr99\" from here",
+      "detail": "the drill will proceed on the plan's assertion that the network is isolated"
+    }
+  ]
+}

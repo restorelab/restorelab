@@ -1,0 +1,35 @@
+{
+  "items": [
+    {
+      "id": "8f1c6d20-0000-4000-8000-000000000003",
+      "plan_name": "db-tier",
+      "plan_id": "1f0b2a44-0000-4000-8000-00000000000a",
+      "source_workload_id": "120",
+      "source_name": "db-node",
+      "state": "QUEUED",
+      "started_at": "2026-09-01T11:59:00Z",
+      "completed_at": null,
+      "rto_seconds": 0,
+      "rto": "0s",
+      "rto_target_seconds": 600,
+      "rto_exceeded": false,
+      "cleanup_done": false
+    },
+    {
+      "id": "8f1c6d20-0000-4000-8000-000000000002",
+      "plan_name": "adhoc-110",
+      "source_workload_id": "110",
+      "source_name": "linux-test",
+      "state": "WAITING_FOR_GUEST",
+      "started_at": "2026-09-01T11:57:00Z",
+      "completed_at": null,
+      "rto_seconds": 0,
+      "rto": "0s",
+      "rto_target_seconds": 300,
+      "rto_exceeded": false,
+      "cleanup_done": false,
+      "worker": "worker-a",
+      "lease_expires_at": "2026-09-01T12:01:30Z"
+    }
+  ]
+}

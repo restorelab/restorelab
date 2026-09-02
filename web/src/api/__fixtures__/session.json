@@ -1,0 +1,8 @@
+{
+  "token_name": "dashboard",
+  "scopes": [
+    "read",
+    "operate"
+  ],
+  "expires_at": "2026-09-02T00:00:00Z"
+}

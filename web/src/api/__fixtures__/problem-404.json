@@ -1,0 +1,7 @@
+{
+  "type": "https://restorelab.dev/problems/not-found",
+  "title": "No such recovery run",
+  "status": 404,
+  "detail": "no recorded drill matches \"nope\"",
+  "instance": "/api/v1/recovery-runs/nope"
+}

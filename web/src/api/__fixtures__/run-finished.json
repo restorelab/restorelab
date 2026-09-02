@@ -1,0 +1,110 @@
+{
+  "schema": "restorelab.recovery-run/v1",
+  "run_id": "8f1c6d20-0000-4000-8000-000000000001",
+  "plan_name": "web-tier",
+  "plan_id": "1f0b2a44-0000-4000-8000-00000000000a",
+  "plan_version": 3,
+  "provider_id": "pve",
+  "backup_provider_id": "pve",
+  "source_workload_id": "110",
+  "source_name": "linux-test",
+  "temp_workload_id": "9001",
+  "temp_name": "restorelab-110",
+  "node": "pve1",
+  "backup": {
+    "id": "local:backup/vzdump-qemu-110-2026_09_01-07_00_00.vma.zst",
+    "workload_id": "110",
+    "provider_id": "pve",
+    "datastore": "local",
+    "node": "pve1",
+    "created_at": "2026-09-01T07:00:00Z",
+    "age_seconds": 10800,
+    "age": "3h00m00s",
+    "size_bytes": 353370112,
+    "size": "337.0 MiB",
+    "protected": false,
+    "encrypted": false,
+    "verified": "none",
+    "format": "vma.zst"
+  },
+  "state": "SUCCESS",
+  "result": "SUCCESS",
+  "started_at": "2026-09-01T10:00:00Z",
+  "completed_at": "2026-09-01T10:01:36Z",
+  "steps": [
+    {
+      "name": "discover-backup",
+      "state": "DISCOVERING_BACKUP",
+      "status": "done",
+      "started_at": "2026-09-01T10:00:00Z",
+      "completed_at": "2026-09-01T10:00:02Z",
+      "duration_seconds": 2,
+      "duration": "2.0s",
+      "message": "latest backup is 3h00m00s old"
+    },
+    {
+      "name": "restore",
+      "state": "RESTORING",
+      "status": "done",
+      "started_at": "2026-09-01T10:00:02Z",
+      "completed_at": "2026-09-01T10:01:02Z",
+      "duration_seconds": 60,
+      "duration": "1m00s",
+      "message": "restored into workload 9001 on pve1"
+    },
+    {
+      "name": "wait-for-guest",
+      "state": "WAITING_FOR_GUEST",
+      "status": "done",
+      "started_at": "2026-09-01T10:01:02Z",
+      "completed_at": "2026-09-01T10:01:24Z",
+      "duration_seconds": 22,
+      "duration": "22.0s"
+    },
+    {
+      "name": "cleanup",
+      "state": "CLEANING_UP",
+      "status": "done",
+      "started_at": "2026-09-01T10:01:30Z",
+      "completed_at": "2026-09-01T10:01:36Z",
+      "duration_seconds": 6,
+      "duration": "6.0s"
+    }
+  ],
+  "checks": [
+    {
+      "name": "ssh",
+      "type": "tcp",
+      "status": "pass",
+      "pass": true,
+      "started_at": "2026-09-01T10:01:24Z",
+      "completed_at": "2026-09-01T10:01:25Z",
+      "duration_seconds": 1.2,
+      "duration": "1.2s",
+      "attempts": 2,
+      "message": "10.10.10.5:22 accepted a connection"
+    },
+    {
+      "name": "homepage",
+      "type": "http",
+      "status": "pass",
+      "pass": true,
+      "started_at": "2026-09-01T10:01:25Z",
+      "completed_at": "2026-09-01T10:01:26Z",
+      "duration_seconds": 0.34,
+      "duration": "340ms",
+      "attempts": 1,
+      "message": "GET / returned 200",
+      "details": {
+        "status_code": 200,
+        "url": "http://10.10.10.5/"
+      }
+    }
+  ],
+  "rto_seconds": 84,
+  "rto": "1m24s",
+  "rto_target_seconds": 300,
+  "rto_target": "5m00s",
+  "rto_exceeded": false,
+  "cleanup_done": true
+}

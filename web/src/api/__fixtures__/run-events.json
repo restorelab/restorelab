@@ -1,0 +1,45 @@
+{
+  "items": [
+    {
+      "seq": 1,
+      "at": "2026-09-01T10:00:00Z",
+      "state": "QUEUED",
+      "message": "drill queued"
+    },
+    {
+      "seq": 2,
+      "at": "2026-09-01T10:00:02Z",
+      "state": "RESTORING",
+      "step": "restore",
+      "status": "running",
+      "message": "restoring local:backup/vzdump-qemu-110-2026_09_01-07_00_00.vma.zst into 9001"
+    },
+    {
+      "seq": 3,
+      "at": "2026-09-01T10:01:25Z",
+      "state": "RUNNING_CHECKS",
+      "step": "checks",
+      "status": "done",
+      "check": {
+        "name": "ssh",
+        "type": "tcp",
+        "status": "pass",
+        "pass": true,
+        "started_at": "2026-09-01T10:01:24Z",
+        "completed_at": "2026-09-01T10:01:25Z",
+        "duration_seconds": 1.2,
+        "duration": "1.2s",
+        "attempts": 2,
+        "message": "10.10.10.5:22 accepted a connection"
+      }
+    },
+    {
+      "seq": 4,
+      "at": "2026-09-01T10:01:36Z",
+      "state": "SUCCESS",
+      "step": "cleanup",
+      "status": "done",
+      "message": "temporary workload 9001 destroyed"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "type": "https://restorelab.dev/problems/unauthorized",
+  "title": "Authentication required",
+  "status": 401,
+  "detail": "this request needs a valid API token: send `Authorization: Bearer rl_...` (create one with `restorelab token create`)",
+  "instance": "/api/v1/workloads"
+}

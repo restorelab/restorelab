@@ -1,0 +1,14 @@
+{
+  "id": "8f1c6d20-0000-4000-8000-000000000002",
+  "plan_name": "adhoc-110",
+  "source_workload_id": "110",
+  "source_name": "linux-test",
+  "state": "WAITING_FOR_GUEST",
+  "started_at": "2026-09-01T11:57:00Z",
+  "completed_at": null,
+  "rto_seconds": 0,
+  "rto": "0s",
+  "rto_target_seconds": 300,
+  "rto_exceeded": false,
+  "cleanup_done": false
+}

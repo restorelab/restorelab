@@ -1,0 +1,32 @@
+{
+  "items": [
+    {
+      "id": "110",
+      "name": "linux-test",
+      "kind": "vm",
+      "node": "pve1",
+      "cpu_cores": 2,
+      "memory_bytes": 2147483648,
+      "disk_bytes": 0,
+      "power_state": "running",
+      "template": false,
+      "managed": false,
+      "last_run_id": "8f1c6d20-0000-4000-8000-000000000001",
+      "last_run_at": "2026-09-01T10:00:00Z",
+      "last_run_state": "SUCCESS",
+      "last_run_result": "SUCCESS"
+    },
+    {
+      "id": "9001",
+      "name": "restorelab-110",
+      "kind": "",
+      "node": "pve1",
+      "cpu_cores": 0,
+      "memory_bytes": 0,
+      "disk_bytes": 0,
+      "power_state": "",
+      "template": false,
+      "managed": true
+    }
+  ]
+}
