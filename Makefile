@@ -11,6 +11,15 @@ LDFLAGS     := -s -w \
 GO          ?= go
 BIN_DIR     := bin
 
+# golangci-lint is run from source, with this project's own Go toolchain.
+#
+# It refuses to analyse a module whose Go version is newer than the one it was
+# built with, so a prebuilt binary goes stale the moment go.mod moves ahead of
+# it - which is exactly how CI failed the first time it ran. Building it here
+# makes that impossible, and makes `make lint` the single command developers
+# and CI both run.
+GOLANGCI    := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -69,8 +78,8 @@ fmt-check: ## Fail when the codebase is not gofmt-clean
 	if [ -n "$$out" ]; then echo "not gofmt-clean:"; echo "$$out"; exit 1; fi
 
 .PHONY: lint
-lint: ## Run golangci-lint (must be installed)
-	golangci-lint run ./...
+lint: ## Run golangci-lint, built from source with this project's Go
+	$(GO) run $(GOLANGCI) run --timeout=10m ./...
 
 .PHONY: tidy
 tidy: ## Tidy go.mod / go.sum

@@ -72,10 +72,11 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --timeout=5m
+      # `make lint`, not the action: the action ships a prebuilt golangci-lint
+      # that refuses to analyse a module targeting a newer Go than the one it
+      # was built with, and go.mod is ahead of it. Running the same command a
+      # developer runs also removes the possibility of the two disagreeing.
+      - run: make lint
 
   vulncheck:
     name: govulncheck
