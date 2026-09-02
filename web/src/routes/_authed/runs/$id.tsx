@@ -1,6 +1,7 @@
 import { reportUrl } from "@/api/client"
 import { runQuery } from "@/api/queries"
 import { isTerminal } from "@/api/types"
+import { CancelRun } from "@/components/cancel-run"
 import { ErrorState } from "@/components/error-state"
 import { PhaseTimeline } from "@/components/phase-timeline"
 import { RunStatusBadge, toneClass } from "@/components/run-status"
@@ -11,7 +12,7 @@ import { addNamespace } from "@/i18n"
 import run from "@/i18n/locales/en/run.json"
 import { formatAbsolute, formatRelative } from "@/lib/time"
 import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query"
-import { Link, createFileRoute } from "@tanstack/react-router"
+import { Link, createFileRoute, useRouteContext } from "@tanstack/react-router"
 import { Download, PlugZap } from "lucide-react"
 import { type ReactNode, useEffect } from "react"
 import { useTranslation } from "react-i18next"
@@ -47,6 +48,7 @@ function RunDetailPage() {
   const { t } = useTranslation("run")
   const queryClient = useQueryClient()
   const { data: doc } = useSuspenseQuery(runQuery(id))
+  const { can } = useRouteContext({ from: "/_authed" })
 
   // A finished drill has nothing left to stream; the connection is only opened
   // while the run is still going.
@@ -72,14 +74,17 @@ function RunDetailPage() {
         <div className="flex flex-wrap items-center gap-4">
           <h1 className="font-semibold text-xl">{doc.source_name}</h1>
           <RunStatusBadge state={doc.state} result={doc.result} />
-          <a
-            href={reportUrl(id)}
-            download
-            className="ml-auto inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
-          >
-            <Download className="size-4" aria-hidden="true" />
-            {t("report")}
-          </a>
+          <div className="ml-auto flex items-center gap-2">
+            <CancelRun run={doc} canOperate={can("operate")} />
+            <a
+              href={reportUrl(id)}
+              download
+              className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
+            >
+              <Download className="size-4" aria-hidden="true" />
+              {t("report")}
+            </a>
+          </div>
         </div>
       </header>
 
