@@ -228,9 +228,19 @@ func (r *Recorder) Finish(ctx context.Context, run *core.RecoveryRun) {
 		r.mu.Unlock()
 	}
 
-	if err := r.store.UpdateRun(ctx, run); err != nil {
-		r.warn("could not record the outcome of this run", err)
-	}
+	// The timeline goes in before the outcome, and the order is the point.
+	//
+	// UpdateRun is what writes the terminal state, and a terminal state is
+	// what every reader waits for before it renders a report: the e2e suite,
+	// `runs show`, a dashboard polling until the drill ends. Writing it first
+	// left a window in which the database held a SUCCESS run with an empty
+	// timeline, and readers fell into it - the CI caught exactly that on two
+	// e2e tests the first time it ran.
+	//
+	// A process that dies between these writes now leaves a run that is not
+	// terminal, which is the case reconciliation already handles: it fails the
+	// run and never replays it. That is a better failure than a run that says
+	// SUCCESS and can never explain what it did.
 	for i, step := range run.Steps {
 		if err := r.store.SaveStep(ctx, run.ID, i, step); err != nil {
 			r.warn("could not record a step", err)
@@ -242,6 +252,10 @@ func (r *Recorder) Finish(ctx context.Context, run *core.RecoveryRun) {
 			r.warn("could not record a check", err)
 			break
 		}
+	}
+
+	if err := r.store.UpdateRun(ctx, run); err != nil {
+		r.warn("could not record the outcome of this run", err)
 	}
 }
 

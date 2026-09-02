@@ -519,3 +519,82 @@ func TestRecorderFinishCarriesTheProvenanceOnARunThatNeverEmitted(t *testing.T) 
 		t.Errorf("provenance = %q/v%d, want plan-id/v3", got.PlanID, got.PlanVersion)
 	}
 }
+
+// orderedStore records the sequence of writes a Recorder makes.
+//
+// It embeds store.Noop so that adding a method to the Store interface never
+// breaks it - the failure that hand-written doubles in this package have
+// already caused once.
+type orderedStore struct {
+	store.Noop
+	calls []string
+	// terminal is the state UpdateRun was last given.
+	terminal core.RunState
+}
+
+func (o *orderedStore) CreateRun(context.Context, *core.RecoveryRun, string) error {
+	o.calls = append(o.calls, "CreateRun")
+	return nil
+}
+
+func (o *orderedStore) UpdateRun(_ context.Context, run *core.RecoveryRun) error {
+	o.calls = append(o.calls, "UpdateRun")
+	o.terminal = run.State
+	return nil
+}
+
+func (o *orderedStore) SaveStep(context.Context, string, int, core.Step) error {
+	o.calls = append(o.calls, "SaveStep")
+	return nil
+}
+
+func (o *orderedStore) SaveCheck(context.Context, string, int, core.CheckResult) error {
+	o.calls = append(o.calls, "SaveCheck")
+	return nil
+}
+
+// A run must not be readable as finished before its timeline is.
+//
+// Finish used to write the run row first and its steps afterwards, which left
+// a window where the database held a SUCCESS run with an empty timeline. Any
+// reader that waits for a terminal state and then renders the report - the
+// e2e suite, `runs show`, a dashboard polling until the drill ends - could
+// observe it, and did: the CI caught it on two e2e tests the first time it
+// ran with -race.
+//
+// The order is the fix: everything the report is made of goes in first, and
+// the terminal state is the last write. A process that dies in between leaves
+// a non-terminal run, which reconciliation already fails and never replays.
+func TestFinishWritesTheTimelineBeforeTheTerminalState(t *testing.T) {
+	s := &orderedStore{}
+	r := New(s, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	r.AttachTo("run-1")
+
+	run := &core.RecoveryRun{
+		ID:     "run-1",
+		State:  core.RunSuccess,
+		Result: core.ResultSuccess,
+		Steps: []core.Step{
+			{Name: "discover_backup"},
+			{Name: "restore"},
+		},
+		Checks: []core.CheckResult{{Name: "ssh"}},
+	}
+	r.Finish(context.Background(), run)
+
+	last := -1
+	for i, c := range s.calls {
+		if c == "UpdateRun" {
+			last = i
+		}
+	}
+	if last == -1 {
+		t.Fatalf("Finish never wrote the run: %v", s.calls)
+	}
+	for i, c := range s.calls {
+		if (c == "SaveStep" || c == "SaveCheck") && i > last {
+			t.Fatalf("%s lands after the run is marked %s, so a reader waiting for a terminal state can see an incomplete timeline: %v",
+				c, s.terminal, s.calls)
+		}
+	}
+}
