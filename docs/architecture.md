@@ -210,11 +210,19 @@ it would destroy the temporary workload of a live restore.
 | Version | Content |
 | --- | --- |
 | v0.1 | Proxmox VE + PBS, QEMU VMs, CLI drill, isolated restore, ping/tcp/http checks, cleanup, text/JSON/HTML report |
-| v0.2 | Scheduled drills, SSH / PostgreSQL / MySQL checks, Discord & Slack alerts, RTO targets |
-| v0.3 | Multi-workload plans, dependencies, restore ordering, parallel restores |
-| v0.4 | Remote probes, RBAC, OIDC, PDF reports |
-| v0.5 | LXC, multi-cluster, multiple PBS, recovery confidence, capacity checks |
-| v1.0 | Web dashboard, audit, notifications |
+| v0.2 | **The web interface**: watching drills live, launching and cancelling them, editing the plan catalogue, and a first-run setup that replaces the install commands |
+| v0.3 | Scheduled drills, SSH / PostgreSQL / MySQL checks, Discord & Slack alerts |
+| v0.4 | Multi-workload plans, dependencies, restore ordering, parallel restores |
+| v0.5 | Remote probes, RBAC, OIDC, PDF reports |
+| v0.6 | LXC, multi-cluster, multiple PBS, capacity checks |
+
+The interface moved to the front of that list, from the v1.0 it used to sit
+in, because it is not a convenience layer over this tool — it is how most
+people will ever use it. A recovery drill is worth running by an operations
+team, not only by whoever is comfortable in a terminal, and every command
+that stands between someone and their first drill is a reason they never run
+one. The CLI keeps every capability: it is what automation drives, and it is
+the only place that touches the master key.
 
 Delivered ahead of that order: persistence (SQLite and PostgreSQL), the HTTP
 API, the queue and worker behind its write paths, stored recovery plans, the
@@ -224,7 +232,21 @@ editor. The confidence score and any dashboard need a history to read before
 anything else can be built on them, and a dashboard that can only watch drills
 it cannot start is half a product.
 
-The dashboard is being built in three slices: **C1** the server half (done),
-**C2** the read-only interface, **C3** the write paths. C1 ships in the binary
-with no interface compiled into it, which is why `/` explains itself rather
-than 404ing.
+The interface is being built in four slices: **C1** the server half (done),
+**C2** the read-only interface, **C3** the write paths, **C4** the first-run
+setup. C1 ships in the binary with no interface compiled into it, which is
+why `/` explains itself rather than 404ing.
+
+C4 is what turns installation into one command. Started with no
+configuration, `serve` prints a URL carrying a single-use setup token, and
+the browser walks through connecting a cluster, creating the isolated bridge
+and minting the first API token — the work `init`, `connect`, `network
+create` and `token create` do today.
+
+That endpoint accepts a Proxmox administrator's password, so two things hold
+it in place. It exists only until a configuration does, and reaching it needs
+the token printed on the console of the machine running the server: the
+person setting RestoreLab up is at that console, and nobody else is. The
+master key stays where it is — behind the same interface `ProviderSet` uses,
+implemented by the CLI, so `internal/api` still imports neither `crypto` nor
+`internal/providers`.

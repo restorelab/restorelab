@@ -50,8 +50,13 @@ Alpha, under active development. The Proxmox recovery drill pipeline works
 end to end behind the CLI and has been proven against a real cluster, drill
 history is kept automatically, recovery plans live in the database, and the
 HTTP API both serves that history and triggers new drills through a worker
-that drains a queue. What is still ahead: the web dashboard's own interface
-and the scheduler.
+that drains a queue.
+
+**Next is the web interface**, and it is the priority. Proving a backup can
+recover a service is worth doing by an operations team, not only by whoever
+is comfortable in a terminal — so the goal is one binary, one command, and a
+browser that sets itself up and runs everything from there. The command line
+keeps every capability; it is what automation drives.
 
 Two things in the list below are implemented and unit-tested but have never
 run against real infrastructure, because the cluster this was built on has
