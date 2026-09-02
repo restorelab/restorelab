@@ -6,10 +6,16 @@
  * into __fixtures__, and fixtures.ts reads them back under these types, which
  * tsc checks. A renamed or dropped key fails there, on the day it changes.
  *
- * What that does NOT catch is a key the server added and this file has not
- * heard of: TypeScript only flags excess properties on object literals, and a
- * fixture is an imported module. When you add a field to a DTO, add it here
- * too - the fixture will not remind you.
+ * The check is one-directional, and it is worth knowing which direction.
+ * It proves that every key this file *requires* is present in the capture,
+ * with the right type. It says nothing about keys the capture has and this
+ * file does not: TypeScript only flags excess properties on object literals,
+ * and a fixture is an imported module.
+ *
+ * So a key the server renames or drops fails here. A key the server *adds*
+ * does not, and neither does a field deleted from this file. Both of those
+ * are on you: when you add a field to a DTO, add it here too - nothing will
+ * remind you.
  *
  * Sources: internal/api/{runs,workloads,meta,trigger,session,problem}.go and
  * internal/report/json.go.
@@ -308,6 +314,45 @@ export interface DoneFrame {
 export interface DisconnectedFrame {
   state: RunState
   reason: string
+}
+
+// ---------------------------------------------------------------- catalogue
+
+/**
+ * A stored plan.
+ *
+ * `yaml` is absent from a listing and present on a detail: a catalogue of
+ * fifty plans must not ship fifty documents to draw a table. The document is
+ * stored and returned verbatim, comments included, so an editor may send back
+ * exactly what it received without losing anything a human wrote.
+ */
+export interface Plan {
+  id: string
+  name: string
+  description?: string
+  workload_id: string
+  provider_id?: string
+  version: number
+  created_at: string
+  updated_at: string
+  yaml?: string
+}
+
+/**
+ * What POST /plans/validate answers about a document, having stored nothing.
+ *
+ * `normalized_yaml` is the document with its defaults applied, and it is the
+ * useful half: it shows the difference between a field left out and a field
+ * left out *meaning something*. A plan with no `restore` block still lands its
+ * clone on the isolated bridge, and this is where that becomes visible.
+ */
+export interface Validated {
+  valid: boolean
+  name: string
+  description?: string
+  workload_id: string
+  provider_id?: string
+  normalized_yaml: string
 }
 
 // ------------------------------------------------------------------- writes

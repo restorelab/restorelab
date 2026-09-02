@@ -153,10 +153,13 @@ Three things worth knowing before they cost an hour:
 - **The fixtures are excluded from Biome** (`biome.json`). Their canonical
   formatting is the Go writer's, and letting a formatter reflow them would
   make every regeneration a failing check.
-- **What this does not catch is a key the server *added*.** TypeScript only
-  flags excess properties on object literals, and a fixture is an imported
-  module. When you add a field to a DTO, add it to `types.ts` too — nothing
-  will remind you.
+- **The check runs in one direction.** It proves every key `types.ts`
+  requires is in the capture with the right type, so a key the server renames
+  or drops fails on the spot. It cannot see a key the capture has and the type
+  does not: excess properties are only flagged on object literals, and a
+  fixture is an imported module. So a field *added* to a DTO, and a field
+  *deleted* from `types.ts`, both pass. When you add a field to a DTO, add it
+  to `types.ts` too — nothing will remind you.
 
 The front-end tests answer with these captures rather than building payloads
 of their own. That is the other half of the point: a test that invents its own

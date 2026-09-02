@@ -22,8 +22,11 @@ import cancel202 from "./__fixtures__/cancel-202.json"
 import cleanup from "./__fixtures__/cleanup.json"
 import confidence from "./__fixtures__/confidence.json"
 import doctor from "./__fixtures__/doctor.json"
+import plan from "./__fixtures__/plan.json"
+import plansPage from "./__fixtures__/plans-page.json"
 import problem401 from "./__fixtures__/problem-401.json"
 import problem404 from "./__fixtures__/problem-404.json"
+import problem409Version from "./__fixtures__/problem-409-version.json"
 import problem409 from "./__fixtures__/problem-409.json"
 import providers from "./__fixtures__/providers.json"
 import queue from "./__fixtures__/queue.json"
@@ -33,6 +36,8 @@ import runRunning from "./__fixtures__/run-running.json"
 import runsPage from "./__fixtures__/runs-page.json"
 import session from "./__fixtures__/session.json"
 import trigger201 from "./__fixtures__/trigger-201.json"
+import validateInvalid from "./__fixtures__/validate-invalid.json"
+import validateOk from "./__fixtures__/validate-ok.json"
 import workload from "./__fixtures__/workload.json"
 import workloadsPage from "./__fixtures__/workloads-page.json"
 import type {
@@ -41,6 +46,7 @@ import type {
   Confidence,
   Doctor,
   Page,
+  Plan,
   Problem,
   ProgressFrame,
   Provider,
@@ -48,6 +54,7 @@ import type {
   RunDocument,
   RunSummary,
   Session,
+  Validated,
   Workload,
 } from "./types"
 
@@ -57,8 +64,12 @@ import type {
  * A JSON import gives `string` where types.ts says `"SUCCESS" | "FAILED"`, so
  * a straight annotation would fail on every enum for a reason that has nothing
  * to do with drift. Widening the unions - and nothing else - leaves the checks
- * that matter intact: a required key that disappeared, a key renamed, and a
- * number that became a string all still fail.
+ * that matter intact: a key the server renamed or dropped, and a number that
+ * became a string, both still fail.
+ *
+ * What no annotation can catch here is a key the capture has and the type does
+ * not. Excess properties are only flagged on object literals, and this is an
+ * imported module - see the note at the top of types.ts.
  */
 type Widen<T> = T extends string
   ? string
@@ -116,3 +127,9 @@ export const cleanupFixture = fixture<CleanupResult>(cleanup)
 export const problem401Fixture = fixture<Problem>(problem401)
 export const problem404Fixture = fixture<Problem>(problem404)
 export const problem409Fixture = fixture<Problem>(problem409)
+
+export const plansPageFixture = fixture<Page<Plan>>(plansPage)
+export const planFixture = fixture<Plan>(plan)
+export const validateOkFixture = fixture<Validated>(validateOk)
+export const validateInvalidFixture = fixture<Problem>(validateInvalid)
+export const problem409VersionFixture = fixture<Problem>(problem409Version)
