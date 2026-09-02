@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -15,7 +14,6 @@ import (
 	"github.com/restorelab/restorelab/internal/config"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/crypto"
-	"github.com/restorelab/restorelab/internal/providers"
 	"github.com/restorelab/restorelab/internal/providers/proxmox"
 )
 
@@ -111,13 +109,6 @@ The administrator password can be typed at the prompt, read from a file with
 }
 
 func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) error {
-	// connect is often the very first command a user runs, so it must work on
-	// a machine with nothing set up yet.
-	cfg, key, err := a.ensureInitialised()
-	if err != nil {
-		return err
-	}
-
 	password, err := a.readAdminPassword(f)
 	if err != nil {
 		return err
@@ -128,27 +119,21 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 		return err
 	}
 
-	admin, err := proxmox.NewAdminClient(proxmox.AdminConfig{
-		Endpoint:           endpoint,
-		Username:           f.adminUser,
-		Password:           password,
-		InsecureSkipVerify: f.insecure,
-		CACertPEM:          ca,
-		Timeout:            30 * time.Second,
-	})
+	// connect is often the very first command a user runs, so it must work on
+	// a machine with nothing set up yet. Doing it here rather than inside
+	// provision is what lets this command say what it created.
+	cfg, _, made, err := a.ensureInitialisedQuietly()
 	if err != nil {
 		return err
 	}
-	defer admin.Close()
-
-	if err := admin.Login(ctx); err != nil {
-		return err
+	if made.key {
+		fmt.Fprintf(a.out, "%s master key generated at %s\n", a.ok(), made.keyPath)
+		fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
+			"Back it up: without it, stored provider tokens cannot be decrypted."))
 	}
-	version, err := admin.Version(ctx)
-	if err != nil {
-		return err
+	if made.config {
+		fmt.Fprintf(a.out, "%s created %s\n", a.ok(), a.path())
 	}
-	fmt.Fprintf(a.out, "%s connected to Proxmox VE %s as %s\n\n", a.ok(), version, f.adminUser)
 
 	role := f.role
 	if role == "" {
@@ -157,58 +142,72 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 			role = "RestoreLabRead"
 		}
 	}
-
-	// Re-running connect must be able to reconcile roles and ACLs without
-	// destroying a token that already works. Proxmox only ever reveals a
-	// secret once, so this is only safe when the configuration already holds
-	// that exact token's sealed secret.
-	reuse := false
-	if existing, err := cfg.Provider(f.id); err == nil {
-		if existing.TokenID == f.serviceUser+"!"+f.tokenName && existing.TokenSecret != "" {
-			reuse = true
-		}
-	}
-
-	opts := proxmox.BootstrapOptions{
-		UserID:    f.serviceUser,
-		Comment:   "RestoreLab recovery drills",
-		TokenName: f.tokenName,
-		RoleName:  role,
-		Pool:      f.pool,
-		ReadOnly:  f.readOnly,
-		Node:      f.node,
-		Storages:  f.storages,
-		Bridge:    a.isolatedBridge(cfg, f),
-		DryRun:    f.dryRun,
-
-		ReuseExistingToken: reuse,
-	}
+	pool := f.pool
 	if f.noPool || f.readOnly {
-		opts.Pool = ""
+		pool = ""
 	}
 
-	a.describeBootstrap(endpoint, opts)
+	opts := provisionOptions{
+		Endpoint:      endpoint,
+		AdminUser:     f.adminUser,
+		AdminPassword: password,
+		Insecure:      f.insecure,
+		CACertPEM:     ca,
+		CACertPath:    f.caCert,
+
+		ProviderID:  f.id,
+		ServiceUser: f.serviceUser,
+		TokenName:   f.tokenName,
+		RoleName:    role,
+		Pool:        pool,
+		Node:        f.node,
+		Storages:    f.storages,
+
+		BridgeName: a.isolatedBridge(cfg, f),
+		ReadOnly:   f.readOnly,
+		DryRun:     f.dryRun,
+
+		// The bridge stays this command's own business: it asks before it
+		// touches a node's network, and a conversation cannot live inside a
+		// function that prints nothing. The order that matters - bootstrap,
+		// seal, verify - is provision's, and this hook runs after all three.
+		AfterVerify: func(ctx context.Context, admin *proxmox.AdminClient,
+			hv core.HypervisorProvider, nodes []core.Node) error {
+			a.maybeCreateBridge(ctx, admin, cfg, f, hv, nodes)
+			return nil
+		},
+	}
+
+	a.describeBootstrap(endpoint, proxmox.BootstrapOptions{
+		UserID: opts.ServiceUser, TokenName: opts.TokenName, RoleName: opts.RoleName,
+		Pool: opts.Pool, ReadOnly: opts.ReadOnly, Node: opts.Node,
+		Storages: opts.Storages, Bridge: opts.BridgeName, DryRun: opts.DryRun,
+	})
 	if !f.dryRun && !f.yes && !a.confirm("Create this in Proxmox?") {
 		fmt.Fprintln(a.out, "aborted, nothing was changed")
 		return nil
 	}
 
-	result, err := admin.Bootstrap(ctx, opts)
+	result, err := a.provision(ctx, opts)
+
+	// The steps are printed whatever happened: on failure they say how far it
+	// got, and every one of them is idempotent, so running it again is safe.
+	if result != nil && len(result.Steps) > 0 {
+		fmt.Fprintln(a.out)
+		for _, step := range result.Steps {
+			glyph := a.ok()
+			if step.Status == "already exists" || step.Status == "skipped" {
+				glyph = a.paint(colorDim, "\u00b7")
+			}
+			fmt.Fprintf(a.out, "  %s %-44s %s\n",
+				glyph, step.Description, a.paint(colorDim, step.Status))
+			if step.Detail != "" {
+				fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow, step.Detail))
+			}
+		}
+	}
 	if err != nil {
 		return err
-	}
-
-	fmt.Fprintln(a.out)
-	for _, step := range result.Steps {
-		glyph := a.ok()
-		if step.Status == "already exists" || step.Status == "skipped" {
-			glyph = a.paint(colorDim, "·")
-		}
-		line := fmt.Sprintf("  %s %-44s %s", glyph, step.Description, a.paint(colorDim, step.Status))
-		fmt.Fprintln(a.out, line)
-		if step.Detail != "" {
-			fmt.Fprintf(a.out, "      %s\n", a.paint(colorYellow, step.Detail))
-		}
 	}
 
 	if f.dryRun {
@@ -216,70 +215,9 @@ func (a *app) connect(ctx context.Context, endpoint string, f *connectFlags) err
 		return nil
 	}
 
-	// Store the provider before verifying: a token that exists in Proxmox but
-	// nowhere in the config is the one failure mode we cannot recover from,
-	// since PVE reveals a token secret exactly once.
-	entry := config.Provider{
-		ID:         f.id,
-		Kind:       providers.KindProxmox,
-		Roles:      []string{providers.RoleHypervisor, providers.RoleBackup},
-		Endpoint:   endpoint,
-		TokenID:    result.TokenID,
-		Insecure:   f.insecure,
-		CACertPath: f.caCert,
-		Node:       f.node,
-		Pool:       opts.Pool,
-		TempIDMin:  core.DefaultTempIDMin,
-		TempIDMax:  core.DefaultTempIDMax,
-	}
-	previousSecret := ""
-	if existing, err := cfg.Provider(entry.ID); err == nil {
-		previousSecret = existing.TokenSecret
-	}
-
-	cfg.Upsert(entry)
-	switch {
-	case result.Secret != "":
-		if err := cfg.SetProviderSecret(entry.ID, result.Secret, key); err != nil {
-			return err
-		}
-	case previousSecret != "":
-		// The token was reused: Proxmox gave us no secret because it only
-		// ever hands one out at creation. Keep the one already sealed.
-		stored, err := cfg.Provider(entry.ID)
-		if err != nil {
-			return err
-		}
-		stored.TokenSecret = previousSecret
-	default:
-		return fmt.Errorf("no token secret available for %s: delete the token in Proxmox and run connect again", entry.TokenID)
-	}
-	if cfg.Defaults.Provider == "" {
-		cfg.Defaults.Provider = entry.ID
-	}
-	if err := config.Save(a.path(), cfg); err != nil {
-		return fmt.Errorf("the token was created in Proxmox but could not be saved: %w", err)
-	}
-	a.cfg = cfg
-
-	fmt.Fprintf(a.out, "\n%s token %s created and sealed into %s\n", a.ok(), a.paint(colorBold, result.TokenID), a.path())
-
-	// Now prove the token actually works, which is the only thing that makes
-	// the whole exercise worth anything.
-	hv, _, err := a.hypervisor(entry.ID)
-	if err != nil {
-		return err
-	}
-	nodes, err := hv.ListNodes(ctx)
-	if err != nil {
-		return fmt.Errorf("the token was created but cannot be used: %w", err)
-	}
-	fmt.Fprintf(a.out, "%s token verified: %d node(s) visible\n", a.ok(), len(nodes))
-
-	// The isolated bridge is the last thing standing between a fresh install
-	// and a real drill, and this is the only moment RestoreLab holds the
-	// privileges to create it: the service token deliberately cannot.
-	a.maybeCreateBridge(ctx, admin, cfg, f, hv, nodes)
+	fmt.Fprintf(a.out, "\n%s token %s created and sealed into %s\n",
+		a.ok(), a.paint(colorBold, result.TokenID), a.path())
+	fmt.Fprintf(a.out, "%s token verified: %d node(s) visible\n", a.ok(), result.NodeCount)
 
 	a.printConnectNextSteps(f)
 	return nil
@@ -350,20 +288,30 @@ func (a *app) maybeCreateBridge(ctx context.Context, admin *proxmox.AdminClient,
 	a.printBridgeResult(result, f.dryRun)
 }
 
-// ensureInitialised loads the configuration and master key, creating both when
-// this is the first command ever run on this machine.
-func (a *app) ensureInitialised() (*config.Config, crypto.Key, error) {
+// initialised says what ensureInitialisedQuietly had to create.
+//
+// The browser wizard needs the same work done and none of the printing, so
+// the doing and the saying are separated: this is what the CLI needs in order
+// to say it.
+type initialised struct {
+	key     bool
+	keyPath string
+	config  bool
+}
+
+// ensureInitialisedQuietly does the work and reports what it created.
+func (a *app) ensureInitialisedQuietly() (*config.Config, crypto.Key, initialised, error) {
+	var made initialised
+
 	keyPath, created, err := a.ensureMasterKey()
 	if err != nil {
-		return nil, crypto.Key{}, err
+		return nil, crypto.Key{}, made, err
 	}
-	if created {
-		fmt.Fprintf(a.out, "%s master key generated at %s\n", a.ok(), keyPath)
-		fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow, "Back it up: without it, stored provider tokens cannot be decrypted."))
-	}
+	made.key, made.keyPath = created, keyPath
+
 	key, err := a.masterKey()
 	if err != nil {
-		return nil, crypto.Key{}, err
+		return nil, crypto.Key{}, made, err
 	}
 
 	cfg, cfgErr := a.config()
@@ -371,14 +319,14 @@ func (a *app) ensureInitialised() (*config.Config, crypto.Key, error) {
 	if errors.Is(err, config.ErrNotFound) {
 		cfg = config.New()
 		if err := config.Save(a.path(), cfg); err != nil {
-			return nil, crypto.Key{}, err
+			return nil, crypto.Key{}, made, err
 		}
 		a.cfg = cfg
-		fmt.Fprintf(a.out, "%s created %s\n", a.ok(), a.path())
+		made.config = true
 	} else if err != nil {
-		return nil, crypto.Key{}, err
+		return nil, crypto.Key{}, made, err
 	}
-	return cfg, key, nil
+	return cfg, key, made, nil
 }
 
 // describeBootstrap prints, in plain words, exactly what is about to be created

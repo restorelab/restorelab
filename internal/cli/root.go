@@ -99,7 +99,7 @@ cleans everything up.`,
 
 	f := cmd.PersistentFlags()
 	f.StringVar(&a.configPath, "config", "", "path to config.yaml (default: $RESTORELAB_CONFIG or ~/.restorelab/config.yaml)")
-	f.StringVar(&a.keyPath, "master-key-file", "", "path to the master key file (default: $RESTORELAB_MASTER_KEY or ~/.restorelab/master.key)")
+	f.StringVar(&a.keyPath, "master-key-file", "", "path to the master key file (default: ~/.restorelab/master.key; RESTORELAB_MASTER_KEY holds the key itself and wins over this)")
 	f.BoolVar(&a.noColor, "no-color", false, "disable coloured output")
 	f.BoolVarP(&a.verbose, "verbose", "v", false, "verbose output")
 
@@ -168,6 +168,19 @@ func (a *app) config() (*config.Config, error) {
 	}
 	a.cfg = cfg
 	return cfg, nil
+}
+
+// forget drops the lazily loaded configuration and master key.
+//
+// `serve` runs the first-run wizard in the same process that serves
+// afterwards, and by then it has cached the absence of a configuration. A
+// restart that kept those caches would build the real server against nothing,
+// which is a restart in name only.
+func (a *app) forget() {
+	a.lazyMu.Lock()
+	defer a.lazyMu.Unlock()
+	a.cfg = nil
+	a.keySet = false
 }
 
 // masterKey resolves and caches the master key.

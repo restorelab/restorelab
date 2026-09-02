@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -104,6 +106,21 @@ func (o serveOptions) check() error {
 func (a *app) serve(ctx context.Context, opts serveOptions) error {
 	if err := opts.check(); err != nil {
 		return err
+	}
+
+	// No cluster to serve: run the wizard first. It returns once there is
+	// one, and everything below then builds the real server on the same
+	// address - which is what makes `restorelab serve` the only command an
+	// installation needs.
+	//
+	// The question is asked through cliSetup so that "configured" means the
+	// same thing here and in the router that decides whether the setup routes
+	// exist. Two notions of it is how somebody ends up locked out.
+	setup := &cliSetup{a: a}
+	if !setup.Configured() {
+		if err := a.serveSetup(ctx, opts, setup); err != nil {
+			return err
+		}
 	}
 
 	cfg, err := a.config()
@@ -211,6 +228,96 @@ func (a *app) serve(ctx context.Context, opts serveOptions) error {
 	return api.Serve(ctx, opts.listen, srv, func(format string, args ...any) {
 		fmt.Fprintf(a.err, format+"\n", args...)
 	})
+}
+
+// newSetupToken mints the secret printed on the console.
+//
+// It is the only thing standing between an administrator password and an open
+// port, so it comes from crypto/rand and is long enough that guessing it is
+// not a strategy.
+func newSetupToken() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generating the setup token: %w", err)
+	}
+	return "rls_" + base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+// setupAPIOptions assembles what a server in setup mode needs, which is
+// almost nothing.
+//
+// A function rather than a literal, for the same reason serveAPIOptions is
+// one: a test can read it. A dependency left out by accident does not fail a
+// build - it answers 503 forever, and every test that never asked stays green.
+func setupAPIOptions(s api.Setup, token string) api.Options {
+	return api.Options{
+		Setup:      s,
+		SetupToken: token,
+		UI:         ui.FS(),
+	}
+}
+
+// serveSetup runs the first-run wizard and returns once it has succeeded.
+//
+// The setup server cannot become the real one. A Server's dependencies are
+// built once in api.New and never rewritten, and that is what makes it simple
+// to reason about; making them mutable for something that happens once in the
+// life of an installation would be a permanent cost for a momentary
+// convenience. So this hands the port over instead.
+func (a *app) serveSetup(ctx context.Context, opts serveOptions, setup *cliSetup) error {
+	if opts.noListen {
+		return errors.New(
+			"nothing is configured yet, and --no-listen leaves no way to configure it: " +
+				"run `restorelab serve` and open the address it prints")
+	}
+
+	token, err := newSetupToken()
+	if err != nil {
+		return err
+	}
+
+	srv := api.New(setupAPIOptions(setup, token))
+
+	fmt.Fprintf(a.out, "%s RestoreLab is not configured yet.\n", a.warn())
+	fmt.Fprintf(a.out, "  Open this address to set it up. The token is printed once, and used once:\n\n")
+	fmt.Fprintf(a.out, "      %s\n\n", a.paint(colorCyan,
+		fmt.Sprintf("http://%s/setup?token=%s", opts.listen, token)))
+
+	// The wizard's success is what ends this server, so it gets a context of
+	// its own: cancelling it must not cancel the caller's.
+	serveCtx, stop := context.WithCancel(ctx)
+	defer stop()
+
+	errc := make(chan error, 1)
+	go func() {
+		errc <- api.Serve(serveCtx, opts.listen, srv, func(format string, args ...any) {
+			fmt.Fprintf(a.err, format+"\n", args...)
+		})
+	}()
+
+	select {
+	case err := <-errc:
+		// The listener ended on its own - a port already in use, most likely.
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-srv.SetupDone():
+	}
+
+	fmt.Fprintf(a.out, "%s configured. Starting RestoreLab.\n\n", a.ok())
+
+	// Hand the port over: stop the wizard, and wait for its listener to
+	// actually let go. Without the wait, the real server binds onto a port
+	// something else still holds.
+	stop()
+	if err := <-errc; err != nil {
+		return err
+	}
+
+	// The app cached the absence of a configuration. Forget it, or the server
+	// about to start is told there still is not one.
+	a.forget()
+	return nil
 }
 
 // serveAPIOptions assembles what the HTTP server needs.
