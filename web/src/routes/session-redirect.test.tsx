@@ -75,6 +75,13 @@ describe("the authenticated boundary", () => {
   it("lets an authenticated visitor through to the shell", async () => {
     vi.mocked(fetch).mockImplementation(async () => SESSION())
     show("/")
-    expect(await screen.findByRole("button", { name: /sign out/i })).toBeInTheDocument()
+    // The default one second is a bet, not an assertion: this is the only
+    // test here that boots a router, resolves the overview's five suspense
+    // queries and renders the shell, and it started losing that bet once the
+    // suite grew a slower file to share a machine with. What is being checked
+    // is the boundary, never the speed.
+    expect(
+      await screen.findByRole("button", { name: /sign out/i }, { timeout: 5000 }),
+    ).toBeInTheDocument()
   })
 })

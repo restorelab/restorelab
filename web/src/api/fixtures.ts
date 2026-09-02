@@ -35,6 +35,8 @@ import runFinished from "./__fixtures__/run-finished.json"
 import runRunning from "./__fixtures__/run-running.json"
 import runsPage from "./__fixtures__/runs-page.json"
 import session from "./__fixtures__/session.json"
+import setupFailed from "./__fixtures__/setup-failed.json"
+import setupResult from "./__fixtures__/setup-result.json"
 import trigger201 from "./__fixtures__/trigger-201.json"
 import validateInvalid from "./__fixtures__/validate-invalid.json"
 import validateOk from "./__fixtures__/validate-ok.json"
@@ -54,6 +56,8 @@ import type {
   RunDocument,
   RunSummary,
   Session,
+  SetupFailure,
+  SetupOutcome,
   Validated,
   Workload,
 } from "./types"
@@ -133,3 +137,6 @@ export const planFixture = fixture<Plan>(plan)
 export const validateOkFixture = fixture<Validated>(validateOk)
 export const validateInvalidFixture = fixture<Problem>(validateInvalid)
 export const problem409VersionFixture = fixture<Problem>(problem409Version)
+
+export const setupResultFixture = fixture<SetupOutcome>(setupResult)
+export const setupFailedFixture = fixture<SetupFailure>(setupFailed)

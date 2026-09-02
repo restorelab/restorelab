@@ -15,13 +15,26 @@ export class ApiError extends Error {
   readonly status: number
   readonly detail?: string
 
-  constructor(p: Problem) {
+  /**
+   * The problem document as it arrived.
+   *
+   * A problem+json may carry fields beyond the five every problem has, and
+   * throwing them away costs the caller the useful half: first-run setup
+   * answers its refusals with the provisioning steps it got through, and a
+   * screen that only had the message would show a dead end instead of how
+   * far it got. Kept as unknown so this file learns nothing about any one
+   * endpoint's extras.
+   */
+  readonly body?: unknown
+
+  constructor(p: Problem, body?: unknown) {
     super(p.detail ? `${p.title}: ${p.detail}` : p.title)
     this.name = "ApiError"
     this.type = p.type
     this.title = p.title
     this.status = p.status
     this.detail = p.detail
+    this.body = body
   }
 }
 
@@ -33,36 +46,42 @@ export class ApiError extends Error {
  * components.
  */
 export class UnauthorizedError extends ApiError {
-  constructor(p: Problem) {
-    super(p)
+  constructor(p: Problem, body?: unknown) {
+    super(p, body)
     this.name = "UnauthorizedError"
   }
 }
 
-async function toProblem(res: Response): Promise<Problem> {
+async function toProblem(res: Response): Promise<[Problem, unknown]> {
   const type = res.headers.get("content-type") ?? ""
   if (type.includes("problem+json") || type.includes("application/json")) {
     try {
       const body = (await res.json()) as Partial<Problem>
       if (body && typeof body.title === "string") {
-        return {
-          type: body.type ?? "about:blank",
-          title: body.title,
-          status: body.status ?? res.status,
-          detail: body.detail,
-          instance: body.instance,
-        }
+        return [
+          {
+            type: body.type ?? "about:blank",
+            title: body.title,
+            status: body.status ?? res.status,
+            detail: body.detail,
+            instance: body.instance,
+          },
+          body,
+        ]
       }
     } catch {
       // A body that will not parse is not worth a second error on top of the
       // first: fall through to the status line.
     }
   }
-  return {
-    type: "about:blank",
-    title: res.statusText || `Request failed with status ${res.status}`,
-    status: res.status,
-  }
+  return [
+    {
+      type: "about:blank",
+      title: res.statusText || `Request failed with status ${res.status}`,
+      status: res.status,
+    },
+    undefined,
+  ]
 }
 
 /**
@@ -91,10 +110,10 @@ async function send(path: string, init: RequestInit): Promise<Response> {
   }
 
   if (!res.ok) {
-    const problem = await toProblem(res)
+    const [problem, body] = await toProblem(res)
     throw problem.status === 401
-      ? new UnauthorizedError(problem)
-      : new ApiError(problem)
+      ? new UnauthorizedError(problem, body)
+      : new ApiError(problem, body)
   }
   return res
 }
@@ -163,6 +182,32 @@ export async function apiSendWithStatus<T>(
         }),
   })
   return { status: res.status, data: await decode<T>(res) }
+}
+
+/**
+ * POST carrying a bearer token of its own.
+ *
+ * Everything else this client sends is authenticated by the session cookie,
+ * which the browser attaches without being asked. First-run setup is the one
+ * exception: there is no session yet, and there cannot be - the token it
+ * carries was printed on a console and is spent by this very request.
+ *
+ * A separate function rather than an options bag on apiSend, so the ordinary
+ * path stays the obvious one and this exception stays visible.
+ */
+export function apiSendWithToken<T>(
+  path: string,
+  token: string,
+  body: unknown,
+): Promise<T> {
+  return request<T>(path, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  })
 }
 
 /**

@@ -1,0 +1,41 @@
+{
+  "title": "Set up RestoreLab",
+  "intro": "Connect a Proxmox VE cluster. RestoreLab creates its own service account with the least privilege it needs, and never stores the administrator password you type here.",
+  "noToken": {
+    "title": "This page needs the setup token",
+    "description": "The machine running RestoreLab printed a one-time address on its console. Open that address."
+  },
+  "form": {
+    "endpoint": "Cluster address",
+    "endpointHint": "https://pve.example.com:8006",
+    "adminUser": "Administrator",
+    "adminPassword": "Administrator password",
+    "passwordHint": "Used once, in memory, to create the service account. It is never stored and never written down.",
+    "storages": "Storage for restores",
+    "storagesHint": "Where a drill restores its clone. One per line. Without it, no real drill can run.",
+    "insecure": "Skip TLS verification (self-signed cluster)",
+    "submit": "Connect the cluster",
+    "working": "Connecting…",
+    "oneShot": "This runs once: the setup token on your console is spent by it. Everything below is sent together."
+  },
+  "bridge": {
+    "legend": "The isolated network",
+    "description": "Drills restore onto a bridge with no ports and no gateway, so a restored clone can reach nothing at all.",
+    "consequence": "Creating it touches no existing interface, but the node's network configuration is reloaded.",
+    "create": "Create it now",
+    "defer": "Write it now, activate it at the next reboot",
+    "skip": "Skip: I will create it myself"
+  },
+  "failed": {
+    "title": "The cluster could not be set up",
+    "again": "Fix the cause and set up again. Nothing here is created twice, so running it a second time is safe.",
+    "spent": "The setup token on your console is spent. Restart RestoreLab to get a new one."
+  },
+  "steps": {
+    "title": "What was done"
+  },
+  "finishing": {
+    "title": "Starting RestoreLab",
+    "description": "The configuration is written. This page opens your session as soon as the server is back."
+  }
+}

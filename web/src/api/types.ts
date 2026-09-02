@@ -355,6 +355,57 @@ export interface Validated {
   normalized_yaml: string
 }
 
+// --------------------------------------------------------------------- setup
+
+/** What the wizard collected, and the only request it ever gets to send. */
+export interface SetupRequest {
+  endpoint: string
+  admin_user: string
+  admin_password: string
+  storages: string[]
+  insecure?: boolean
+  fingerprint?: string
+  create_bridge?: boolean
+  apply_bridge?: boolean
+}
+
+/** One provisioning action, in the order it was performed. */
+export interface SetupStep {
+  description: string
+  status: string
+  detail?: string
+}
+
+/**
+ * What POST /setup produced.
+ *
+ * `token` is the RestoreLab API token the wizard mints at the end, returned
+ * exactly once. The browser holds it in memory, waits for the server to come
+ * back configured, and exchanges it for a session cookie - it is never
+ * written to storage, and it never needs to survive a reload because the
+ * wizard does not reload.
+ */
+export interface SetupOutcome {
+  steps: SetupStep[]
+  provider_id: string
+  node?: string
+  bridge?: string
+  bridge_applied?: boolean
+  token: string
+  token_name: string
+}
+
+/**
+ * A setup refusal, with how far provisioning got.
+ *
+ * The steps are the useful half: every one of them is idempotent, so knowing
+ * where it stopped turns "fix it and run it again" into a real instruction
+ * rather than a hope.
+ */
+export interface SetupFailure extends Problem {
+  steps?: SetupStep[]
+}
+
 // ------------------------------------------------------------------- writes
 
 /** POST /cleanup/{vmid} - what was destroyed. */

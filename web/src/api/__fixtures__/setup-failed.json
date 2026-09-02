@@ -1,0 +1,17 @@
+{
+  "type": "https://restorelab.dev/problems/setup-failed",
+  "title": "The cluster could not be set up",
+  "status": 502,
+  "detail": "proxmox: create user: 403 Permission check failed",
+  "instance": "/api/v1/setup",
+  "steps": [
+    {
+      "description": "create role RestoreLabDrill",
+      "status": "created"
+    },
+    {
+      "description": "create user restorelab@pve",
+      "status": "failed"
+    }
+  ]
+}

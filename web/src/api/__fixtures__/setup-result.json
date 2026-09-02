@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "description": "create role RestoreLabDrill",
+      "status": "created"
+    },
+    {
+      "description": "create user restorelab@pve",
+      "status": "already exists"
+    }
+  ],
+  "provider_id": "proxmox-main",
+  "node": "pve1",
+  "bridge": "vmbr99",
+  "token": "rl_TOKENTOKENTOKENTOKENTOKENTOKENTOKENTOKENTOK",
+  "token_name": "dashboard"
+}
