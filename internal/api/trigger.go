@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
 	"github.com/restorelab/restorelab/internal/adhoc"
@@ -131,7 +130,7 @@ func (s *Server) handleTriggerRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	run := &core.RecoveryRun{
-		ID:               uuid.NewString(),
+		ID:               s.newID(),
 		PlanName:         p.Name,
 		ProviderID:       providerID,
 		SourceWorkloadID: workloadID,

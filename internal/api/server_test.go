@@ -44,6 +44,12 @@ type fakeHistory struct {
 	queued      []enqueued
 	cancelAsked []string
 	leases      map[string]fakeLease
+
+	// The last-drill half. lastRunsCalls counts the calls, so a test can
+	// prove the listing asks once for the page and not once per row.
+	lastRuns      map[string]store.RunSummary
+	lastRunsErr   error
+	lastRunsCalls int
 }
 
 func newFakeHistory() *fakeHistory {
@@ -87,6 +93,20 @@ func (f *fakeHistory) setState(runID string, state core.RunState, at time.Time) 
 			f.runs[i].CompletedAt = at
 		}
 	}
+}
+
+func (f *fakeHistory) LastRuns(_ context.Context, ids []string) (map[string]store.RunSummary, error) {
+	f.lastRunsCalls++
+	if f.lastRunsErr != nil {
+		return nil, f.lastRunsErr
+	}
+	out := map[string]store.RunSummary{}
+	for _, id := range ids {
+		if run, ok := f.lastRuns[id]; ok {
+			out[id] = run
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeHistory) ListRuns(_ context.Context, filter store.Filter) ([]store.RunSummary, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -301,5 +302,111 @@ func TestNoProviderConfiguredIsA503(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+func TestWorkloadListingCarriesTheLastDrill(t *testing.T) {
+	history := newFakeHistory()
+	history.lastRuns = map[string]store.RunSummary{
+		"110": {
+			ID:               "run-110",
+			SourceWorkloadID: "110",
+			State:            core.RunSuccess,
+			Result:           core.ResultSuccess,
+			StartedAt:        time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	s, _ := newTestServer(t, Options{
+		History:   history,
+		Providers: fakeProviders{hv: testFleet(t)},
+	})
+
+	rec := do(s, http.MethodGet, "/api/v1/workloads")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+
+	var p page[workloadDTO]
+	if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+		t.Fatalf("body is not a page: %v", err)
+	}
+	if len(p.Items) != 1 {
+		t.Fatalf("items = %+v, want one", p.Items)
+	}
+	got := p.Items[0]
+	if got.LastRunID != "run-110" {
+		t.Errorf("last_run_id = %q, want run-110", got.LastRunID)
+	}
+	if got.LastRunState != string(core.RunSuccess) || got.LastRunResult != string(core.ResultSuccess) {
+		t.Errorf("last_run state/result = %q/%q, want SUCCESS/SUCCESS", got.LastRunState, got.LastRunResult)
+	}
+	if got.LastRunAt == nil || !got.LastRunAt.Equal(time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)) {
+		t.Errorf("last_run_at = %v, want the run's start", got.LastRunAt)
+	}
+	// It asked once, for the whole page, and not once per row.
+	if history.lastRunsCalls != 1 {
+		t.Errorf("LastRuns was called %d times, want exactly 1", history.lastRunsCalls)
+	}
+}
+
+// A workload nobody has ever drilled must arrive with no last-drill keys at
+// all: "never tested" is an answer the UI renders differently from a score of
+// zero, and an empty string in the JSON would read as a drill that happened.
+func TestWorkloadNeverDrilledCarriesNoLastRunKeys(t *testing.T) {
+	s, _ := newTestServer(t, Options{
+		History:   newFakeHistory(),
+		Providers: fakeProviders{hv: testFleet(t)},
+	})
+
+	rec := do(s, http.MethodGet, "/api/v1/workloads")
+	if body := rec.Body.String(); strings.Contains(body, "last_run") {
+		t.Errorf("body carries a last_run key for a workload never drilled: %s", body)
+	}
+}
+
+// The inventory is the answer; its drill history is a bonus. A database that
+// cannot be read must not turn a working listing into a 500.
+func TestWorkloadListingSurvivesAnUnreadableHistory(t *testing.T) {
+	history := newFakeHistory()
+	history.lastRunsErr = errors.New("database is locked")
+	s, _ := newTestServer(t, Options{
+		History:   history,
+		Providers: fakeProviders{hv: testFleet(t)},
+	})
+
+	rec := do(s, http.MethodGet, "/api/v1/workloads")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+}
+
+// The detail screen needs the same fields the listing has, and it must get
+// them from the same call rather than from a second code path.
+func TestWorkloadDetailCarriesTheLastDrill(t *testing.T) {
+	history := newFakeHistory()
+	history.lastRuns = map[string]store.RunSummary{
+		"110": {ID: "run-110", SourceWorkloadID: "110", State: core.RunFailed,
+			StartedAt: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)},
+	}
+	s, _ := newTestServer(t, Options{
+		History:   history,
+		Providers: fakeProviders{hv: testFleet(t)},
+	})
+
+	rec := do(s, http.MethodGet, "/api/v1/workloads/110")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var dto workloadDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("body is not a workload: %v", err)
+	}
+	if dto.LastRunID != "run-110" || dto.LastRunState != string(core.RunFailed) {
+		t.Errorf("last run = %q/%q, want run-110/FAILED", dto.LastRunID, dto.LastRunState)
+	}
+	// A run that failed has no result graded onto it here; the key must be
+	// absent rather than empty, which is what omitempty gives.
+	if dto.LastRunResult != "" {
+		t.Errorf("last_run_result = %q, want empty", dto.LastRunResult)
 	}
 }

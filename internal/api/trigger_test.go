@@ -177,6 +177,30 @@ func TestTriggeringQueuesARunAndReturnsIt(t *testing.T) {
 	// is the assertion that nothing was asked of the provider.
 }
 
+// The 201 of a trigger carries a generated id. A test that captures that body
+// - and the golden fixtures do - cannot assert on a value that changes on
+// every run, so the generator is injectable exactly as the clock is.
+func TestTriggerUsesTheInjectedIDGenerator(t *testing.T) {
+	s := operatingServer(t, newFakeHistory(), fakeProviders{hv: testFleet(t), bp: backupSource{}})
+	s.newID = func() string { return "fixed-run-id" }
+
+	rec := post(s, operateSecret, "/api/v1/recovery-runs", `{"workload_id":"110"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body)
+	}
+
+	var dto runSummaryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &dto); err != nil {
+		t.Fatalf("body is not a run: %v", err)
+	}
+	if dto.ID != "fixed-run-id" {
+		t.Errorf("id = %q, want the injected one", dto.ID)
+	}
+	if got := rec.Header().Get("Location"); got != "/api/v1/recovery-runs/fixed-run-id" {
+		t.Errorf("Location = %q, want the injected id", got)
+	}
+}
+
 func TestAnUnusableDrillIsRefusedBeforeItIsQueued(t *testing.T) {
 	history := newFakeHistory()
 	s := operatingServer(t, history, fakeProviders{hv: testFleet(t)})

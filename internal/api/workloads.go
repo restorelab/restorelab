@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/report"
@@ -36,6 +38,19 @@ type workloadDTO struct {
 	Managed       bool   `json:"managed"`
 	RecoveryRunID string `json:"recovery_run_id,omitempty"`
 
+	// LastRunID, LastRunAt, LastRunState and LastRunResult describe the
+	// workload's most recent drill, all absent when it has never had one.
+	//
+	// LastRunAt is when that drill started, not when it finished: a drill
+	// still running has no completion time, and "last tested" has to have an
+	// answer while it is in flight. The state is here as well as the result
+	// because a run still going and a run that was cancelled both carry an
+	// empty result, and they are not the same news.
+	LastRunID     string     `json:"last_run_id,omitempty"`
+	LastRunAt     *time.Time `json:"last_run_at,omitempty"`
+	LastRunState  string     `json:"last_run_state,omitempty"`
+	LastRunResult string     `json:"last_run_result,omitempty"`
+
 	Status *workloadStatusDTO `json:"status,omitempty"`
 }
 
@@ -64,6 +79,44 @@ func newWorkloadDTO(w core.Workload) workloadDTO {
 		Template:      w.Template,
 		Managed:       w.Managed,
 		RecoveryRunID: w.RecoveryRunID,
+	}
+}
+
+// applyLastRun copies a workload's most recent drill onto its DTO.
+func applyLastRun(dto *workloadDTO, run store.RunSummary) {
+	dto.LastRunID = run.ID
+	dto.LastRunState = string(run.State)
+	dto.LastRunResult = string(run.Result)
+	if !run.StartedAt.IsZero() {
+		at := run.StartedAt
+		dto.LastRunAt = &at
+	}
+}
+
+// withLastRuns fills in the last-drill fields of a page of workloads.
+//
+// Best-effort, exactly like the backup lookup in the confidence handler: an
+// inventory that cannot be listed is a failure, but an inventory whose drill
+// history cannot be read is still an inventory. The rows then arrive without
+// their last-drill keys - the same shape a workload nobody has ever drilled
+// has - and the screen showing them says "never tested", which is the honest
+// thing to say when the history cannot be reached.
+func (s *Server) withLastRuns(ctx context.Context, items []workloadDTO) {
+	if len(items) == 0 {
+		return
+	}
+	ids := make([]string, len(items))
+	for i := range items {
+		ids[i] = items[i].ID
+	}
+	last, err := s.history.LastRuns(ctx, ids)
+	if err != nil {
+		return
+	}
+	for i := range items {
+		if run, ok := last[items[i].ID]; ok {
+			applyLastRun(&items[i], run)
+		}
 	}
 }
 
@@ -162,6 +215,7 @@ func (s *Server) handleListWorkloads(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Items = append(out.Items, newWorkloadDTO(workload))
 	}
+	s.withLastRuns(r.Context(), out.Items)
 	writeJSON(w, r, out)
 }
 
@@ -184,6 +238,13 @@ func (s *Server) handleGetWorkload(w http.ResponseWriter, r *http.Request) {
 	if status, err := hv.GetStatus(r.Context(), workload.ID); err == nil {
 		dto.Status = newWorkloadStatusDTO(status)
 	}
+
+	// One workload, one id: the same call the listing makes, asking about a
+	// page of one. There is no second code path to keep in step.
+	items := []workloadDTO{dto}
+	s.withLastRuns(r.Context(), items)
+	dto = items[0]
+
 	writeJSON(w, r, dto)
 }
 

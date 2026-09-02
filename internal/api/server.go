@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/restorelab/restorelab/internal/config"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/report"
@@ -23,6 +25,11 @@ import (
 // accident, and the tests run against a map.
 type History interface {
 	ListRuns(ctx context.Context, f store.Filter) ([]store.RunSummary, error)
+	// LastRuns says when each of these workloads was last drilled, in one
+	// query for a whole page. The listing needs it per row; scoring a
+	// workload does not fit that shape, because it reaches the provider for
+	// a backup date - one cluster round-trip per line of the table.
+	LastRuns(ctx context.Context, workloadIDs []string) (map[string]store.RunSummary, error)
 	GetRun(ctx context.Context, idOrPrefix string) (*core.RecoveryRun, error)
 	Events(ctx context.Context, runID string, afterSeq int64) ([]store.Event, error)
 
@@ -126,6 +133,14 @@ type Options struct {
 	Weights report.ConfidenceWeights
 	// Now is the clock. Tests replace it; everything else leaves it nil.
 	Now func() time.Time
+
+	// NewID generates run ids. Nil means uuid.NewString.
+	//
+	// It is injectable for the same reason Now is: a test that captures the
+	// body of a 201 - the golden fixtures do - cannot assert on a value that
+	// changes on every run. Nothing but a test ever sets it.
+	NewID func() string
+
 	// TouchInterval is how often a token's last_used_at is written at most.
 	// Zero means DefaultTouchInterval.
 	TouchInterval time.Duration
@@ -143,6 +158,7 @@ type Server struct {
 	cfg       *config.Config
 	weights   report.ConfidenceWeights
 	now       func() time.Time
+	newID     func() string
 	touch     *touchThrottle
 	mux       *http.ServeMux
 
@@ -174,6 +190,7 @@ func New(opts Options) *Server {
 		cfg:       opts.Config,
 		weights:   opts.Weights,
 		now:       opts.Now,
+		newID:     opts.NewID,
 
 		ssePoll:      ssePoll,
 		sseHeartbeat: sseHeartbeat,
@@ -181,6 +198,9 @@ func New(opts Options) *Server {
 	}
 	if s.now == nil {
 		s.now = time.Now
+	}
+	if s.newID == nil {
+		s.newID = uuid.NewString
 	}
 	// A nil catalogue is a deployment with no usable history database, not a
 	// reason to panic inside a handler. store.Noop answers ErrNoHistory on
