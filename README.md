@@ -52,11 +52,17 @@ history is kept automatically, recovery plans live in the database, and the
 HTTP API both serves that history and triggers new drills through a worker
 that drains a queue.
 
-**Next is the web interface**, and it is the priority. Proving a backup can
-recover a service is worth doing by an operations team, not only by whoever
-is comfortable in a terminal — so the goal is one binary, one command, and a
-browser that sets itself up and runs everything from there. The command line
-keeps every capability; it is what automation drives.
+**The web interface is the priority, and its first half is here.** Proving a
+backup can recover a service is worth doing by an operations team, not only by
+whoever is comfortable in a terminal — so the goal is one binary, one command,
+and a browser that sets itself up and runs everything from there. The command
+line keeps every capability; it is what automation drives.
+
+The dashboard reads today: it shows what is running, what has run, what is
+protected and whether the cluster is configured correctly, and a drill's
+phases fill in live while it happens. Starting and cancelling drills from the
+browser comes next, then the first-run setup that removes the install
+commands below.
 
 Two things in the list below are implemented and unit-tested but have never
 run against real infrastructure, because the cluster this was built on has
@@ -82,7 +88,9 @@ been driven against a live Proxmox VE 9 cluster.
 | Triggering and cancelling drills over HTTP, worker, queue, live event stream | done |
 | Recovery plans stored in the database, edited over HTTP or with `plan` | done |
 | Browser session cookie, so a dashboard can authenticate and read the event stream | done |
-| Web dashboard, served from the binary | backend done, interface next |
+| Web dashboard, served from the binary: overview, history, live drill, workloads, diagnostics | done, read-only |
+| Launching and cancelling drills from the browser, editing the plan catalogue there | next |
+| First-run setup in the browser, replacing the install commands | next |
 | Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
 | Remote probes, RBAC, OIDC | planned |
 
@@ -104,6 +112,19 @@ bin/restorelab workloads list --backups
 # run a drill on VM 101, from its latest backup
 bin/restorelab recovery test 101
 ```
+
+Then watch it from a browser. Mint a read-only token, start the server, and
+open it:
+
+```bash
+bin/restorelab token create dashboard   # read-only unless --operate or --manage
+bin/restorelab serve                    # binds 127.0.0.1:8080
+```
+
+Open <http://127.0.0.1:8080>, paste the token once, and the session cookie
+keeps you signed in for twelve hours. A binary built without the front-end
+toolchain has no interface compiled in and says so on that page instead of
+404ing; `make ui` is what compiles it.
 
 Start read-only if you would rather look before touching anything —
 `connect --read-only` produces a token that cannot create or destroy, and is

@@ -290,6 +290,27 @@ page needs is same-origin because the bundle is served by this binary.
 `'unsafe-inline'` is conceded on styles alone — a popover library positions
 with a `style` attribute — and opens no script execution.
 
+That policy is also a constraint on the interface's own source, and it is the
+kind that bites late: **the Vite dev server does not send it.** Anything the
+policy forbids works perfectly on `:5173` and fails silently in the binary,
+usually as a missing font or a blank panel with nothing in the response to
+explain it. So, for anyone changing `web/`:
+
+- **No external font.** `font-src` falls back to `'self'`, so Google Fonts and
+  every other hosted face is blocked. The system stack in `index.css` is not a
+  style preference; it is the only option.
+- **No external image, and no `data:` URI.** `img-src` falls back to `'self'`
+  too. Icons are inline SVG components, which is why they work.
+- **No CDN script, and no inline `<script>`.** Everything ships in the bundle.
+- **No third-party endpoint.** `connect-src` is `'self'`: `fetch` and
+  `EventSource` reach this binary and nothing else. A dashboard for a disaster
+  recovery tool has no business talking to anyone but its own server, so this
+  is a property worth keeping rather than a limitation to work around.
+
+If a change genuinely needs one of these, the policy is in `uiCSP`
+(`internal/api/static.go`) and widening it is a security decision, not a build
+fix.
+
 ### No rate limit on the login, deliberately
 
 `POST /api/v1/session` is not rate-limited, and that is a decision rather than

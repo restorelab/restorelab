@@ -16,6 +16,21 @@ make check      # gofmt + go vet + go test — what CI runs
 Requires Go 1.27+. No Proxmox cluster is needed: providers are tested against an
 in-process mock API, and the engine against an in-memory fake provider.
 
+**Node is not required to build or test the Go side.** The dashboard is
+compiled separately and embedded, and `internal/ui` tolerates an empty build
+directory precisely so that `make build`, `make check` and `go test ./...` work
+on a machine that has never run npm. Its own targets, which need Node 22+:
+
+```bash
+make ui         # compile the dashboard into internal/ui/dist
+make ui-dev     # dev server on :5173, proxying to serve on :8080
+make ui-lint    # Biome — lint and format check
+make ui-test    # Vitest
+```
+
+`make dist` depends on `make ui`; `make build` and `make lint` deliberately do
+not.
+
 ## Ground rules
 
 1. **`internal/core` depends on nothing.** Domain types and interfaces live
@@ -89,6 +104,14 @@ server: {
   },
 }
 ```
+
+**The dev server does not send the Content-Security-Policy the binary does.**
+So a font from Google, an image as a `data:` URI, a script from a CDN or a call
+to a third-party endpoint all work on `:5173` and are blocked, silently, once
+the same code is served from `restorelab serve`. What the policy allows, and
+why, is in `docs/security.md` under "The bundle's Content-Security-Policy".
+Build the binary and look at the real page before trusting a change that adds
+an external resource.
 
 Two other things about the loop are worth knowing before they cost an hour:
 

@@ -136,6 +136,17 @@ directory to copy, no second web server, no path to keep in sync with a
 release. If a build carries no dashboard, `/` says so in a sentence instead of
 returning a puzzling 404.
 
+That last case is a build choice, not a fault. The published release archives
+and the container image both carry the interface; a binary produced by
+`make build` alone does not, because compiling the front-end needs Node and a
+Go developer must not. `make ui` compiles it, and `make dist` depends on that,
+so a release cannot ship without one.
+
+Signing in needs an API token — `restorelab token create <name>`, read-only
+unless `--operate` or `--manage` is given. It is exchanged once for a session
+cookie that lasts twelve hours and is never extended; `restorelab token revoke`
+cuts every session that token opened, at the next request.
+
 ### TLS is no longer optional
 
 The bearer API could be run in the clear on a trusted LAN and only lose

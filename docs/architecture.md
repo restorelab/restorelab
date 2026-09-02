@@ -233,9 +233,19 @@ anything else can be built on them, and a dashboard that can only watch drills
 it cannot start is half a product.
 
 The interface is being built in four slices: **C1** the server half (done),
-**C2** the read-only interface, **C3** the write paths, **C4** the first-run
-setup. C1 ships in the binary with no interface compiled into it, which is
-why `/` explains itself rather than 404ing.
+**C2** the read-only interface (done), **C3** the write paths, **C4** the
+first-run setup.
+
+C2 is what a browser now shows: an overview that says whether anything needs
+attention, the drill history, a drill's phases filling in live over the event
+stream, the workload inventory with its confidence scores, and the cluster
+diagnostic. It reads; it starts nothing. Every screen is served by routes that
+already existed — C2 added no HTTP surface at all.
+
+The compiled interface is embedded in the binary, but its absence is not a
+failure: a build made without the front-end toolchain still runs, and `/`
+explains itself rather than 404ing. That is what lets `go build ./...` work
+with no Node installed.
 
 C4 is what turns installation into one command. Started with no
 configuration, `serve` prints a URL carrying a single-use setup token, and
