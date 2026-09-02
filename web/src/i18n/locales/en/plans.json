@@ -1,0 +1,59 @@
+{
+  "title": "Plans",
+  "question": "What have you written down so it can be replayed?",
+  "empty": {
+    "title": "No plan yet",
+    "description": "A plan describes a drill once so it can be replayed. Write the first one here, or from a terminal.",
+    "command": "restorelab plan apply examples/plans/postgres-prod.yaml"
+  },
+  "noHistory": {
+    "title": "The catalogue needs a database",
+    "description": "Plans live in the drill history database, and this deployment has none it can open.",
+    "command": "restorelab db status"
+  },
+  "columns": {
+    "name": "Plan",
+    "workload": "Workload",
+    "version": "Version",
+    "updated": "Updated",
+    "action": " "
+  },
+  "new": "New plan",
+  "newTitle": "Pick the machine this plan drills",
+  "back": "All plans",
+  "document": "Document",
+  "edit": "Plan document",
+  "save": "Save",
+  "saving": "Saving…",
+  "run": "Run this plan",
+  "readOnly": "This session can read the catalogue but not change it.",
+  "noProvider": "No provider is configured, so there is nothing to write a plan against.",
+  "validation": {
+    "checking": "Checking…",
+    "valid": "This document is a valid plan.",
+    "invalid": "This document is not a valid plan.",
+    "means": "What it means",
+    "name": "Name",
+    "workload": "Workload",
+    "provider": "Provider",
+    "normalized": "With defaults applied",
+    "normalizedHint": "What the plan actually says once the defaults are filled in."
+  },
+  "conflict": {
+    "title": "This plan changed while you were editing it",
+    "description": "Someone saved a new version. Nothing you typed has been lost.",
+    "takeTheirs": "Start from the server's version",
+    "overwrite": "Overwrite it with mine"
+  },
+  "rename": {
+    "title": "A plan cannot be renamed in place",
+    "description": "Renaming means deleting this plan and creating another. Its past drills would keep their own name either way."
+  },
+  "delete": {
+    "button": "Delete",
+    "title": "Delete {{name}}?",
+    "description": "The plan is removed from the catalogue.",
+    "keeps": "Past drills keep their name and the exact document they ran. They lose only the link back to this plan.",
+    "submit": "Delete"
+  }
+}

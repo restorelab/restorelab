@@ -1,5 +1,5 @@
 import { ApiError } from "@/api/client"
-import { type TriggerBody, useTriggerDrill } from "@/api/mutations"
+import { type AdhocTrigger, useTriggerDrill } from "@/api/mutations"
 import type { Backup, Workload } from "@/api/types"
 import { AppLink } from "@/components/app-link"
 import { Button } from "@/components/ui/button"
@@ -59,8 +59,8 @@ const PLAIN_FIELDS = [
  * configured node, storage and pool - and it resolves them better than this
  * form can guess them.
  */
-export function triggerBody(workloadID: string, o: TriggerOptions): TriggerBody {
-  const body: TriggerBody = { workload_id: workloadID }
+export function triggerBody(workloadID: string, o: TriggerOptions): AdhocTrigger {
+  const body: AdhocTrigger = { workload_id: workloadID }
   if (o.backup) body.backup = o.backup
   if (o.network) body.network = o.network
   if (o.node) body.node = o.node

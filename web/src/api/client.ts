@@ -165,6 +165,30 @@ export async function apiSendWithStatus<T>(
   return { status: res.status, data: await decode<T>(res) }
 }
 
+/**
+ * POST or PUT of a plan document, sent verbatim.
+ *
+ * The catalogue routes read the request body as the YAML itself, not as a
+ * JSON envelope around it. Sending it through apiSend would wrap it in quotes
+ * and escape its newlines, and the server would refuse a document nobody
+ * wrote that way.
+ *
+ * It is a separate function rather than a wider apiSend because the
+ * difference is the body's nature, not the method: everything else this
+ * client sends is JSON, and that should stay the obvious path.
+ */
+export function apiSendText<T>(
+  method: "POST" | "PUT",
+  path: string,
+  body: string,
+): Promise<T> {
+  return request<T>(path, {
+    method,
+    headers: { "content-type": "application/yaml" },
+    body,
+  })
+}
+
 /** The URL of a run's HTML report, for a download link. */
 export function reportUrl(runId: string): string {
   return `${BASE}/recovery-runs/${encodeURIComponent(runId)}/report?format=html`

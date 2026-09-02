@@ -5,6 +5,7 @@ import {
   type Confidence,
   type Doctor,
   type Page,
+  type Plan,
   type Provider,
   type QueueEntry,
   type RunDocument,
@@ -156,6 +157,35 @@ export const doctorQuery = () =>
     queryKey: ["doctor"] as const,
     queryFn: () => apiGet<Doctor>("/doctor"),
     refetchInterval: SLOW_MS,
+  })
+
+// ----------------------------------------------------------------- catalogue
+
+/**
+ * The stored plans.
+ *
+ * A catalogue changes when a human changes it, so it polls at the inventory's
+ * cadence rather than a drill's.
+ */
+export const plansQuery = () =>
+  queryOptions({
+    queryKey: ["plans"] as const,
+    queryFn: () => apiGet<Page<Plan>>("/plans"),
+    refetchInterval: SLOW_MS,
+  })
+
+/**
+ * One plan, with its document.
+ *
+ * staleTime is 0 because the version this returns is the one the editor sends
+ * back as its ?version= guard: a cached version number would turn a stale
+ * read into a conflict the viewer cannot explain.
+ */
+export const planQuery = (ref: string) =>
+  queryOptions({
+    queryKey: ["plan", ref] as const,
+    queryFn: () => apiGet<Plan>(`/plans/${encodeURIComponent(ref)}`),
+    staleTime: 0,
   })
 
 export const providersQuery = () =>

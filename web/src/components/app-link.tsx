@@ -15,21 +15,34 @@ import type { ReactNode } from "react"
  * pointing at the same URL, which is what the tests assert on anyway.
  *
  * `to` is a closed union rather than TanStack's inferred route type: passing
- * that generic through a wrapper costs more than it buys for six routes, and a
- * typo here still fails to compile.
+ * that generic through a wrapper costs more than it buys for a handful of
+ * routes, and a typo here still fails to compile.
  */
 type Target =
-  | { to: "/" | "/runs" | "/workloads" | "/doctor"; params?: undefined }
+  | {
+      to: "/" | "/runs" | "/workloads" | "/doctor" | "/plans" | "/plans/new"
+      params?: undefined
+    }
   | { to: "/runs/$id" | "/workloads/$id"; params: { id: string } }
+  | { to: "/plans/$ref"; params: { ref: string } }
 
 export type AppLinkProps = Target & {
   className?: string
   children: ReactNode
 }
 
-/** The address this link points at, with any parameter substituted in. */
+/**
+ * The address this link points at, with its parameter substituted in.
+ *
+ * The placeholder is found rather than named: routes here take one parameter
+ * and it is not always called `$id` - the catalogue addresses a plan by
+ * `$ref`. Naming it would mean editing this function for every route that
+ * spells its parameter differently.
+ */
 export function hrefFor({ to, params }: Target): string {
-  return params ? to.replace("$id", encodeURIComponent(params.id)) : to
+  if (!params) return to
+  const [value] = Object.values(params)
+  return to.replace(/\$\w+/, encodeURIComponent(String(value)))
 }
 
 export function AppLink({ to, params, className, children }: AppLinkProps) {

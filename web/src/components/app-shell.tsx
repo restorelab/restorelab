@@ -7,6 +7,7 @@ const NAV = [
   { to: "/", key: "app.nav.overview" },
   { to: "/runs", key: "app.nav.drills" },
   { to: "/workloads", key: "app.nav.workloads" },
+  { to: "/plans", key: "app.nav.plans" },
   { to: "/doctor", key: "app.nav.doctor" },
 ] as const
 
