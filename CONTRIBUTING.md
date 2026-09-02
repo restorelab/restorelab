@@ -125,6 +125,43 @@ Two other things about the loop are worth knowing before they cost an hour:
   nothing to do with the server. `internal/e2e/session_test.go` has the
   one-line helper.
 
+## The API fixtures
+
+`web/src/api/types.ts` mirrors the Go DTOs by hand, and there is no OpenAPI
+document to derive either side from. What keeps the two honest is a set of
+captured responses: `internal/api/fixtures_test.go` drives the real handlers
+and writes the actual body of every route the dashboard reads into
+`web/src/api/__fixtures__`, and `web/src/api/fixtures.ts` reads them back
+under their declared types, which `tsc` checks.
+
+Change a DTO and the golden test fails, naming the file:
+
+```bash
+go test ./internal/api/ -run TestFixturesMatchTheWire -update
+```
+
+Then run `npx tsc --noEmit` in `web/`. If it fails, `types.ts` is behind the
+API — which is exactly what this is for.
+
+Three things worth knowing before they cost an hour:
+
+- **Everything captured must be deterministic.** The server takes an injected
+  clock (`Options.Now`) and an injected id generator (`Options.NewID`) for
+  this reason. A handler that reads `time.Now()` on its own cannot be
+  captured; that is how `GET /workloads/{id}/backups` was found to be ageing
+  its rows against a wall clock instead of the server's.
+- **The fixtures are excluded from Biome** (`biome.json`). Their canonical
+  formatting is the Go writer's, and letting a formatter reflow them would
+  make every regeneration a failing check.
+- **What this does not catch is a key the server *added*.** TypeScript only
+  flags excess properties on object literals, and a fixture is an imported
+  module. When you add a field to a DTO, add it to `types.ts` too — nothing
+  will remind you.
+
+The front-end tests answer with these captures rather than building payloads
+of their own. That is the other half of the point: a test that invents its own
+response proves only that the code agrees with the test.
+
 ## Commits and pull requests
 
 - Atomic commits, one logical change each.

@@ -487,6 +487,29 @@ which are excluded by default; templates are always excluded.
 | `provider` | provider id; the configured default when omitted |
 | `temporary` | `true` to include RestoreLab-managed workloads |
 
+Every workload also carries its most recent drill, so a listing can be
+coloured without one request per row:
+
+| Field | Meaning |
+| --- | --- |
+| `last_run_id` | the drill's id, for a link straight to it |
+| `last_run_at` | when that drill **started** — a drill still running has no completion time, and "last tested" has to have an answer while it is in flight |
+| `last_run_state` | its state, `SUCCESS` through `CLEANUP_FAILED` |
+| `last_run_result` | its grade, absent while the drill is still going or when it was cancelled |
+
+All four are absent from a workload that has never been drilled. That is the
+difference between "never tested" and "tested, and it went badly", and a
+client that cannot tell them apart will render one as the other.
+
+They come from one query over the drill history for the whole page, and they
+deliberately stop short of the confidence score: scoring reaches the backup
+provider for a restore point's date, which would be one cluster round-trip per
+row. The score stays on its own route below.
+
+Reading them is best-effort. A deployment whose history database cannot be
+read still answers with its inventory, simply without these fields — the same
+shape a never-drilled workload has.
+
 ### `GET /api/v1/workloads/{id}`
 
 One workload, plus its live status when the provider can answer (power
