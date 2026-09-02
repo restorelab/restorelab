@@ -312,6 +312,15 @@ type Store interface {
 	GetRun(ctx context.Context, idOrPrefix string) (*core.RecoveryRun, error)
 	// ListRuns returns summaries, most recent first.
 	ListRuns(ctx context.Context, f Filter) ([]RunSummary, error)
+	// LastRuns returns each of these workloads' most recent run, keyed by
+	// workload id. A workload that has never been drilled is absent from the
+	// map rather than present and empty: "never tested" and "tested, and it
+	// went badly" are different answers, and a caller that cannot tell them
+	// apart will render one as the other.
+	//
+	// It exists so a listing can say when each machine was last drilled with
+	// one query instead of one per row. An empty id list is not an error.
+	LastRuns(ctx context.Context, workloadIDs []string) (map[string]RunSummary, error)
 	// Events returns a run's events with a seq strictly greater than
 	// afterSeq, in order. Phase B's SSE replays from here on reconnection.
 	Events(ctx context.Context, runID string, afterSeq int64) ([]Event, error)

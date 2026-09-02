@@ -77,35 +77,107 @@ func (s *sqlStore) ListRuns(ctx context.Context, f Filter) ([]RunSummary, error)
 
 	var out []RunSummary
 	for rows.Next() {
-		var (
-			r                  RunSummary
-			planID             sql.NullString
-			sourceName, result sql.NullString
-			state, startedAt   string
-			completedAt        sql.NullString
-			rtoMS              sql.NullInt64
-			rtoTargetMS        sql.NullInt64
-			cleanupDone        int
-		)
-		if err := rows.Scan(&r.ID, &r.PlanName, &planID, &r.SourceWorkloadID, &sourceName,
-			&state, &result, &startedAt, &completedAt, &rtoMS, &rtoTargetMS, &cleanupDone); err != nil {
+		r, err := scanRunSummary(rows)
+		if err != nil {
 			return nil, err
 		}
-
-		r.PlanID = planID.String
-		r.SourceName = sourceName.String
-		r.State = core.RunState(state)
-		r.Result = core.RunResult(result.String)
-		r.RTO = time.Duration(rtoMS.Int64) * time.Millisecond
-		r.RTOTarget = time.Duration(rtoTargetMS.Int64) * time.Millisecond
-		r.CleanupDone = intToBool(cleanupDone)
-		if r.StartedAt, err = parseTime(startedAt); err != nil {
-			return nil, fmt.Errorf("store: run %s has an unreadable started_at: %w", r.ID, err)
-		}
-		if r.CompletedAt, err = parseNullTime(nullable(completedAt)); err != nil {
-			return nil, fmt.Errorf("store: run %s has an unreadable completed_at: %w", r.ID, err)
-		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// scanRunSummary reads one row of the summary column list.
+//
+// It is shared by ListRuns and LastRuns so the two queries cannot disagree
+// about what a summary is: they select the same columns, in the same order,
+// and one function reads them.
+func scanRunSummary(rows *sql.Rows) (RunSummary, error) {
+	var (
+		r                  RunSummary
+		planID             sql.NullString
+		sourceName, result sql.NullString
+		state, startedAt   string
+		completedAt        sql.NullString
+		rtoMS              sql.NullInt64
+		rtoTargetMS        sql.NullInt64
+		cleanupDone        int
+	)
+	if err := rows.Scan(&r.ID, &r.PlanName, &planID, &r.SourceWorkloadID, &sourceName,
+		&state, &result, &startedAt, &completedAt, &rtoMS, &rtoTargetMS, &cleanupDone); err != nil {
+		return r, err
+	}
+
+	r.PlanID = planID.String
+	r.SourceName = sourceName.String
+	r.State = core.RunState(state)
+	r.Result = core.RunResult(result.String)
+	r.RTO = time.Duration(rtoMS.Int64) * time.Millisecond
+	r.RTOTarget = time.Duration(rtoTargetMS.Int64) * time.Millisecond
+	r.CleanupDone = intToBool(cleanupDone)
+
+	var err error
+	if r.StartedAt, err = parseTime(startedAt); err != nil {
+		return r, fmt.Errorf("store: run %s has an unreadable started_at: %w", r.ID, err)
+	}
+	if r.CompletedAt, err = parseNullTime(nullable(completedAt)); err != nil {
+		return r, fmt.Errorf("store: run %s has an unreadable completed_at: %w", r.ID, err)
+	}
+	return r, nil
+}
+
+// lastRunsSQL keeps only the newest run of each workload.
+//
+// ROW_NUMBER is the one shape both engines take: SQLite has had window
+// functions since 3.25 and PostgreSQL far longer. The ordering repeats
+// ListRuns' (started_at DESC, id DESC) on purpose - two drills of the same
+// workload can start in the same microsecond, and "the last one" has to mean
+// the same thing in both queries.
+//
+// The %s is a list of "?" placeholders, built from the id count and nothing
+// else. No caller value ever reaches the query text.
+const lastRunsSQL = `
+SELECT id, plan_name, plan_id, source_workload_id, source_name, state, result,
+	started_at, completed_at, rto_ms, rto_target_ms, cleanup_done
+FROM (
+	SELECT id, plan_name, plan_id, source_workload_id, source_name, state, result,
+		started_at, completed_at, rto_ms, rto_target_ms, cleanup_done,
+		ROW_NUMBER() OVER (
+			PARTITION BY source_workload_id
+			ORDER BY started_at DESC, id DESC
+		) AS rn
+	FROM runs
+	WHERE source_workload_id IN (%s)
+) ranked
+WHERE rn = 1`
+
+// LastRuns returns each workload's most recent run.
+func (s *sqlStore) LastRuns(ctx context.Context, workloadIDs []string) (map[string]RunSummary, error) {
+	out := map[string]RunSummary{}
+	// No question, no query: "IN ()" is a syntax error on both engines, and
+	// an empty map is the right answer anyway.
+	if len(workloadIDs) == 0 {
+		return out, nil
+	}
+
+	marks := make([]string, len(workloadIDs))
+	args := make([]any, len(workloadIDs))
+	for i, id := range workloadIDs {
+		marks[i] = "?"
+		args[i] = id
+	}
+
+	rows, err := s.query(ctx, fmt.Sprintf(lastRunsSQL, strings.Join(marks, ", ")), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		r, err := scanRunSummary(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[r.SourceWorkloadID] = r
 	}
 	return out, rows.Err()
 }

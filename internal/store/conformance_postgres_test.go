@@ -123,6 +123,10 @@ func TestPostgresTempWorkloadConformance(t *testing.T) {
 	TempWorkloadConformance(t, newTestPostgresStore)
 }
 
+func TestPostgresLastRunsConformance(t *testing.T) {
+	LastRunsConformance(t, newTestPostgresStore)
+}
+
 func TestPostgresQueueWriteConformance(t *testing.T) {
 	QueueWriteConformance(t, newTestPostgresStore)
 }

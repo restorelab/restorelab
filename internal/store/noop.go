@@ -25,9 +25,12 @@ func (Noop) SaveStep(context.Context, string, int, core.Step) error         { re
 func (Noop) SaveCheck(context.Context, string, int, core.CheckResult) error { return nil }
 func (Noop) AppendEvent(context.Context, string, Event) error               { return nil }
 func (Noop) ListRuns(context.Context, Filter) ([]RunSummary, error)         { return nil, nil }
-func (Noop) Events(context.Context, string, int64) ([]Event, error)         { return nil, nil }
-func (Noop) Describe() string                                               { return "no database (history is not being recorded)" }
-func (Noop) Close() error                                                   { return nil }
+func (Noop) LastRuns(context.Context, []string) (map[string]RunSummary, error) {
+	return map[string]RunSummary{}, nil
+}
+func (Noop) Events(context.Context, string, int64) ([]Event, error) { return nil, nil }
+func (Noop) Describe() string                                       { return "no database (history is not being recorded)" }
+func (Noop) Close() error                                           { return nil }
 
 // GetRun reports ErrNotFound rather than nil: a caller asking for a specific
 // run must be told it does not have it, not handed an empty one.

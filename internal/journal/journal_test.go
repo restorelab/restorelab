@@ -49,6 +49,9 @@ func (b *brokenStore) GetRun(context.Context, string) (*core.RecoveryRun, error)
 func (b *brokenStore) ListRuns(context.Context, store.Filter) ([]store.RunSummary, error) {
 	return nil, errBroken
 }
+func (b *brokenStore) LastRuns(context.Context, []string) (map[string]store.RunSummary, error) {
+	return nil, errBroken
+}
 func (b *brokenStore) Events(context.Context, string, int64) ([]store.Event, error) {
 	return nil, errBroken
 }

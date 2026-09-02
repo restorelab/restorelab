@@ -25,6 +25,8 @@ func TestSQLitePlanConformance(t *testing.T) { PlanConformance(t, newTestStore) 
 
 func TestSQLiteTempWorkloadConformance(t *testing.T) { TempWorkloadConformance(t, newTestStore) }
 
+func TestSQLiteLastRunsConformance(t *testing.T) { LastRunsConformance(t, newTestStore) }
+
 func TestSQLiteQueueWriteConformance(t *testing.T) { QueueWriteConformance(t, newTestStore) }
 
 func TestSQLiteQueueClaimConformance(t *testing.T) { QueueClaimConformance(t, newTestStore) }
