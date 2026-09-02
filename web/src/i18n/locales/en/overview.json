@@ -6,7 +6,9 @@
     "workloads_one": "{{count}} workload",
     "workloads_other": "{{count}} workloads",
     "running_one": "{{count}} drill running",
-    "running_other": "{{count}} drills running"
+    "running_other": "{{count}} drills running",
+    "neverTested_one": "{{count}} never tested",
+    "neverTested_other": "{{count}} never tested"
   },
   "running": {
     "title": "Running now",

@@ -109,6 +109,27 @@ export const workloadsQuery = () =>
     refetchInterval: SLOW_MS,
   })
 
+/**
+ * The temporary workloads a drill left behind.
+ *
+ * A query of its own rather than a filter over workloadsQuery: that listing
+ * hides managed workloads by default, and the overview needs exactly the ones
+ * it hides. Same cadence as the inventory - an orphan is not urgent by the
+ * second, only by the day.
+ *
+ * The key starts with "workloads" deliberately: the cleanup mutation
+ * invalidates that prefix and reaches this without having to name it.
+ */
+export const orphansQuery = () =>
+  queryOptions({
+    queryKey: ["workloads", "temporary"] as const,
+    queryFn: async () => {
+      const page = await apiGet<Page<Workload>>("/workloads?temporary=true")
+      return { items: page.items.filter((w) => w.managed) }
+    },
+    refetchInterval: SLOW_MS,
+  })
+
 export const workloadQuery = (id: string) =>
   queryOptions({
     queryKey: ["workload", id] as const,

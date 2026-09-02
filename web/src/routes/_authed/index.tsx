@@ -1,9 +1,16 @@
-import { doctorQuery, queueQuery, runsQuery, workloadsQuery } from "@/api/queries"
+import {
+  doctorQuery,
+  orphansQuery,
+  queueQuery,
+  runsQuery,
+  workloadsQuery,
+} from "@/api/queries"
 import type { Doctor, Page, QueueEntry, RunSummary, Workload } from "@/api/types"
 import { AppLink } from "@/components/app-link"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
 import { HealthStrip } from "@/components/health-strip"
+import { OrphanBanner } from "@/components/orphan-banner"
 import { RunStatusBadge, toneClass } from "@/components/run-status"
 import { TriggerDrill } from "@/components/trigger-drill"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -26,6 +33,10 @@ export const Route = createFileRoute("/_authed/")({
       queryClient.ensureQueryData(queueQuery()),
       queryClient.ensureQueryData(runsQuery({ limit: 10 })),
       queryClient.ensureQueryData(workloadsQuery()),
+      // What a drill left behind, which the inventory above deliberately
+      // hides. The overview is the screen for anomalies, and a machine
+      // forgotten on the cluster is one.
+      queryClient.ensureQueryData(orphansQuery()),
     ]),
   component: OverviewPage,
   errorComponent: ({ error }) => <ErrorState error={error} />,
@@ -97,6 +108,7 @@ export function OverviewContent({
   queue,
   runs,
   workloads,
+  orphans,
   canOperate,
   onStarted,
 }: {
@@ -104,6 +116,7 @@ export function OverviewContent({
   queue: Page<QueueEntry>
   runs: Page<RunSummary>
   workloads: Page<Workload>
+  orphans: Workload[]
   canOperate: boolean
   onStarted: (runID: string) => void
 }) {
@@ -116,6 +129,7 @@ export function OverviewContent({
   return (
     <div className="flex flex-col gap-6">
       <HealthStrip doctor={doctor} queue={queue} workloads={workloads} />
+      <OrphanBanner orphans={orphans} canOperate={canOperate} />
 
       {dayOne ? (
         <EmptyState
@@ -186,6 +200,7 @@ function OverviewPage() {
   const queue = useSuspenseQuery(queueQuery()).data
   const runs = useSuspenseQuery(runsQuery({ limit: 10 })).data
   const workloads = useSuspenseQuery(workloadsQuery()).data
+  const orphans = useSuspenseQuery(orphansQuery()).data
   const { can } = useRouteContext({ from: "/_authed" })
   const navigate = useNavigate()
 
@@ -195,6 +210,7 @@ function OverviewPage() {
       queue={queue}
       runs={runs}
       workloads={workloads}
+      orphans={orphans.items}
       canOperate={can("operate")}
       onStarted={(runID) => void navigate({ to: "/runs/$id", params: { id: runID } })}
     />

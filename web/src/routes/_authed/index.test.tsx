@@ -16,6 +16,7 @@ import { OverviewContent } from "./index"
 // what these tests check.
 const doctor: Doctor = { ...doctorFixture, ok: true, problems: 0, findings: [] }
 const noop = () => undefined
+const orphans = workloadsPageFixture.items.filter((w) => w.managed)
 const noRuns: Page<RunSummary> = { items: [] }
 const noQueue: Page<QueueEntry> = { items: [] }
 const workloads: Page<Workload> = {
@@ -42,6 +43,7 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={noRuns}
           workloads={workloads}
+          orphans={[]}
           canOperate
           onStarted={noop}
         />,
@@ -65,6 +67,7 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={noRuns}
           workloads={workloads}
+          orphans={[]}
           canOperate={false}
           onStarted={noop}
         />,
@@ -82,6 +85,7 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={noRuns}
           workloads={workloads}
+          orphans={[]}
           canOperate
           onStarted={noop}
         />,
@@ -110,6 +114,7 @@ describe("OverviewContent", () => {
           queue={queue}
           runs={noRuns}
           workloads={workloads}
+          orphans={[]}
           canOperate
           onStarted={noop}
         />,
@@ -134,6 +139,7 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={runs}
           workloads={workloads}
+          orphans={[]}
           canOperate
           onStarted={noop}
         />,
@@ -141,6 +147,62 @@ describe("OverviewContent", () => {
     )
     expect(screen.queryByText(/no drill has run yet/i)).toBeNull()
     expect(screen.getByText("4m21s")).toBeInTheDocument()
+  })
+
+  // A machine a drill forgot on the cluster is an anomaly, and the overview
+  // is the screen for anomalies. It appears there, above everything else.
+  it("reports the temporary workloads a drill left behind", () => {
+    render(
+      wrap(
+        <OverviewContent
+          doctor={doctor}
+          queue={noQueue}
+          runs={noRuns}
+          workloads={workloads}
+          orphans={orphans}
+          canOperate
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.getByText(/temporary workload/i)).toBeInTheDocument()
+  })
+
+  it("says nothing about orphans when the cluster is clean", () => {
+    render(
+      wrap(
+        <OverviewContent
+          doctor={doctor}
+          queue={noQueue}
+          runs={noRuns}
+          workloads={workloads}
+          orphans={[]}
+          canOperate
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.queryByText(/temporary workload/i)).toBeNull()
+  })
+
+  // The counter C2 had to drop for want of a cheap way to compute it.
+  it("counts the machines that have never been drilled", () => {
+    render(
+      wrap(
+        <OverviewContent
+          doctor={doctor}
+          queue={noQueue}
+          runs={noRuns}
+          workloads={{
+            items: [{ ...first(workloads.items, "workloads"), last_run_id: undefined }],
+          }}
+          orphans={[]}
+          canOperate
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.getByText(/1 never tested/i)).toBeInTheDocument()
   })
 
   it("says the cluster has problems when the diagnostic does", () => {
@@ -157,6 +219,7 @@ describe("OverviewContent", () => {
           queue={noQueue}
           runs={noRuns}
           workloads={workloads}
+          orphans={[]}
           canOperate
           onStarted={noop}
         />,

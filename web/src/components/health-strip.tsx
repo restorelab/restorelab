@@ -44,6 +44,14 @@ export function HealthStrip({
       <span className="text-muted-foreground">
         {t("health.running", { count: queue.items.length })}
       </span>
+      {/* The counter C2 had to drop: it needed a confidence request per
+          machine back then. The workload DTO now carries its last drill, so
+          this costs nothing beyond the listing that was already loaded. */}
+      <span className="text-muted-foreground">
+        {t("health.neverTested", {
+          count: workloads.items.filter((w) => !w.last_run_id).length,
+        })}
+      </span>
     </div>
   )
 }
