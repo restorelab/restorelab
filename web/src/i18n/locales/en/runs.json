@@ -1,0 +1,18 @@
+{
+  "title": "Drills",
+  "columns": {
+    "state": "State",
+    "workload": "Workload",
+    "plan": "Plan",
+    "started": "Started",
+    "rto": "RTO"
+  },
+  "filter": { "state": "Any state", "clear": "Clear filters" },
+  "next": "Next page",
+  "empty": {
+    "title": "No drill has run yet",
+    "description": "Run the first one from the machine running restorelab.",
+    "command": "restorelab drill --workload <workload>"
+  },
+  "noMatch": { "title": "No drill matches these filters" }
+}

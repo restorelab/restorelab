@@ -1,0 +1,25 @@
+{
+  "health": {
+    "ok": "Cluster healthy",
+    "problems_one": "{{count}} problem",
+    "problems_other": "{{count}} problems",
+    "workloads_one": "{{count}} workload",
+    "workloads_other": "{{count}} workloads",
+    "running_one": "{{count}} drill running",
+    "running_other": "{{count}} drills running"
+  },
+  "running": {
+    "title": "Running now",
+    "view": "View"
+  },
+  "recent": {
+    "title": "Recent drills",
+    "all": "All drills",
+    "rto": "RTO"
+  },
+  "empty": {
+    "title": "No drill has run yet",
+    "description": "Run the first one from the machine running restorelab. It will appear here live.",
+    "command": "restorelab drill --workload {{workload}}"
+  }
+}

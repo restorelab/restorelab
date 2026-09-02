@@ -1,0 +1,70 @@
+{
+  "title": "Workloads",
+  "question": "What is protected, and how sure are we of it?",
+  "columns": {
+    "workload": "Workload",
+    "id": "ID",
+    "node": "Node",
+    "confidence": "Confidence",
+    "lastDrill": "Last drill"
+  },
+  "neverDrilled": "Never drilled",
+  "viewLastDrill": "View",
+  "loadingConfidence": "Loading the confidence score",
+  "empty": {
+    "title": "No workloads discovered",
+    "description": "RestoreLab lists what the hypervisor shows it. Connect one from the machine running restorelab and the inventory appears here.",
+    "command": "restorelab connect"
+  },
+  "detail": {
+    "back": "All workloads",
+    "spec": "{{cores}} vCPU · {{memory}} RAM · {{disk}} disk",
+    "template": "Template",
+    "managed": "Created by RestoreLab",
+    "confidence": {
+      "title": "Recovery confidence",
+      "untested": "This workload has never been drilled, so there is no score. That is not a score of zero — nobody has measured it yet.",
+      "runsConsidered_one": "Scored on {{count}} drill",
+      "runsConsidered_other": "Scored on {{count}} drills",
+      "reasons": "Why the score is what it is",
+      "perfect": "No penalty applied."
+    },
+    "backups": {
+      "title": "Backups",
+      "columns": {
+        "created": "Created",
+        "age": "Age",
+        "size": "Size",
+        "datastore": "Datastore",
+        "flags": "Flags"
+      },
+      "protected": "Protected",
+      "encrypted": "Encrypted",
+      "verification": {
+        "ok": "Verified",
+        "failed": "Verification failed",
+        "none": "Never verified",
+        "unknown": "Verification state unknown"
+      },
+      "empty": {
+        "title": "No backup found for this workload",
+        "description": "A drill restores the most recent backup, so there is nothing to restore until one exists."
+      },
+      "unavailable": "The backup list could not be read."
+    },
+    "runs": {
+      "title": "Drill history",
+      "columns": {
+        "state": "State",
+        "plan": "Plan",
+        "started": "Started",
+        "rto": "RTO"
+      },
+      "empty": {
+        "title": "This workload has never been drilled",
+        "description": "Run the first drill from the machine running restorelab. It will appear here live.",
+        "command": "restorelab drill --workload {{id}}"
+      }
+    }
+  }
+}

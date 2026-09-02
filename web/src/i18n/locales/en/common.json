@@ -1,0 +1,60 @@
+{
+  "app": {
+    "name": "RestoreLab",
+    "nav": {
+      "overview": "Overview",
+      "drills": "Drills",
+      "workloads": "Workloads",
+      "doctor": "Diagnostics"
+    },
+    "signOut": "Sign out",
+    "theme": "Toggle theme"
+  },
+  "runState": {
+    "QUEUED": "Queued",
+    "DISCOVERING_BACKUP": "Finding backup",
+    "PREPARING_ENVIRONMENT": "Preparing",
+    "RESTORING": "Restoring",
+    "STARTING": "Starting",
+    "WAITING_FOR_GUEST": "Waiting for guest",
+    "RUNNING_CHECKS": "Running checks",
+    "GENERATING_REPORT": "Writing report",
+    "CLEANING_UP": "Cleaning up",
+    "SUCCESS": "Succeeded",
+    "FAILED": "Failed",
+    "CANCELLED": "Cancelled",
+    "CLEANUP_FAILED": "Cleanup failed"
+  },
+  "runResult": {
+    "SUCCESS": "Succeeded",
+    "DEGRADED": "Degraded",
+    "FAILED": "Failed"
+  },
+  "stepStatus": {
+    "pending": "Pending",
+    "running": "Running",
+    "done": "Done",
+    "failed": "Failed",
+    "skipped": "Skipped"
+  },
+  "checkStatus": {
+    "pass": "Passed",
+    "fail": "Failed",
+    "error": "Could not run",
+    "skipped": "Skipped"
+  },
+  "error": {
+    "title": "Something went wrong",
+    "retry": "Try again",
+    "offline": "The server could not be reached",
+    "notFound": "That page does not exist",
+    "backHome": "Back to the overview"
+  },
+  "common": {
+    "never": "Never",
+    "none": "—",
+    "copy": "Copy",
+    "copied": "Copied",
+    "loading": "Loading"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "question": "What exactly happened?",
+  "back": "All drills",
+  "report": "Download report",
+  "rto": "RTO",
+  "rtoTarget": "target {{target}}",
+  "backup": "Backup",
+  "backupAge": "{{age}} old",
+  "started": "Started",
+  "timeline": "Timeline",
+  "checks": "Checks",
+  "attempts_one": "{{count}} attempt",
+  "attempts_other": "{{count}} attempts",
+  "disconnected": "Connection lost. The drill is still running — reconnecting.",
+  "noSteps": { "title": "This drill recorded no steps" },
+  "noBackup": "No backup recorded"
+}

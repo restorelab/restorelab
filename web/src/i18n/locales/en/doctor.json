@@ -1,0 +1,19 @@
+{
+  "title": "Diagnostics",
+  "provider": "Provider",
+  "endpoint": "Endpoint",
+  "healthy": "Healthy",
+  "ok": {
+    "title": "No problems found",
+    "description": "Every check passed against this cluster."
+  },
+  "problems_one": "{{count}} problem",
+  "problems_other": "{{count}} problems",
+  "level": {
+    "success": "Passed",
+    "warning": "Warning",
+    "failed": "Problem",
+    "idle": "Note"
+  },
+  "loading": "Running the diagnostic"
+}
