@@ -1,0 +1,43 @@
+# The build context, trimmed.
+#
+# node_modules is the one that matters: the dashboard stage runs `npm ci` from
+# the lockfile, so shipping a local install into the context would copy tens of
+# thousands of files to gain nothing - and a Windows or macOS install would
+# carry the wrong native binaries into a Linux build.
+
+# Dependencies - reinstalled from the lockfile inside the image.
+web/node_modules/
+node_modules/
+
+# Build output - produced inside the image.
+bin/
+dist/
+internal/ui/dist/
+web/.vite/
+
+# Version control and local tooling.
+.git/
+.github/
+.claude/
+
+# Local state and secrets. These must never reach a build context.
+*.key
+master.key
+config.yaml
+config.local.yaml
+.env
+.env.*
+!.env.example
+
+# Working notes and reports.
+STATE.md
+docs/superpowers/
+reports/
+*.report.json
+*.report.html
+
+# Editors / OS.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

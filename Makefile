@@ -54,6 +54,36 @@ test: ## Run the test suite
 test-race: ## Run tests with the race detector
 	$(GO) test -race ./...
 
+# The dashboard.
+#
+# The front-end build writes into internal/ui/dist, where go:embed picks it up.
+# Vite's emptyOutDir deletes the .gitkeep that keeps `go build ./...` green on
+# a machine that has never run this target, so it goes back afterwards:
+# go:embed fails at compile time on a directory holding nothing embeddable.
+#
+# `build` deliberately does not depend on this. A Go developer must be able to
+# compile without npm installed - that is the whole reason internal/ui tolerates
+# an empty dist. `dist` does depend on it, because shipping a release that
+# serves the "no web interface" page would be worse than a slower build.
+#
+# `lint` stays Go-only for the same reason; the front-end has its own targets.
+.PHONY: ui
+ui: ## Build the dashboard into internal/ui/dist
+	cd web && npm ci && npm run build
+	@touch internal/ui/dist/.gitkeep
+
+.PHONY: ui-lint
+ui-lint: ## Lint and format-check the dashboard sources
+	cd web && npm ci && npm run lint
+
+.PHONY: ui-test
+ui-test: ## Run the dashboard test suite
+	cd web && npm ci && npm test
+
+.PHONY: ui-dev
+ui-dev: ## Run the dashboard dev server against `restorelab serve` on :8080
+	cd web && npm run dev
+
 # The store runs one query set against two engines, and only the conformance
 # suite proves they behave the same. SQLite is embedded and runs on every
 # `make test`; PostgreSQL needs a server, so it is skipped unless one is
@@ -100,7 +130,7 @@ tidy: ## Tidy go.mod / go.sum
 check: fmt-check vet test ## Everything CI runs
 
 .PHONY: dist
-dist: ## Cross-compile the release archives and their checksums into dist/
+dist: ui ## Cross-compile the release archives and their checksums into dist/
 	@rm -rf $(DIST_DIR) && mkdir -p $(DIST_DIR)
 	@echo "building $(VERSION)"
 	@set -e; for p in $(PLATFORMS); do \

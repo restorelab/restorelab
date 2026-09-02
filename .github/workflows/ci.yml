@@ -78,6 +78,35 @@ jobs:
       # developer runs also removes the possibility of the two disagreeing.
       - run: make lint
 
+  # The dashboard has its own toolchain and its own tests. This job does not
+  # depend on `backend`: the two have nothing to say to each other, and a Go
+  # failure should not hide a TypeScript one.
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: biome
+        run: npm run lint
+      - name: vitest
+        run: npm test
+      # `npm run build` is `vite build && tsc --noEmit`, in that order, and the
+      # order is not cosmetic: it is the router plugin that writes
+      # routeTree.gen.ts, and that file is generated, not committed. A bare
+      # `tsc` step ahead of this one would fail on a fresh checkout against a
+      # route tree that does not exist yet.
+      - name: build and typecheck
+        run: npm run build
+
   vulncheck:
     name: govulncheck
     runs-on: ubuntu-latest
