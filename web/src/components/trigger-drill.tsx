@@ -182,9 +182,22 @@ export function TriggerDrill({
                   id="trigger-checks"
                   rows={3}
                   className="rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
+                  placeholder="cmd:systemctl is-active ssh"
                   value={options.checks}
                   onChange={set("checks")}
                 />
+                {/* Said here because this is where the choice is made. A
+                    drill restores onto an isolated network, so a tcp:/http:
+                    check only works if this machine has a route into it -
+                    which is the one thing nobody expects until a drill has
+                    already spent minutes timing out. */}
+                <p className="text-xs text-muted-foreground">
+                  One per line. Left empty, RestoreLab runs{" "}
+                  <code className="font-mono">cmd:hostname</code> inside the guest.
+                  Checks that dial the guest (<code className="font-mono">tcp:22</code>,{" "}
+                  <code className="font-mono">http://…</code>) need a route into the
+                  isolated recovery network.
+                </p>
               </div>
             </div>
           </details>

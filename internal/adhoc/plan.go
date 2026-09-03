@@ -38,9 +38,35 @@ type Options struct {
 // a drill triggered over HTTP and one triggered from a terminal must be the
 // same drill.
 const (
-	DefaultCheckRetries  = 10
-	DefaultCheckInterval = 6 * time.Second
-	DefaultCheck         = "tcp:22"
+	DefaultCheckRetries  = 5
+	DefaultCheckInterval = 5 * time.Second
+	DefaultCheckTimeout  = 15 * time.Second
+
+	// DefaultCheck must work with nothing more than what RestoreLab already
+	// requires to do its job, and that rules out reaching the guest over the
+	// network.
+	//
+	// This used to be "tcp:22", and that was wrong in a way worth writing
+	// down. A drill restores onto a deliberately isolated bridge - the whole
+	// point being that nothing can reach the clone - so dialling it from
+	// wherever RestoreLab happens to run only works if the operator has
+	// arranged a route into that network. Most have not, and should not have
+	// to. The default check cannot depend on a condition the product's own
+	// design removes: on a fresh install the very first drill would spend
+	// minutes timing out and then report a perfectly good backup as broken.
+	//
+	// A cmd: check goes through the hypervisor API and the guest agent, which
+	// is the same path used to restore and boot the workload in the first
+	// place. It needs no route at all, and it works identically on Linux and
+	// Windows - the interpreter is chosen from the guest's own OS.
+	//
+	// It is deliberately a small claim: "hostname" proves the guest is
+	// running and can still fork a process, little more than the wait for the
+	// agent just before it. A default that tried to guess what "recovered"
+	// means for an unknown workload would be wrong more often than useful.
+	// Real service checks are one --check away, and that is where the value
+	// is: --check 'cmd:systemctl is-active postgresql'.
+	DefaultCheck = "cmd:hostname"
 )
 
 // applyDefaults fills what the caller left empty.
@@ -97,6 +123,13 @@ func Plan(o Options) (*plan.Plan, error) {
 			// finished starting yet.
 			c.Retries = o.CheckRetries
 			c.RetryInterval = plan.Duration(o.CheckInterval)
+			// Bound each attempt too, not just the number of them. The retry
+			// budget is what an operator waits through before being told
+			// anything, and a check that hangs for the plan-wide default on
+			// every attempt turns a certain failure into minutes of silence.
+			if c.Timeout == 0 {
+				c.Timeout = plan.Duration(DefaultCheckTimeout)
+			}
 			p.Checks = append(p.Checks, c)
 		}
 	}

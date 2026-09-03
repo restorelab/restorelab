@@ -95,8 +95,15 @@ it needs no network route into the isolated recovery network at all. The
 interpreter is chosen from the guest's own OS - cmd on Windows, /bin/sh
 elsewhere - so the same --check works on either.
 
-With no --check, a TCP check on port 22 is used: it proves the guest booted,
-configured its network, and started a service.`,
+With no --check, RestoreLab runs 'cmd:hostname' inside the guest. It is a
+small claim on purpose - the guest is running and can still fork a process -
+but it is one that holds wherever RestoreLab is installed. Network checks
+(tcp:, http:, dns:, ping) need a route into the isolated recovery network,
+which most deployments deliberately do not have; when they cannot reach the
+guest at all, the drill ends INCONCLUSIVE rather than claiming the backup
+failed. Point a --check at the service that actually matters to you:
+
+    --check 'cmd:systemctl is-active postgresql'`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Resolve the provider up front: an ad-hoc plan has to name one,
