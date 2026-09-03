@@ -101,6 +101,26 @@ rto_target: 5m
 // generates a UUID, and a capture carrying one would differ on every run. The
 // alternative - making that generator injectable too - would be production
 // code changed for a capture that does not need it.
+// fixtureScheduledPlan is the plan fixture with a cron on it.
+func fixtureScheduledPlan() store.Plan {
+	p := fixturePlan()
+	p.YAML = fixturePlanYAML + "schedule: \"0 3 * * *\"\nschedule_timezone: UTC\n"
+	return p
+}
+
+// fixtureSkippedSlot is a slot the scheduler declined to drill, with the
+// sentence a dashboard has to be able to show.
+func fixtureSkippedSlot(planID string) store.Slot {
+	return store.Slot{
+		PlanID:    planID,
+		SlotAt:    fixtureNow.Add(-8 * time.Hour),
+		DecidedAt: fixtureNow.Add(-2 * time.Hour),
+		Outcome:   store.SlotSkipped,
+		Reason: "the slot was 6h0m late, past the 2h grace period: " +
+			"a drill that starts outside its window is an incident, not a test",
+	}
+}
+
 func fixturePlan() store.Plan {
 	return store.Plan{
 		ID:          "1f0b2a44-0000-4000-8000-00000000000a",
@@ -514,6 +534,36 @@ func fixtureCases() []fixtureCase {
 			p := fixturePlan()
 			plans.stored[p.ID] = p
 			return recorded(t, do(s, http.MethodGet, "/api/v1/plans/web-tier"), http.StatusOK)
+		}},
+
+		{"schedule", func(t *testing.T) []byte {
+			s, plans, schedules := scheduleServer(t)
+			p := fixtureScheduledPlan()
+			plans.stored[p.ID] = p
+			schedules.slots = []store.Slot{fixtureSkippedSlot(p.ID)}
+			// next_slot_at is computed from the cron and the clock, so this
+			// capture is also what pins the shape the dashboard reads it in.
+			return recorded(t, do(s, http.MethodGet, "/api/v1/schedule"), http.StatusOK)
+		}},
+
+		{"schedule-slots", func(t *testing.T) []byte {
+			s, plans, schedules := scheduleServer(t)
+			p := fixtureScheduledPlan()
+			plans.stored[p.ID] = p
+			// One of each, because the two read completely differently: a
+			// queued slot names a run, a skipped one carries the sentence
+			// that explains why a machine was not tested.
+			schedules.slots = []store.Slot{
+				fixtureSkippedSlot(p.ID),
+				{
+					PlanID:    p.ID,
+					SlotAt:    fixtureNow.Add(-32 * time.Hour),
+					DecidedAt: fixtureNow.Add(-32 * time.Hour),
+					Outcome:   store.SlotQueued,
+					RunID:     fixtureFinishedRunID,
+				},
+			}
+			return recorded(t, do(s, http.MethodGet, "/api/v1/schedule/slots"), http.StatusOK)
 		}},
 
 		{"validate-ok", func(t *testing.T) []byte {

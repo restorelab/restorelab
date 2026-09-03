@@ -62,6 +62,16 @@ type Plans interface {
 	DeletePlan(ctx context.Context, ref string) error
 }
 
+// Schedules is the slot slice of the store this API uses.
+//
+// Reads only, and deliberately so: ClaimSlot is how a slot is decided, it
+// queues a drill in the same transaction, and an HTTP handler has no business
+// being able to do that. The scheduler decides slots; the API reports them.
+type Schedules interface {
+	LastSlot(ctx context.Context, planID string) (*store.Slot, error)
+	ListSlots(ctx context.Context, f store.SlotFilter) ([]store.Slot, error)
+}
+
 // TokenStore is what authentication needs, and nothing more: it cannot create
 // or revoke a token, only recognise one.
 type TokenStore interface {
@@ -116,6 +126,12 @@ type Options struct {
 	// rather than pretending the catalogue is empty.
 	Plans Plans
 
+	// Schedules reports the cron slots the scheduler has decided. Nil is a
+	// deployment with no usable history database, and the routes then answer
+	// 503 rather than reporting an empty schedule - which would read as "no
+	// plan is scheduled" and be a lie.
+	Schedules Schedules
+
 	// Sessions backs the dashboard's cookie. Nil is a deployment with no
 	// usable history database: the session routes then answer 503, the same
 	// way the catalogue does, rather than pretending a login failed.
@@ -162,6 +178,7 @@ type Server struct {
 	tokens    TokenStore
 	providers ProviderSet
 	plans     Plans
+	schedules Schedules
 	sessions  SessionStore
 	ui        fs.FS
 
@@ -205,6 +222,7 @@ func New(opts Options) *Server {
 		tokens:    opts.Tokens,
 		providers: opts.Providers,
 		plans:     opts.Plans,
+		schedules: opts.Schedules,
 		sessions:  opts.Sessions,
 		ui:        opts.UI,
 		setup:     opts.Setup,
@@ -233,9 +251,12 @@ func New(opts Options) *Server {
 	if s.plans == nil {
 		s.plans = store.Noop{}
 	}
-	// Same reasoning for the session table, and the same double: a login
-	// against a deployment with no history database answers 503 rather than
-	// panicking inside the handler that was about to record the session.
+	// Same reasoning for the slot table, and for the session table below: a
+	// deployment with no history database answers 503 rather than panicking
+	// inside a handler.
+	if s.schedules == nil {
+		s.schedules = store.Noop{}
+	}
 	if s.sessions == nil {
 		s.sessions = store.Noop{}
 	}
@@ -323,6 +344,9 @@ func (s *Server) routes() *http.ServeMux {
 	// The catalogue. Reading it is a read; writing it needs `manage`, which
 	// no other scope implies: deciding what a drill is and launching one are
 	// two different powers.
+	mux.Handle("GET /api/v1/schedule", s.authed(s.handleGetSchedule))
+	mux.Handle("GET /api/v1/schedule/slots", s.authed(s.handleListSlots))
+
 	mux.Handle("GET /api/v1/plans", s.authed(s.handleListPlans))
 	mux.Handle("GET /api/v1/plans/{ref}", s.authed(s.handleGetPlan))
 	// Validation is a write scope even though it writes nothing: it is the

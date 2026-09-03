@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "plan_id": "1f0b2a44-0000-4000-8000-00000000000a",
+      "name": "web-tier",
+      "workload_id": "110",
+      "schedule": "0 3 * * *",
+      "timezone": "UTC",
+      "next_slot_at": "2026-09-04T03:00:00Z",
+      "last_slot": {
+        "plan_id": "1f0b2a44-0000-4000-8000-00000000000a",
+        "plan_name": "web-tier",
+        "slot_at": "2026-09-01T04:00:00Z",
+        "decided_at": "2026-09-01T10:00:00Z",
+        "outcome": "skipped",
+        "reason": "the slot was 6h0m late, past the 2h grace period: a drill that starts outside its window is an incident, not a test"
+      }
+    }
+  ]
+}
