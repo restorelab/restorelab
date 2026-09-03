@@ -336,6 +336,42 @@ global administrator rights.
 | [docs/security.md](docs/security.md) | Threat model, secret handling, audit |
 | [docs/architecture.md](docs/architecture.md) | Packages, provider abstraction, roadmap |
 
+## What this is held to
+
+A tool whose whole job is to tell you whether your backups are recoverable has
+to be worth believing. So rather than a claim that it is carefully built, here
+is what can be checked:
+
+- **765 Go tests and 230 front-end tests** — 25,517 lines of Go test code
+  against 27,192 lines of Go, close to one for one;
+- the persistence layer runs **the same conformance suite against SQLite and
+  PostgreSQL**, because two engines behind one set of queries drift apart
+  otherwise;
+- CI runs the race detector, that PostgreSQL suite, `govulncheck` and
+  `golangci-lint` on every push, and the dashboard's TypeScript types are
+  checked against **captured responses from the real Go handlers** — a renamed
+  field fails the build rather than the browser;
+- the whole destructive path — restore, boot, in-guest checks, and the refusal
+  to delete anything RestoreLab did not create — has been **exercised against a
+  real Proxmox VE cluster**, not only a simulated one. The two parts that have
+  not are named as such in [Status](#status), rather than left for somebody to
+  find out.
+
+That last habit is the one worth judging the project on, because the failure
+that matters for a tool like this is not a bug — it is a reassuring green
+nobody thought to doubt. So a drill that could not evaluate its checks reports
+`INCONCLUSIVE` instead of blaming a backup it never verified; and every run
+records what it actually established, which is why a workload checked with
+nothing but `hostname` cannot display full confidence however well it went.
+
+The code is written with heavy use of AI assistance, under a design-first
+workflow: each slice begins as a written design, is argued about before a line
+is written, and ends in review. The architecture, the safety invariants and
+every trade-off that costs something — what the product refuses to do, what it
+will not claim, which dependency is allowed in — are decided by a human, and
+[docs/architecture.md](docs/architecture.md) records the reasoning behind each
+of them.
+
 ## Contributing
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
