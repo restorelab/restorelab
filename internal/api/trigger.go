@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,13 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/restorelab/restorelab/internal/adhoc"
 	"github.com/restorelab/restorelab/internal/catalog"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/plan"
 	"github.com/restorelab/restorelab/internal/store"
+	"github.com/restorelab/restorelab/internal/trigger"
 	"github.com/restorelab/restorelab/internal/worker"
 )
 
@@ -88,63 +88,29 @@ func (s *Server) handleTriggerRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The workload comes from the plan in both cases: an ad-hoc plan carries
-	// the id the body gave, and a stored plan carries its own. One source, so
-	// the lock taken below and the row written afterwards cannot end up
-	// disagreeing about what is being drilled.
-	workloadID := p.Workload.ID
-
-	// Same rule for the provider, and the same reason. The ad-hoc path
-	// already resolved the configured default into the plan before it was
-	// built, so reading it back off the plan here changes nothing for it and
-	// gives a stored plan that names no provider the same fallback.
-	providerID := p.Workload.Provider
-	if providerID == "" && s.cfg != nil {
-		providerID = s.cfg.Defaults.Provider
+	// Everything from here on lives in internal/trigger, so that a drill
+	// queued by the scheduler obeys exactly these guards: one drill per
+	// workload, the workload and provider read off the plan, and the
+	// snapshot that is what actually runs.
+	var defaultProvider string
+	if s.cfg != nil {
+		defaultProvider = s.cfg.Defaults.Provider
 	}
 
-	// One drill per workload at a time. Two concurrent drills of the same
-	// workload would restore the same backup twice, and a dashboard that
-	// double-clicks must not queue two of them.
-	active, err := s.history.ActiveRunForWorkload(r.Context(), workloadID)
+	run, err := trigger.Enqueue(r.Context(), s.history, trigger.Request{
+		Plan:            p,
+		Stored:          stored,
+		DefaultProvider: defaultProvider,
+		ID:              s.newID(),
+		At:              s.now(),
+	})
 	if err != nil {
-		writeProblem(w, r, problemFor(err))
-		return
-	}
-	if active != "" {
-		writeProblem(w, r, newProblem("already-running", "This workload already has a drill in flight",
-			http.StatusConflict,
-			fmt.Sprintf("run %s is queued or running for workload %s", active, workloadID)))
-		return
-	}
-
-	// The snapshot is the defaulted plan re-marshalled, for a stored plan as
-	// much as for an ad-hoc one: what the worker executes is this text, so
-	// there is one shape of snapshot and it is never the catalogue row that
-	// runs. Deleting or editing the plan afterwards cannot change what this
-	// drill did.
-	planYAML, err := yaml.Marshal(p)
-	if err != nil {
-		writeProblem(w, r, problemFor(err))
-		return
-	}
-
-	run := &core.RecoveryRun{
-		ID:               s.newID(),
-		PlanName:         p.Name,
-		ProviderID:       providerID,
-		SourceWorkloadID: workloadID,
-		State:            core.RunQueued,
-		RTOTarget:        time.Duration(p.RTOTarget),
-	}
-	// Provenance, and only when there is any: an ad-hoc drill came from
-	// nowhere but this request, and a plan_id invented for it would point at
-	// a row that does not exist.
-	if stored != nil {
-		run.PlanID = stored.ID
-		run.PlanVersion = stored.Version
-	}
-	if err := s.history.Enqueue(r.Context(), run, string(planYAML), s.now()); err != nil {
+		var busy *trigger.ErrAlreadyRunning
+		if errors.As(err, &busy) {
+			writeProblem(w, r, newProblem("already-running", "This workload already has a drill in flight",
+				http.StatusConflict, busy.Error()))
+			return
+		}
 		writeProblem(w, r, problemFor(err))
 		return
 	}
