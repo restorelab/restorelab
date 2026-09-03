@@ -1,8 +1,20 @@
-import { RUN_STATES } from "@/api/types"
+import { PROOF_LEVELS, RUN_STATES } from "@/api/types"
 import en from "@/i18n/locales/en/common.json"
 import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
-import { RunStatusBadge, checkTone, runLabelKey, runTone, stepTone } from "./run-status"
+import {
+  ProofBadge,
+  ProofPhrase,
+  RunStatusBadge,
+  checkTone,
+  proofIsSettled,
+  proofLabelKey,
+  proofPhraseKey,
+  proofTone,
+  runLabelKey,
+  runTone,
+  stepTone,
+} from "./run-status"
 
 const TERMINAL = ["SUCCESS", "FAILED", "CANCELLED", "CLEANUP_FAILED", "INCONCLUSIVE"]
 
@@ -86,5 +98,126 @@ describe("RunStatusBadge", () => {
     expect(screen.getByText("Succeeded")).toBeInTheDocument()
     rerender(<RunStatusBadge state="SUCCESS" result="DEGRADED" />)
     expect(screen.getByText("Succeeded")).toHaveClass("text-state-warning")
+  })
+})
+
+describe("proofTone", () => {
+  it("colours a proven service and proven data as a success", () => {
+    expect(proofTone("SERVICE")).toBe("success")
+    expect(proofTone("DATA")).toBe("success")
+  })
+
+  /**
+   * The whole reason the scale exists. A machine drilled with the default
+   * `cmd:hostname` succeeds and scores well, having proven that the kernel
+   * came up and nothing else. Amber is where that stops being invisible.
+   */
+  it("colours a boot-only proof amber: it looks like a pass and is not", () => {
+    expect(proofTone("BOOT")).toBe("warning")
+  })
+
+  // A low level is a fact about what was asked for, not a fault. Red belongs
+  // to a drill that went badly, and a restore-only drill did not.
+  it("never paints a level red, not even NONE", () => {
+    for (const level of PROOF_LEVELS) {
+      expect(proofTone(level), `${level} was painted as a failure`).not.toBe("failed")
+    }
+    expect(proofTone("NONE")).toBe("idle")
+  })
+
+  it("leaves an unrecorded level neutral: nothing follows from it either way", () => {
+    expect(proofTone(undefined)).toBe("idle")
+  })
+})
+
+describe("the proof vocabulary", () => {
+  it("has a label and a sentence for every level the API can send", () => {
+    const labels = en.proofLevel as Record<string, string>
+    const phrases = en.proofPhrase as Record<string, string>
+    for (const level of PROOF_LEVELS) {
+      expect(labels[level], `no label for ${level}`).toBeTruthy()
+      expect(phrases[level], `no sentence for ${level}`).toBeTruthy()
+    }
+  })
+
+  /**
+   * The distinction the whole slice turns on. A run from before the feature
+   * carries no level, and saying "nothing was proven" about it would be an
+   * assertion nobody is entitled to make.
+   */
+  it("keys an absent level as unrecorded, never as NONE", () => {
+    expect(proofLabelKey(undefined)).toBe("proofLevel.unrecorded")
+    expect(proofPhraseKey(undefined)).toBe("proofPhrase.unrecorded")
+    expect(proofLabelKey(undefined)).not.toBe(proofLabelKey("NONE"))
+    expect(proofPhraseKey(undefined)).not.toBe(proofPhraseKey("NONE"))
+  })
+
+  it("keys a level by the level itself", () => {
+    expect(proofLabelKey("SERVICE")).toBe("proofLevel.SERVICE")
+    expect(proofPhraseKey("BOOT")).toBe("proofPhrase.BOOT")
+  })
+})
+
+/**
+ * A drill still going carries NONE, honestly: it has established nothing yet.
+ * Shown as-is it reads as a verdict on a run that has not reached one.
+ */
+describe("proofIsSettled", () => {
+  it("holds back the level of a run that has not finished", () => {
+    for (const state of RUN_STATES) {
+      if (TERMINAL.includes(state)) continue
+      expect(proofIsSettled(state), `${state} was treated as settled`).toBe(false)
+    }
+  })
+
+  it("releases it on every terminal state, cancelled included", () => {
+    for (const state of TERMINAL) {
+      expect(proofIsSettled(state as (typeof RUN_STATES)[number])).toBe(true)
+    }
+  })
+
+  it("says yes when no run is named: nothing is in flight to wait for", () => {
+    expect(proofIsSettled(undefined)).toBe(true)
+  })
+})
+
+describe("ProofBadge", () => {
+  it("names what was proven", () => {
+    render(<ProofBadge level="BOOT" state="SUCCESS" />)
+    expect(screen.getByText("Boot only")).toHaveClass("text-state-warning")
+  })
+
+  it("says nothing when no level was recorded", () => {
+    const { container } = render(<ProofBadge state="SUCCESS" />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it("says nothing about a drill that is still running", () => {
+    const { container } = render(<ProofBadge level="NONE" state="RESTORING" />)
+    expect(container).toBeEmptyDOMElement()
+    expect(screen.queryByText(/nothing proven/i)).toBeNull()
+  })
+})
+
+describe("ProofPhrase", () => {
+  it("says what a drill established, in words somebody can act on", () => {
+    render(<ProofPhrase level="BOOT" state="SUCCESS" />)
+    expect(screen.getByText("Only the boot was verified.")).toBeInTheDocument()
+  })
+
+  // "We did not write it down" and "nothing was proven" are different
+  // statements, and this is the one screen with room to say which it is.
+  it("distinguishes an unrecorded level from a proven nothing", () => {
+    const { rerender } = render(<ProofPhrase state="SUCCESS" />)
+    expect(screen.getByText(/never recorded/i)).toBeInTheDocument()
+    rerender(<ProofPhrase level="NONE" state="SUCCESS" />)
+    expect(
+      screen.getByText(/nothing was verified inside the guest/i),
+    ).toBeInTheDocument()
+  })
+
+  it("stays silent while the drill is still going", () => {
+    const { container } = render(<ProofPhrase level="NONE" state="RUNNING_CHECKS" />)
+    expect(container).toBeEmptyDOMElement()
   })
 })

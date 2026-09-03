@@ -101,6 +101,79 @@ describe("WorkloadsContent", () => {
     expect(screen.queryByText("0")).toBeNull()
   })
 
+  /**
+   * A score with no idea what was proven is the mystery this badge ends: 60
+   * beside "Boot only" is the row that gets somebody to write a real check.
+   */
+  it("says what the last drill proved, beside the score", () => {
+    const workloads: Page<Workload> = {
+      items: [workload({ last_run_proof: "BOOT", last_run_state: "SUCCESS" })],
+    }
+    render(
+      wrap(
+        <WorkloadsContent
+          workloads={workloads}
+          confidences={new Map([["101", tested]])}
+          canOperate
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.getByText("Boot only")).toBeInTheDocument()
+  })
+
+  // A machine nobody has drilled has proven nothing and had nothing asked of
+  // it. Showing a level there would be a claim; showing none is the truth.
+  it("claims no level for a machine that was never drilled", () => {
+    const workloads: Page<Workload> = {
+      items: [
+        workload({
+          id: "202",
+          name: "db-02",
+          last_run_proof: undefined,
+          last_run_state: undefined,
+        }),
+      ],
+    }
+    render(
+      wrap(
+        <WorkloadsContent
+          workloads={workloads}
+          confidences={new Map([["202", untested]])}
+          canOperate
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.queryByText(/nothing proven/i)).toBeNull()
+    expect(screen.queryByText(/boot only/i)).toBeNull()
+  })
+
+  /**
+   * A drill in flight carries NONE, honestly - it has established nothing
+   * yet. Painting the row "nothing proven" would deliver a verdict on a drill
+   * that has not reached one.
+   */
+  it("waits for the drill to finish before saying what it proved", () => {
+    const workloads: Page<Workload> = {
+      items: [workload({ last_run_proof: "NONE", last_run_state: "RESTORING" })],
+    }
+    render(
+      wrap(
+        <WorkloadsContent
+          workloads={workloads}
+          confidences={new Map([["101", tested]])}
+          canOperate
+          activeRuns={noActiveRuns}
+          onStarted={noop}
+        />,
+      ),
+    )
+    expect(screen.queryByText(/nothing proven/i)).toBeNull()
+  })
+
   it("offers a drill on every row", () => {
     const workloads: Page<Workload> = { items: [workload()] }
     render(

@@ -1,10 +1,27 @@
 import { ApiError } from "@/api/client"
 import type { Validated } from "@/api/types"
+import { ProofBadge } from "@/components/run-status"
 import { addNamespace } from "@/i18n"
 import plans from "@/i18n/locales/en/plans.json"
 import { useTranslation } from "react-i18next"
 
 addNamespace("plans", plans)
+
+/**
+ * The proof summary with its level prefix removed.
+ *
+ * The server words it as "SERVICE, the service would be verified, the data
+ * would not" - one line for a CLI, where there is no badge to carry the level.
+ * Here the badge already says SERVICE, so repeating it would read as a stutter.
+ * Anything that does not start with the level it declares is left exactly as
+ * the server wrote it: the wording is the API's business, not this file's.
+ */
+export function proofSentence(result: Validated): string | undefined {
+  const summary = result.proof_summary
+  if (!summary) return undefined
+  const prefix = result.proof_level ? `${result.proof_level}, ` : ""
+  return prefix && summary.startsWith(prefix) ? summary.slice(prefix.length) : summary
+}
 
 /** One labelled fact about what a document means. */
 function Fact({ label, value }: { label: string; value?: string }) {
@@ -58,9 +75,29 @@ export function PlanValidation({
 
   if (!result) return null
 
+  const proves = proofSentence(result)
+
   return (
     <div className="space-y-3">
       <p className="font-medium text-sm text-state-success">{t("validation.valid")}</p>
+
+      {/* "Valid" and "worth running" are different questions, and until this
+          block existed only the first one had an answer here. This is also the
+          only place `proves:` is ever discovered: a plan that would prove
+          nothing beyond the boot says so while it is still being written,
+          rather than after five minutes of drilling. */}
+      {proves ? (
+        <div className="space-y-1">
+          <p className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
+            {t("validation.proof")}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <ProofBadge level={result.proof_level} />
+            <span className="text-sm">{proves}</span>
+          </div>
+          <p className="text-muted-foreground text-xs">{t("validation.proofHint")}</p>
+        </div>
+      ) : null}
 
       <div className="space-y-1">
         <p className="font-medium text-muted-foreground text-xs uppercase tracking-wide">

@@ -4,7 +4,12 @@ import { isTerminal } from "@/api/types"
 import { CancelRun } from "@/components/cancel-run"
 import { ErrorState } from "@/components/error-state"
 import { PhaseTimeline } from "@/components/phase-timeline"
-import { RunStatusBadge, toneClass } from "@/components/run-status"
+import {
+  ProofBadge,
+  ProofPhrase,
+  RunStatusBadge,
+  toneClass,
+} from "@/components/run-status"
 import { Alert, AlertTitle } from "@/components/ui/alert"
 import { Card, CardContent } from "@/components/ui/card"
 import { useRunStream } from "@/hooks/useRunStream"
@@ -74,6 +79,9 @@ function RunDetailPage() {
         <div className="flex flex-wrap items-center gap-4">
           <h1 className="font-semibold text-xl">{doc.source_name}</h1>
           <RunStatusBadge state={doc.state} result={doc.result} />
+          {/* The verdict and what it is a verdict about, side by side.
+              "Succeeded" on its own invites somebody to stop reading. */}
+          <ProofBadge level={doc.proof_level} state={doc.state} />
           <div className="ml-auto flex items-center gap-2">
             <CancelRun run={doc} canOperate={can("operate")} />
             <a
@@ -86,6 +94,12 @@ function RunDetailPage() {
             </a>
           </div>
         </div>
+        {/* The sentence, not just the chip: this is the screen where somebody
+            decides whether the drill was worth anything, and "only the boot
+            was verified" is what sends them back to the plan. It says nothing
+            at all while the drill is still going - it has established nothing
+            yet, which is not the same as having established nothing. */}
+        <ProofPhrase level={doc.proof_level} state={doc.state} />
       </header>
 
       <Card>

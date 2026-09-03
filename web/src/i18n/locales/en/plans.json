@@ -39,6 +39,8 @@
     "name": "Name",
     "workload": "Workload",
     "provider": "Provider",
+    "proof": "What it would prove",
+    "proofHint": "A drill only proves what its checks establish. A check that reads the real data can say so with proves: data.",
     "normalized": "With defaults applied",
     "normalizedHint": "What the plan actually says once the defaults are filled in."
   },

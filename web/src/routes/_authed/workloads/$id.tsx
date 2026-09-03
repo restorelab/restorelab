@@ -16,7 +16,7 @@ import {
 import { ConfidenceScore } from "@/components/confidence"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
-import { RunStatusBadge } from "@/components/run-status"
+import { ProofBadge, ProofPhrase, RunStatusBadge } from "@/components/run-status"
 import { TriggerDrill } from "@/components/trigger-drill"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -148,6 +148,10 @@ function ConfidenceCard({ confidence }: { confidence: Confidence }) {
       <CardContent className="space-y-3">
         <div className="flex items-center gap-3">
           <ConfidenceScore value={confidence.score} tested={confidence.tested} />
+          {/* No state is passed: this level comes from the newest drill that
+              reached a verdict, so there is no drill in flight for it to be a
+              premature verdict on. */}
+          <ProofBadge level={confidence.proof_level} />
           {confidence.tested ? (
             <span className="text-muted-foreground text-sm">
               {t("detail.confidence.runsConsidered", {
@@ -156,6 +160,10 @@ function ConfidenceCard({ confidence }: { confidence: Confidence }) {
             </span>
           ) : null}
         </div>
+        {/* The score without this sentence is a number nobody can act on. The
+            cap itself is not repeated here: the reasons below already carry
+            the server's own wording for it. */}
+        {confidence.tested ? <ProofPhrase level={confidence.proof_level} /> : null}
         {confidence.tested ? (
           <div className="space-y-1">
             <p className="font-medium text-sm">{t("detail.confidence.reasons")}</p>

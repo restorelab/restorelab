@@ -81,6 +81,18 @@ export type RunResult = "SUCCESS" | "DEGRADED" | "FAILED"
 export type StepStatus = "pending" | "running" | "done" | "failed" | "skipped"
 export type CheckStatus = "pass" | "fail" | "error" | "skipped"
 
+/**
+ * What a drill established, in increasing order - core.ProofLevel.
+ *
+ * It answers a different question from RunResult: the result says how the
+ * drill went, this says what it proved. A workload drilled with the default
+ * `cmd:hostname` succeeds and establishes BOOT, nothing more, and printing the
+ * first without the second is how a backup tool ends up reassuring people
+ * about a recovery nobody verified.
+ */
+export const PROOF_LEVELS = ["NONE", "BOOT", "SERVICE", "DATA"] as const
+export type ProofLevel = (typeof PROOF_LEVELS)[number]
+
 // ---------------------------------------------------------------------- runs
 
 /** One row of GET /recovery-runs. */
@@ -99,6 +111,13 @@ export interface RunSummary {
   rto_target_seconds?: number
   rto_exceeded: boolean
   cleanup_done: boolean
+
+  /**
+   * What this drill established. Absent on a run that predates the field,
+   * which means "not recorded" - never "nothing was proven". The two are
+   * different statements and the interface must not merge them.
+   */
+  proof_level?: ProofLevel
 }
 
 /** One row of GET /queue: a run plus the lease over it. */
@@ -187,6 +206,9 @@ export interface RunDocument {
   rto_exceeded: boolean
   cleanup_done: boolean
   error?: string
+
+  /** As on RunSummary: absent means not recorded, not "nothing was proven". */
+  proof_level?: ProofLevel
 }
 
 // ----------------------------------------------------------------- workloads
@@ -230,6 +252,13 @@ export interface Workload {
   last_run_state?: RunState
   last_run_result?: RunResult
 
+  /**
+   * What that last drill established. Absent when it was never drilled and
+   * also when the run predates the field: neither case may be shown as a
+   * level, which is why the badge renders nothing rather than a floor.
+   */
+  last_run_proof?: ProofLevel
+
   status?: WorkloadStatus
 }
 
@@ -247,6 +276,16 @@ export interface Confidence {
   reasons: string[]
   last_run_id?: string
   runs_considered: number
+
+  /**
+   * What the newest drill that reached a verdict established, and the ceiling
+   * it puts on the score. They are here so a client can explain the number
+   * instead of printing it: 60 beside "only the boot was verified" is a
+   * sentence, a bare 60 is a mystery. Both absent when nothing was recorded,
+   * and the score is then capped by nothing.
+   */
+  proof_level?: ProofLevel
+  proof_cap?: number
 }
 
 // ---------------------------------------------------------------------- meta
@@ -355,6 +394,16 @@ export interface Validated {
   workload_id: string
   provider_id?: string
   normalized_yaml: string
+
+  /**
+   * What this plan would establish if every one of its checks passed, and the
+   * same thing as a sentence in the conditional. A promise about the document,
+   * not a fact about a drill - which is why the editor is the one screen that
+   * can answer "is this worth running" before five minutes are spent finding
+   * out.
+   */
+  proof_level?: ProofLevel
+  proof_summary?: string
 }
 
 // --------------------------------------------------------------------- setup

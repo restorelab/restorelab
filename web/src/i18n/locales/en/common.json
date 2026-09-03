@@ -32,6 +32,20 @@
     "DEGRADED": "Degraded",
     "FAILED": "Failed"
   },
+  "proofLevel": {
+    "unrecorded": "Not recorded",
+    "NONE": "Nothing proven",
+    "BOOT": "Boot only",
+    "SERVICE": "Service",
+    "DATA": "Data"
+  },
+  "proofPhrase": {
+    "unrecorded": "This drill is older than proof levels, so what it established was never recorded. That is not the same as having proven nothing.",
+    "NONE": "Nothing was verified inside the guest.",
+    "BOOT": "Only the boot was verified.",
+    "SERVICE": "The service was verified, the data was not.",
+    "DATA": "The service and its data were verified."
+  },
   "stepStatus": {
     "pending": "Pending",
     "running": "Running",

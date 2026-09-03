@@ -4,6 +4,7 @@ import { AppLink } from "@/components/app-link"
 import { ConfidenceScore } from "@/components/confidence"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
+import { ProofBadge } from "@/components/run-status"
 import { TriggerDrill } from "@/components/trigger-drill"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -123,17 +124,30 @@ export function WorkloadsContent({
                     </TableCell>
                     <TableCell className="text-muted-foreground">{w.node}</TableCell>
                     <TableCell>
-                      {confidence ? (
-                        <ConfidenceScore
-                          value={confidence.score}
-                          tested={confidence.tested}
-                        />
-                      ) : (
-                        <Skeleton
-                          className="h-4 w-20"
-                          aria-label={t("loadingConfidence")}
-                        />
-                      )}
+                      <div className="flex items-center gap-3">
+                        {confidence ? (
+                          <ConfidenceScore
+                            value={confidence.score}
+                            tested={confidence.tested}
+                          />
+                        ) : (
+                          <Skeleton
+                            className="h-4 w-20"
+                            aria-label={t("loadingConfidence")}
+                          />
+                        )}
+                        {/* The level rides along with the listing, so it is
+                            here before the per-row score request answers. A
+                            number on its own is the mystery this ends: 60
+                            beside "Boot only" is the row that gets someone to
+                            write a real check.
+
+                            The state goes with it: a machine whose drill is
+                            still running carries NONE, and painting that row
+                            "nothing proven" would be a verdict on a drill that
+                            has not reached one. */}
+                        <ProofBadge level={w.last_run_proof} state={w.last_run_state} />
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       <LastDrill confidence={confidence} />
