@@ -108,6 +108,13 @@ type RecoveryRun struct {
 	State  RunState
 	Result RunResult
 
+	// ProofLevel is what this run established about the workload: the boot,
+	// the service, the data, or nothing. It is not a verdict on the drill -
+	// Result is - but on what the drill is entitled to claim. A run written
+	// before RestoreLab recorded this carries ProofUnknown, which means "not
+	// recorded" and never "nothing was proven".
+	ProofLevel ProofLevel
+
 	StartedAt   time.Time
 	CompletedAt time.Time
 

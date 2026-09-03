@@ -47,6 +47,12 @@ type CheckConfig struct {
 	RetryInterval time.Duration
 	Critical      bool // a failing critical check fails the whole run
 	Params        map[string]any
+
+	// Proves is what this check establishes when it passes. It is decided
+	// where the check is built from a plan, because that is the only place
+	// that knows what the check actually runs; the registry never reads it,
+	// and ProvenBy only counts it for a check that passed.
+	Proves ProofLevel
 }
 
 // CheckStatus is the outcome of a single check.
