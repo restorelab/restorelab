@@ -330,6 +330,14 @@ func writeVerdict(buf *bytes.Buffer, run *core.RecoveryRun, opts Options) {
 	}
 	fmt.Fprintf(buf, "Result   %s\n", colorize(resultWord, resultColor(run.Result), opts))
 
+	// What the drill proved, printed beside how it went, because the two
+	// answer different questions and only one of them is on the operator's
+	// mind. "SUCCESS" invites you to stop reading; "SUCCESS / only the boot
+	// was verified" is the line that gets a real check written.
+	if run.ProofLevel.Recorded() {
+		fmt.Fprintf(buf, "Proved   %s  (%s)\n", run.ProofLevel, run.ProofLevel.Describe())
+	}
+
 	fmt.Fprintf(buf, "RTO      %s", FormatDuration(run.RTO))
 	if run.RTOTarget > 0 {
 		state := "met"

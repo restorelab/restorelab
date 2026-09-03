@@ -383,3 +383,158 @@ func TestScore_InconclusiveRunCostsNothing(t *testing.T) {
 		}
 	}
 }
+
+// The lie this slice exists to correct.
+//
+// Everything about this drill is exemplary: it ran an hour ago, it succeeded,
+// it met its RTO, it cleaned up, and its backup is fresh. Before the proof
+// level it scored 100 - and the only fact it established is that the kernel
+// came up and could fork a process. A hundred out of a hundred for that is
+// not a rounding error, it is the product telling somebody their disaster
+// recovery is in perfect shape on the strength of `hostname`.
+func TestScore_BootOnlyCannotReachAHundred(t *testing.T) {
+	run := neutralSuccess(fixtureBase.Add(-1 * time.Hour))
+	run.ProofLevel = core.ProofBoot
+
+	in := ConfidenceInput{
+		LastRun:        run,
+		LatestBackupAt: fixtureBase.Add(-2 * time.Hour),
+		Now:            fixtureBase,
+	}
+	c := Score(in, DefaultWeights())
+
+	if c.Score != DefaultWeights().ProofBootCap {
+		t.Errorf("Score = %d, want %d: a flawless drill that only ran a liveness probe "+
+			"must not be able to display more than its boot", c.Score, DefaultWeights().ProofBootCap)
+	}
+	if c.Proof != core.ProofBoot {
+		t.Errorf("Proof = %s, want BOOT", c.Proof)
+	}
+	// The number on its own is a mystery. The reason is the product.
+	if !strings.Contains(strings.Join(c.Reasons, "; "), "capped at") {
+		t.Errorf("nothing in the reasons says why the score is capped: %v", c.Reasons)
+	}
+}
+
+// The ceiling is a ceiling, not a penalty: it does not stack with the others.
+// A boot-only drill that also missed its RTO is still worth its ceiling, not
+// its ceiling minus ten.
+func TestScore_TheCeilingDoesNotStackWithPenalties(t *testing.T) {
+	run := neutralSuccess(fixtureBase.Add(-1 * time.Hour))
+	run.ProofLevel = core.ProofBoot
+	run.RTO = 10 * time.Minute // target is 5
+
+	in := ConfidenceInput{
+		LastRun:        run,
+		LatestBackupAt: fixtureBase.Add(-2 * time.Hour),
+		Now:            fixtureBase,
+	}
+	if got := Score(in, DefaultWeights()).Score; got != DefaultWeights().ProofBootCap {
+		t.Errorf("Score = %d, want %d", got, DefaultWeights().ProofBootCap)
+	}
+}
+
+// A drill that verified the service earns the service ceiling, and one that
+// verified the data earns the whole range. The ladder has to be worth
+// climbing or nobody will write a real check.
+func TestScore_EachLevelEarnsItsCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		level core.ProofLevel
+		want  int
+	}{
+		{core.ProofNone, DefaultWeights().ProofNoneCap},
+		{core.ProofBoot, DefaultWeights().ProofBootCap},
+		{core.ProofService, DefaultWeights().ProofServiceCap},
+		{core.ProofData, 100},
+	} {
+		run := neutralSuccess(fixtureBase.Add(-1 * time.Hour))
+		run.ProofLevel = tc.level
+
+		in := ConfidenceInput{
+			LastRun:        run,
+			LatestBackupAt: fixtureBase.Add(-2 * time.Hour),
+			Now:            fixtureBase,
+		}
+		if got := Score(in, DefaultWeights()).Score; got != tc.want {
+			t.Errorf("%s scores %d, want %d", tc.level, got, tc.want)
+		}
+	}
+}
+
+// A run recorded before RestoreLab knew about proof levels is not evidence
+// that nothing was proven. Capping on it would mark down every workload in
+// an existing installation on the strength of a fact nobody ever wrote down.
+func TestScore_AnUnrecordedLevelCapsNothing(t *testing.T) {
+	run := neutralSuccess(fixtureBase.Add(-1 * time.Hour))
+	run.ProofLevel = core.ProofUnknown
+
+	in := ConfidenceInput{
+		LastRun:        run,
+		LatestBackupAt: fixtureBase.Add(-2 * time.Hour),
+		Now:            fixtureBase,
+	}
+	c := Score(in, DefaultWeights())
+	if c.Score != 100 {
+		t.Errorf("Score = %d, want 100: an unrecorded level is not a claim", c.Score)
+	}
+	if c.Proof.Recorded() {
+		t.Errorf("Proof = %s, want unrecorded", c.Proof)
+	}
+}
+
+// A drill in flight has proven nothing *yet*, and the score must not read
+// that as "nothing was proven". Otherwise a workload with a spotless history
+// would collapse to the bottom ceiling for as long as its next drill runs -
+// the number would swing on the clock rather than on the evidence, which is
+// the same mistake the failure rate already avoids by skipping runs with no
+// verdict.
+func TestScore_ARunInFlightDoesNotLowerTheCeiling(t *testing.T) {
+	finished := neutralSuccess(fixtureBase.Add(-2 * time.Hour))
+	finished.ProofLevel = core.ProofService
+
+	running := neutralSuccess(fixtureBase.Add(-1 * time.Minute))
+	running.State = core.RunRunningChecks
+	running.Result = "" // no verdict yet
+	running.ProofLevel = core.ProofNone
+
+	in := ConfidenceInput{
+		LastRun:        running,
+		History:        []*core.RecoveryRun{finished},
+		LatestBackupAt: fixtureBase.Add(-2 * time.Hour),
+		Now:            fixtureBase,
+	}
+	c := Score(in, DefaultWeights())
+	if c.Proof != core.ProofService {
+		t.Errorf("Proof = %s, want SERVICE: the drill still running has not unproven anything", c.Proof)
+	}
+	if c.Score != DefaultWeights().ProofServiceCap {
+		t.Errorf("Score = %d, want %d", c.Score, DefaultWeights().ProofServiceCap)
+	}
+}
+
+// The invariant the whole slice is named after, stated once as a property:
+// whatever the history, the score never exceeds the ceiling of what was
+// actually established.
+func TestScore_NeverExceedsWhatWasProven(t *testing.T) {
+	levels := []core.ProofLevel{core.ProofNone, core.ProofBoot, core.ProofService, core.ProofData}
+	ages := []time.Duration{time.Hour, 24 * time.Hour, 30 * 24 * time.Hour}
+
+	for _, level := range levels {
+		for _, age := range ages {
+			run := neutralSuccess(fixtureBase.Add(-age))
+			run.ProofLevel = level
+
+			in := ConfidenceInput{
+				LastRun:        run,
+				LatestBackupAt: fixtureBase.Add(-age),
+				Now:            fixtureBase,
+			}
+			got := Score(in, DefaultWeights()).Score
+			ceiling := DefaultWeights().ProofCap(level)
+			if ceiling > 0 && got > ceiling {
+				t.Errorf("%s drilled %s ago scores %d, above its ceiling of %d",
+					level, age, got, ceiling)
+			}
+		}
+	}
+}

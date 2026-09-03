@@ -77,6 +77,16 @@ type Document struct {
 
 	CleanupDone bool   `json:"cleanup_done"`
 	Error       string `json:"error,omitempty"`
+
+	// ProofLevel is what this drill established - NONE, BOOT, SERVICE or
+	// DATA - as opposed to Result, which says how the drill itself went. A
+	// SUCCESS at BOOT is a real success that proved the kernel comes up and
+	// nothing else, and a report that showed only the first half of that
+	// sentence would be the reassuring kind of useless.
+	//
+	// Absent on a run that predates the field: not recorded, which is not
+	// the same claim as NONE.
+	ProofLevel string `json:"proof_level,omitempty"`
 }
 
 // BackupDTO describes the backup a run restored from.
@@ -189,6 +199,8 @@ func NewDocument(run *core.RecoveryRun) Document {
 
 		CleanupDone: run.CleanupDone,
 		Error:       run.Err,
+
+		ProofLevel: string(run.ProofLevel),
 	}
 
 	if run.RTOTarget > 0 {

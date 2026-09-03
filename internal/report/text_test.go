@@ -143,3 +143,40 @@ func TestText_NilRunErrors(t *testing.T) {
 		t.Fatal("expected an error for a nil run")
 	}
 }
+
+// The verdict and the proof level answer different questions, and the report
+// has to show both. "SUCCESS" on its own invites an operator to stop reading;
+// "SUCCESS" beside "only the boot was verified" is the line that gets a real
+// check written.
+func TestText_ShowsWhatTheDrillProved(t *testing.T) {
+	run := fixtureRunSuccess()
+	run.ProofLevel = core.ProofBoot
+
+	var buf bytes.Buffer
+	if err := Text(&buf, run, Options{}); err != nil {
+		t.Fatalf("Text: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "Proved") || !strings.Contains(out, string(core.ProofBoot)) {
+		t.Errorf("the report does not say what the drill proved:\n%s", out)
+	}
+	if !strings.Contains(out, core.ProofBoot.Describe()) {
+		t.Errorf("the level appears without the sentence that explains it:\n%s", out)
+	}
+}
+
+// A run from before the level existed says nothing about it, rather than
+// printing a claim nobody recorded.
+func TestText_SaysNothingWhenTheLevelWasNotRecorded(t *testing.T) {
+	run := fixtureRunSuccess()
+	run.ProofLevel = core.ProofUnknown
+
+	var buf bytes.Buffer
+	if err := Text(&buf, run, Options{}); err != nil {
+		t.Fatalf("Text: %v", err)
+	}
+	if strings.Contains(buf.String(), "Proved") {
+		t.Errorf("an unrecorded level was rendered as a claim:\n%s", buf.String())
+	}
+}

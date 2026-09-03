@@ -37,6 +37,13 @@ type htmlView struct {
 	BackupVerification      string
 	BackupVerificationClass string
 
+	// ProofLabel and ProofDescription say what the drill established, beside
+	// the verdict that says how it went. Empty when the run predates the
+	// proof level, which the template renders as nothing at all rather than
+	// as a claim either way.
+	ProofLabel       string
+	ProofDescription string
+
 	Steps  []htmlStep
 	Checks []htmlCheck
 }
@@ -81,6 +88,10 @@ func HTML(w io.Writer, run *core.RecoveryRun) error {
 		HasBackup:          doc.Backup != nil,
 		HasTemp:            doc.TempWorkloadID != "",
 		BackupVerification: backupVerificationLabel(doc.Backup),
+	}
+	if run.ProofLevel.Recorded() {
+		view.ProofLabel = string(run.ProofLevel)
+		view.ProofDescription = run.ProofLevel.Describe()
 	}
 	if doc.Backup != nil && doc.Backup.Verified == string(core.VerificationFailed) {
 		view.BackupVerificationClass = "bad"
@@ -426,6 +437,12 @@ const htmlTemplateSource = `<!doctype html>
         <div class="k">Completed</div>
         <div class="v">{{.Doc.CompletedAt.Format "2006-01-02 15:04:05"}} UTC</div>
       </div>
+      {{if .ProofLabel}}
+      <div class="field">
+        <div class="k">Proved</div>
+        <div class="v">{{.ProofLabel}} &mdash; {{.ProofDescription}}</div>
+      </div>
+      {{end}}
       <div class="field">
         <div class="k">RTO</div>
         <div class="v">{{.Doc.RTO}}{{if .Doc.RTOTarget}} (target {{.Doc.RTOTarget}}, {{if .Doc.RTOExceeded}}exceeded{{else}}met{{end}}){{end}}</div>

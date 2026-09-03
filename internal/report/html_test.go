@@ -312,3 +312,37 @@ func TestHTML_NilRunErrors(t *testing.T) {
 		t.Fatal("expected an error for a nil run")
 	}
 }
+
+// The HTML report is what gets attached to a compliance ticket, so it is the
+// copy of the verdict that outlives the terminal. It has to carry the same
+// qualification the terminal does.
+func TestHTML_ShowsWhatTheDrillProved(t *testing.T) {
+	run := fixtureRunSuccess()
+	run.ProofLevel = core.ProofBoot
+
+	var buf bytes.Buffer
+	if err := HTML(&buf, run); err != nil {
+		t.Fatalf("HTML: %v", err)
+	}
+	out := buf.String()
+
+	if !strings.Contains(out, "Proved") || !strings.Contains(out, string(core.ProofBoot)) {
+		t.Error("the HTML report does not say what the drill proved")
+	}
+	if !strings.Contains(out, core.ProofBoot.Describe()) {
+		t.Error("the level appears without the sentence that explains it")
+	}
+}
+
+func TestHTML_SaysNothingWhenTheLevelWasNotRecorded(t *testing.T) {
+	run := fixtureRunSuccess()
+	run.ProofLevel = core.ProofUnknown
+
+	var buf bytes.Buffer
+	if err := HTML(&buf, run); err != nil {
+		t.Fatalf("HTML: %v", err)
+	}
+	if strings.Contains(buf.String(), ">Proved<") {
+		t.Error("an unrecorded level was rendered as a claim")
+	}
+}

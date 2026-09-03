@@ -74,6 +74,23 @@ type ConfidenceWeights struct {
 	// History did not fully succeed; it scales linearly with the observed
 	// failure rate.
 	FailureRateMaxPenalty int
+
+	// ProofNoneCap, ProofBootCap and ProofServiceCap are the ceilings each
+	// proof level puts on the score: whatever the penalties come to, a
+	// workload cannot score higher than what its drills actually established.
+	//
+	// A ceiling rather than another penalty, because the statement is not
+	// "this drill went worse" but "the score cannot exceed what was proven".
+	// Penalties accumulate and can be tuned away; a ceiling cannot be argued
+	// with, and a drill that only ran `hostname` must not be able to display
+	// 100 however well it went. There is no cap for core.ProofData: a drill
+	// that verified the data has nothing left to be modest about.
+	//
+	// A cap of zero or less means no cap, exactly as a penalty of zero or
+	// less means no penalty.
+	ProofNoneCap    int
+	ProofBootCap    int
+	ProofServiceCap int
 }
 
 // DefaultWeights returns RestoreLab's default confidence-scoring weights.
@@ -100,6 +117,31 @@ func DefaultWeights() ConfidenceWeights {
 		BackupStalePenalty: 20,
 
 		FailureRateMaxPenalty: 30,
+
+		ProofNoneCap:    40,
+		ProofBootCap:    60,
+		ProofServiceCap: 85,
+	}
+}
+
+// ProofCap returns the ceiling level puts on a score, or 0 for no ceiling.
+// It is exported because the API answers with the ceiling beside the score:
+// a client that shows 60 has to be able to say what 60 was measured against.
+func (w ConfidenceWeights) ProofCap(level core.ProofLevel) int {
+	switch level {
+	case core.ProofNone:
+		return w.ProofNoneCap
+	case core.ProofBoot:
+		return w.ProofBootCap
+	case core.ProofService:
+		return w.ProofServiceCap
+	default:
+		// core.ProofData earns the full range, and an unrecorded level caps
+		// nothing at all: a run from before RestoreLab wrote this down is not
+		// evidence that nothing was proven, and treating it as such would
+		// mark down every workload in an existing installation on the
+		// strength of a fact nobody ever recorded.
+		return 0
 	}
 }
 
@@ -119,6 +161,10 @@ type Confidence struct {
 	Reasons []string
 	// Tested reports whether the workload has ever had a recovery run.
 	Tested bool
+	// Proof is what the most recent drill that reached a verdict actually
+	// established. core.ProofUnknown when no such drill recorded one, which
+	// is what runs from before the level existed carry.
+	Proof core.ProofLevel
 }
 
 // Score grades a workload's recovery posture from in using weights w. It
@@ -221,6 +267,17 @@ func Score(in ConfidenceInput, w ConfidenceWeights) Confidence {
 		}
 	}
 
+	// The ceiling, applied last: every penalty above says how well the drill
+	// went, and this says what the drill was entitled to claim in the first
+	// place. A workload drilled daily, on time, with a fresh backup and a
+	// check that prints its hostname has earned every one of those points and
+	// still proven only that the kernel boots.
+	proof := provenLevel(in)
+	if ceiling := w.ProofCap(proof); ceiling > 0 && score > ceiling {
+		score = ceiling
+		reasons = append(reasons, fmt.Sprintf("%s (capped at %d)", proof.Describe(), ceiling))
+	}
+
 	if score < 0 {
 		score = 0
 	}
@@ -228,7 +285,31 @@ func Score(in ConfidenceInput, w ConfidenceWeights) Confidence {
 		score = 100
 	}
 
-	return Confidence{Score: score, Tested: true, Reasons: reasons}
+	return Confidence{Score: score, Tested: true, Reasons: reasons, Proof: proof}
+}
+
+// provenLevel returns the proof level of the newest run that reached a
+// verdict and recorded one.
+//
+// A run that reached no verdict is skipped, for the same reason it is skipped
+// in the failure rate: a drill still in flight, or one somebody cancelled,
+// establishes nothing yet. Without this a workload with a spotless history
+// would collapse to the "nothing verified" ceiling for as long as its next
+// drill is running - the score would swing on the clock rather than on the
+// evidence.
+func provenLevel(in ConfidenceInput) core.ProofLevel {
+	runs := make([]*core.RecoveryRun, 0, len(in.History)+1)
+	runs = append(runs, in.LastRun)
+	runs = append(runs, in.History...)
+	for _, r := range runs {
+		if r == nil || r.Result == "" {
+			continue
+		}
+		if r.ProofLevel.Recorded() {
+			return r.ProofLevel
+		}
+	}
+	return core.ProofUnknown
 }
 
 // mostRecentSuccess returns the newest successful run among LastRun and
