@@ -186,7 +186,12 @@ The first file that does not validate stops the command.`,
 				if err != nil {
 					return fmt.Errorf("%s: %w", path, err)
 				}
-				fmt.Fprintf(a.out, "%s %s: %s\n", a.ok(), path, p.Name)
+				// What the plan would prove if every check passed, said here
+				// rather than discovered after the drill: a plan whose only
+				// check is a liveness probe is worth knowing about while it
+				// is still five seconds' work to improve it.
+				fmt.Fprintf(a.out, "%s %s: %s (proves %s)\n",
+					a.ok(), path, p.Name, p.ProofSummary())
 			}
 			return nil
 		},
