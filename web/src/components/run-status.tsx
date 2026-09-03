@@ -92,7 +92,20 @@ export function checkTone(status: CheckStatus): Tone {
   }
 }
 
-export function runLabelKey(state: RunState): string {
+/**
+ * The key for a run's label.
+ *
+ * A degraded run is stored with state SUCCESS and result DEGRADED - the
+ * workload did come back - so labelling it from the state alone printed
+ * "Succeeded" next to the amber icon runTone already gives it. The word
+ * contradicted the icon, and of the two the word is what people quote.
+ *
+ * The result only ever overrides the label in that one case. Everywhere else
+ * the state is the more precise of the two: it distinguishes CANCELLED,
+ * INCONCLUSIVE and CLEANUP_FAILED, which the result cannot.
+ */
+export function runLabelKey(state: RunState, result?: RunResult): string {
+  if (state === "SUCCESS" && result === "DEGRADED") return "runResult.DEGRADED"
   return `runState.${state}`
 }
 
@@ -191,7 +204,7 @@ export function RunStatusBadge({
       )}
     >
       <ToneIcon tone={tone} />
-      {t(runLabelKey(state))}
+      {t(runLabelKey(state, result))}
     </span>
   )
 }

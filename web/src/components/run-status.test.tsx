@@ -68,6 +68,28 @@ describe("the state vocabulary", () => {
   it("keys a label by the state itself", () => {
     expect(runLabelKey("RUNNING_CHECKS")).toBe("runState.RUNNING_CHECKS")
   })
+
+  // A degraded run is stored as SUCCESS with result DEGRADED, and it used to
+  // render the word "Succeeded" beside the amber icon runTone gives it. The
+  // word contradicted the icon, and the word is the half people quote.
+  it("calls a degraded run degraded, not succeeded", () => {
+    expect(runLabelKey("SUCCESS", "DEGRADED")).toBe("runResult.DEGRADED")
+    expect(en.runResult.DEGRADED).not.toBe(en.runState.SUCCESS)
+  })
+
+  it("still labels a clean success from its state", () => {
+    expect(runLabelKey("SUCCESS", "SUCCESS")).toBe("runState.SUCCESS")
+    expect(runLabelKey("SUCCESS")).toBe("runState.SUCCESS")
+  })
+
+  // The state is the more precise of the two everywhere else: a cancelled or
+  // inconclusive run carries no result at all, and a result could never say
+  // which of them it was.
+  it("keeps the states a result cannot express", () => {
+    expect(runLabelKey("CANCELLED")).toBe("runState.CANCELLED")
+    expect(runLabelKey("INCONCLUSIVE")).toBe("runState.INCONCLUSIVE")
+    expect(runLabelKey("CLEANUP_FAILED", "FAILED")).toBe("runState.CLEANUP_FAILED")
+  })
 })
 
 describe("stepTone and checkTone", () => {
@@ -93,11 +115,17 @@ describe("RunStatusBadge", () => {
     expect(screen.getByText("Running checks")).toBeInTheDocument()
   })
 
-  it("says Succeeded for a clean pass and still Succeeded for a degraded one", () => {
+  // The badge used to print "Succeeded" for a degraded run and colour it
+  // amber, because the label came from the state alone and a degraded run is
+  // stored as SUCCESS. The word and the icon said different things, and the
+  // word is the half that gets quoted into a status meeting.
+  it("says Degraded, in amber, for a degraded run", () => {
     const { rerender } = render(<RunStatusBadge state="SUCCESS" />)
     expect(screen.getByText("Succeeded")).toBeInTheDocument()
+
     rerender(<RunStatusBadge state="SUCCESS" result="DEGRADED" />)
-    expect(screen.getByText("Succeeded")).toHaveClass("text-state-warning")
+    expect(screen.queryByText("Succeeded")).not.toBeInTheDocument()
+    expect(screen.getByText("Degraded")).toHaveClass("text-state-warning")
   })
 })
 
