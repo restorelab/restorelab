@@ -24,7 +24,8 @@
     "SUCCESS": "Succeeded",
     "FAILED": "Failed",
     "CANCELLED": "Cancelled",
-    "CLEANUP_FAILED": "Cleanup failed"
+    "CLEANUP_FAILED": "Cleanup failed",
+    "INCONCLUSIVE": "Inconclusive"
   },
   "runResult": {
     "SUCCESS": "Succeeded",

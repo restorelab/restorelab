@@ -429,15 +429,33 @@ func (e *Engine) runChecks(ctx context.Context, run *core.RecoveryRun, p *plan.P
 	}
 
 	critical := criticalMap(p)
-	var failedCritical []string
+	var failedCritical, unevaluated []string
 	for _, r := range results {
-		if !r.OK() && critical[r.Name] {
-			failedCritical = append(failedCritical, r.Name)
+		if r.OK() || !critical[r.Name] {
+			continue
 		}
+		// core.CheckError means the check could not run at all - an
+		// unreachable target, a bad configuration - as opposed to running and
+		// coming back with bad news. The two must not share an ending.
+		if r.Status == core.CheckError {
+			unevaluated = append(unevaluated, r.Name)
+			continue
+		}
+		failedCritical = append(failedCritical, r.Name)
 	}
 
+	// A real failure outranks an unevaluated one. If any critical check got an
+	// answer and the answer was bad, the drill learned something about the
+	// backup, and that is the news worth reporting - even if another check
+	// alongside it could not run.
 	if len(failedCritical) > 0 {
 		err := fmt.Errorf("critical check(s) failed: %v", failedCritical)
+		e.endStep(run, idx, core.StepFailed, err.Error(), err)
+		return err
+	}
+
+	if len(unevaluated) > 0 {
+		err := fmt.Errorf("%w: %v", errChecksInconclusive, unevaluated)
 		e.endStep(run, idx, core.StepFailed, err.Error(), err)
 		return err
 	}

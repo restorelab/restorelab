@@ -54,6 +54,7 @@ export const RUN_STATES = [
   "FAILED",
   "CANCELLED",
   "CLEANUP_FAILED",
+  "INCONCLUSIVE",
 ] as const
 export type RunState = (typeof RUN_STATES)[number]
 
@@ -62,6 +63,7 @@ const TERMINAL: ReadonlySet<string> = new Set([
   "FAILED",
   "CANCELLED",
   "CLEANUP_FAILED",
+  "INCONCLUSIVE",
 ])
 
 /**

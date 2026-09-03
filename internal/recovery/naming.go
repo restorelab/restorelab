@@ -137,6 +137,14 @@ func checkMessage(r core.CheckResult) string {
 		return fmt.Sprintf("check %q passed", r.Name)
 	case core.CheckSkipped:
 		return fmt.Sprintf("check %q skipped", r.Name)
+	case core.CheckError:
+		// Not "failed". A check that could not run says nothing about the
+		// workload, and the timeline is where an operator forms their first
+		// impression of what a drill found.
+		if r.Message != "" {
+			return fmt.Sprintf("check %q could not run: %s", r.Name, r.Message)
+		}
+		return fmt.Sprintf("check %q could not run", r.Name)
 	default:
 		if r.Message != "" {
 			return fmt.Sprintf("check %q failed: %s", r.Name, r.Message)

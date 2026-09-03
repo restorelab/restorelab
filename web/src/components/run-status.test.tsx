@@ -4,7 +4,7 @@ import { render, screen } from "@testing-library/react"
 import { describe, expect, it } from "vitest"
 import { RunStatusBadge, checkTone, runLabelKey, runTone, stepTone } from "./run-status"
 
-const TERMINAL = ["SUCCESS", "FAILED", "CANCELLED", "CLEANUP_FAILED"]
+const TERMINAL = ["SUCCESS", "FAILED", "CANCELLED", "CLEANUP_FAILED", "INCONCLUSIVE"]
 
 describe("runTone", () => {
   it("colours a success green and a failure red", () => {
@@ -30,6 +30,18 @@ describe("runTone", () => {
 
   it("colours a queued run idle: nothing is happening to it yet", () => {
     expect(runTone("QUEUED")).toBe("idle")
+  })
+
+  /**
+   * The one that matters most. A drill whose checks could not be evaluated -
+   * a tcp: check dialled from a machine with no route into the isolated
+   * recovery network - restored and booted the workload perfectly. Painting
+   * it red tells somebody their backup is broken when it is not, and a
+   * dashboard that cries wolf about backups is worse than no dashboard.
+   */
+  it("colours an inconclusive run amber, never red", () => {
+    expect(runTone("INCONCLUSIVE")).toBe("warning")
+    expect(runTone("INCONCLUSIVE")).not.toBe("failed")
   })
 })
 

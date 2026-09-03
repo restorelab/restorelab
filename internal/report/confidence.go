@@ -168,8 +168,14 @@ func Score(in ConfidenceInput, w ConfidenceWeights) Confidence {
 		apply(w.LastRunDegradedPenalty, "last run degraded")
 	}
 
-	// RTO.
-	if in.LastRun.RTOExceeded() {
+	// RTO, but only for a run that reached a verdict.
+	//
+	// A run with an empty Result proves nothing (a cancelled drill, or one
+	// whose checks could not be evaluated), and its elapsed time proves less
+	// than nothing: an inconclusive run's clock is dominated by whatever timed
+	// out. Charging it for missing the RTO target would penalise a workload
+	// twice over for a network its backup has nothing to do with.
+	if in.LastRun.Result != "" && in.LastRun.RTOExceeded() {
 		apply(w.RTOExceededPenalty, fmt.Sprintf(
 			"RTO exceeded (%s actual vs %s target)",
 			FormatDuration(in.LastRun.RTO), FormatDuration(in.LastRun.RTOTarget)))

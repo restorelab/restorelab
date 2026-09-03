@@ -339,3 +339,47 @@ func TestScore_ReasonsAlwaysExplainEveryPenalty(t *testing.T) {
 		}
 	}
 }
+
+// A drill that reached no verdict must cost a workload nothing.
+//
+// This is the whole point of the INCONCLUSIVE ending: a tcp: check dialled
+// from a machine with no route into the isolated recovery network says
+// nothing about the backup, and a score that drops because of it would make
+// the dashboard lie about which workloads are at risk.
+func TestScore_InconclusiveRunCostsNothing(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	success := &core.RecoveryRun{
+		State:       core.RunSuccess,
+		Result:      core.ResultSuccess,
+		CompletedAt: now.Add(-2 * time.Hour),
+	}
+	// The same history, but the most recent drill could not be evaluated: it
+	// ran long (five minutes of timeouts) against a one-minute target.
+	inconclusive := &core.RecoveryRun{
+		State:       core.RunInconclusive,
+		Result:      "",
+		CompletedAt: now.Add(-time.Hour),
+		RTO:         5 * time.Minute,
+		RTOTarget:   time.Minute,
+	}
+
+	w := DefaultWeights()
+	before := Score(ConfidenceInput{
+		Now: now, LastRun: success, History: []*core.RecoveryRun{success},
+		LatestBackupAt: now.Add(-time.Hour),
+	}, w)
+	after := Score(ConfidenceInput{
+		Now: now, LastRun: inconclusive, History: []*core.RecoveryRun{inconclusive, success},
+		LatestBackupAt: now.Add(-time.Hour),
+	}, w)
+
+	if after.Score != before.Score {
+		t.Errorf("an inconclusive drill moved the score from %d to %d: %v",
+			before.Score, after.Score, after.Reasons)
+	}
+	for _, r := range after.Reasons {
+		if strings.Contains(r, "RTO") || strings.Contains(r, "failed") {
+			t.Errorf("unexpected penalty from a run that reached no verdict: %q", r)
+		}
+	}
+}

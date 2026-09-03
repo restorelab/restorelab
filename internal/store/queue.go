@@ -18,6 +18,7 @@ import (
 // The test QueueStatesMatchCoreTerminal keeps them in step.
 var terminalStates = []core.RunState{
 	core.RunSuccess, core.RunFailed, core.RunCancelled, core.RunCleanupFailed,
+	core.RunInconclusive,
 }
 
 // terminalList renders terminalStates as a bound-parameter list.

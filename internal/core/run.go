@@ -20,12 +20,24 @@ const (
 	RunFailed            RunState = "FAILED"
 	RunCancelled         RunState = "CANCELLED"
 	RunCleanupFailed     RunState = "CLEANUP_FAILED"
+
+	// RunInconclusive: the drill ran to the end - the backup was restored,
+	// the workload booted - but a critical check could not be evaluated, so
+	// no verdict about recovery can be drawn from it.
+	//
+	// This is a separate ending from FAILED on purpose. RestoreLab restores
+	// onto a deliberately isolated network, so a check dialled from here can
+	// come back silent because the operator has no route into that network,
+	// not because anything is wrong with the backup. Calling that FAILED
+	// would charge a workload's confidence score for the topology it is being
+	// tested from, and a report nobody can trust is worth less than no report.
+	RunInconclusive RunState = "INCONCLUSIVE"
 )
 
 // Terminal reports whether no further transition is expected.
 func (s RunState) Terminal() bool {
 	switch s {
-	case RunSuccess, RunFailed, RunCancelled, RunCleanupFailed:
+	case RunSuccess, RunFailed, RunCancelled, RunCleanupFailed, RunInconclusive:
 		return true
 	}
 	return false

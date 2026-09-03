@@ -76,7 +76,12 @@ func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan,
 	// keeps applying to an interrupted drill, and "cleanup.always: false" —
 	// which only ever meant "leave a healthy drill up so I can poke at it" —
 	// must never become a way for a Ctrl-C to leak a temporary VM.
-	incomplete := run.Result == core.ResultFailed || run.State == core.RunFailed || run.State == core.RunCancelled
+	// An inconclusive run counts as incomplete for the same reason a cancelled
+	// one does: it is precisely the case an operator would want to keep the
+	// workload around to investigate, and "cleanup.always: false" must never
+	// become a way to leak a temporary VM.
+	incomplete := run.Result == core.ResultFailed || run.State == core.RunFailed ||
+		run.State == core.RunCancelled || run.State == core.RunInconclusive
 	if incomplete && p.Cleanup.KeepOnFailure {
 		e.logKept(run, tempID, node, "plan.cleanup.keep_on_failure is set and the run did not complete")
 		e.recordCleanupSkipped(run, fmt.Sprintf(

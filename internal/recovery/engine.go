@@ -264,7 +264,11 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, opts RunOptions) (run *c
 	cerr := e.runChecks(ctx, run, p, target)
 	run.RTO = computeRTO(run, run.StartedAt)
 	if cerr != nil {
-		e.markFailed(run, cerr)
+		if errors.Is(cerr, errChecksInconclusive) {
+			e.markInconclusive(run, cerr)
+		} else {
+			e.markFailed(run, cerr)
+		}
 		workflowErr = cerr
 		return
 	}
@@ -319,6 +323,33 @@ func (e *Engine) markFailed(run *core.RecoveryRun, err error) {
 	e.log.Error("recovery run failed", "run_id", run.ID, "err", err)
 }
 
+// errChecksInconclusive marks a run whose critical checks could not be
+// evaluated. It is a sentinel rather than a message match because the caller
+// grades on it, and grading on the wording of an error is how a report starts
+// lying after somebody rephrases a string.
+var errChecksInconclusive = errors.New("critical check(s) could not run")
+
+// markInconclusive records a run that completed the workflow - the backup
+// restored, the workload booted - but reached no verdict, because a critical
+// check could not be evaluated at all.
+//
+// It carries no Result, exactly like a cancelled run and for the same reason
+// (see markCancelled): SUCCESS, DEGRADED and FAILED are all claims about
+// whether the backup restores, and "I could not tell" is none of them. The
+// store persists an empty result as NULL, and report.Score already leaves a
+// verdict-less run out of the failure rate.
+//
+// The commonest way to get here is a tcp:, http: or ping check dialled from a
+// machine with no route into the isolated recovery network. That is a fact
+// about the operator's topology, not about their backup, and charging a
+// workload's confidence score for it would make the whole dashboard lie.
+func (e *Engine) markInconclusive(run *core.RecoveryRun, err error) {
+	run.State = core.RunInconclusive
+	run.Result = ""
+	run.Err = err.Error()
+	e.log.Warn("recovery run reached no verdict", "run_id", run.ID, "err", err)
+}
+
 // markCancelled records a run that ended because a human stopped it (Ctrl-C,
 // an API cancel), as opposed to one that failed on its own. It runs after
 // markFailed on the same run and deliberately overrides it — the distinction
@@ -353,7 +384,12 @@ func (e *Engine) gradeSuccess(run *core.RecoveryRun, p *plan.Plan) {
 	if !degraded {
 		critical := criticalMap(p)
 		for _, c := range run.Checks {
-			if !c.OK() && !critical[c.Name] {
+			// Only a check that ran and came back bad degrades the verdict.
+			// One that could not run (core.CheckError) or never ran
+			// (core.CheckSkipped) made no claim about the workload, and
+			// downgrading on it would report an unreachable check host as a
+			// partly-broken backup.
+			if c.Status == core.CheckFail && !critical[c.Name] {
 				degraded = true
 				break
 			}

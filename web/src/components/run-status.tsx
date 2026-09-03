@@ -40,10 +40,19 @@ export function toneClass(tone: Tone): string {
  *
  * CANCELLED is deliberately not red. Someone chose to stop it; that is not the
  * same news as a backup that would not restore.
+ *
+ * INCONCLUSIVE is amber for the same reason, and it is the one worth
+ * understanding: the backup restored and the workload booted, but a critical
+ * check could not be evaluated - most often a tcp: or http: check dialled
+ * from a machine with no route into the isolated recovery network. Red would
+ * tell somebody their backup is broken when it demonstrably is not. Amber says
+ * what is true: nobody knows yet, and something needs fixing before anybody
+ * will.
  */
 export function runTone(state: RunState, result?: RunResult): Tone {
   if (state === "SUCCESS") return result === "DEGRADED" ? "warning" : "success"
   if (state === "FAILED" || state === "CLEANUP_FAILED") return "failed"
+  if (state === "INCONCLUSIVE") return "warning"
   if (state === "CANCELLED" || state === "QUEUED") return "idle"
   return "running"
 }

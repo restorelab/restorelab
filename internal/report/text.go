@@ -86,7 +86,9 @@ func checkGlyph(status core.CheckStatus, opts Options) (glyph, color string) {
 		}
 		return "✗", ansiRed
 	case core.CheckError:
-		return "!", ansiRed
+		// Amber, not red. A check that could not run is not a check that
+		// failed, and the colour is the first thing anybody reads.
+		return "!", ansiYellow
 	case core.CheckSkipped:
 		return "-", ansiGray
 	default:
