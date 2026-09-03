@@ -129,9 +129,22 @@ describe("PlanEditor", () => {
     await screen.findByRole("button", { name: /overwrite/i })
     await userEvent.click(screen.getByRole("button", { name: /overwrite/i }))
 
-    await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBe(2))
-    const [url] = vi.mocked(fetch).mock.calls[1] ?? []
-    expect(String(url)).toBe(`/api/v1/plans/${planFixture.name}`)
+    // Count the saves, not every request the editor made. The editor also
+    // validates on a debounce, and a validation landing late turns a total of
+    // two into a total of three - which says nothing about whether the
+    // overwrite happened, and was enough to make this fail at random on a
+    // loaded machine.
+    const saves = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.map(([url]) => String(url))
+        .filter((url) => url.startsWith(`/api/v1/plans/${planFixture.name}`))
+
+    await waitFor(() => expect(saves()).toHaveLength(2))
+    // The first carried the version guard; the second deliberately does not.
+    // That is what "overwrite" means here, and it is the half worth asserting.
+    expect(saves()[0]).toContain(`?version=${planFixture.version}`)
+    expect(saves()[1]).toBe(`/api/v1/plans/${planFixture.name}`)
   })
 
   // Changing name: in the textarea is the most natural thing in the world,
