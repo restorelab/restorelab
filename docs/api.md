@@ -484,13 +484,23 @@ Lists the drill history. Every parameter is optional:
 
 ```
 $ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/recovery-runs
-{"items":[{"id":"94bce70d-36c1-470c-b02f-1fa17b6d7714","plan_name":"adhoc-110","source_workload_id":"110","source_name":"linux-test","state":"SUCCESS","result":"SUCCESS","started_at":"2026-09-01T02:44:31.4134064Z","completed_at":"2026-09-01T02:45:08.0705545Z","rto_seconds":33.037,"rto":"33.0s","rto_exceeded":false,"cleanup_done":true}]}
+{"items":[{"id":"94bce70d-36c1-470c-b02f-1fa17b6d7714","plan_name":"adhoc-110","source_workload_id":"110","source_name":"linux-test","state":"SUCCESS","result":"SUCCESS","started_at":"2026-09-01T02:44:31.4134064Z","completed_at":"2026-09-01T02:45:08.0705545Z","rto_seconds":33.037,"rto":"33.0s","rto_exceeded":false,"cleanup_done":true,"proof_level":"BOOT"}]}
 ```
 
 `rto_exceeded` is `true` only when the plan carried an RTO target and the
 measured RTO went over it; a run with no target never sets it. `completed_at`
 is `null` for a run still in progress rather than the zero time — a run that
 has not finished must not read as one that finished at the epoch.
+
+`proof_level` is what the drill **established** — `NONE`, `BOOT`, `SERVICE` or
+`DATA` — as opposed to `result`, which says how the drill went. The two are
+different sentences and a listing that shows only the second one is the
+reassuring kind of useless: a `SUCCESS` at `BOOT` is a real success that proved
+the kernel comes up and nothing else. See
+[architecture.md](architecture.md#the-proof-level) for the ladder and
+[recovery-plans.md](recovery-plans.md#proves) for where a check's level comes
+from. The field is **absent** on a run recorded before it existed, and that
+means "not recorded", not "nothing was proven" — render the two differently.
 
 A `limit` above 200 is not refused, it is honoured up to 200: the caller gets
 a smaller page and a cursor, which is what it wanted anyway. A `limit` of
@@ -506,8 +516,14 @@ one wire shape for a run, wherever it is read from.
 
 ```
 $ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/recovery-runs/94bce70d
-{"schema":"1.0","run_id":"94bce70d-36c1-470c-b02f-1fa17b6d7714","plan_name":"adhoc-110","source_workload_id":"110","source_name":"linux-test","backup":{...},"steps":[...],"checks":[...],...}
+{"schema":"1.0","run_id":"94bce70d-36c1-470c-b02f-1fa17b6d7714","plan_name":"adhoc-110","source_workload_id":"110","source_name":"linux-test","proof_level":"BOOT","backup":{...},"steps":[...],"checks":[...],...}
 ```
+
+The document carries `proof_level` too, with the same meaning and the same
+absence on a run that predates it. It was added without bumping the document's
+schema: adding an optional field is not a breaking change, and the rule is
+written next to the constant in `internal/report/json.go` so the next person
+does not have to relitigate it.
 
 ### `GET /api/v1/recovery-runs/{id}/events`
 
@@ -557,10 +573,17 @@ coloured without one request per row:
 | `last_run_at` | when that drill **started** — a drill still running has no completion time, and "last tested" has to have an answer while it is in flight |
 | `last_run_state` | its state, `SUCCESS` through `CLEANUP_FAILED` |
 | `last_run_result` | its grade, absent while the drill is still going or when it was cancelled |
+| `last_run_proof` | what that drill established: `NONE`, `BOOT`, `SERVICE` or `DATA` |
 
-All four are absent from a workload that has never been drilled. That is the
+All five are absent from a workload that has never been drilled. That is the
 difference between "never tested" and "tested, and it went badly", and a
 client that cannot tell them apart will render one as the other.
+
+`last_run_proof` is absent for a second reason as well: a drill recorded
+before the field existed has no level, and "not recorded" is not the claim
+"nothing was proven". A screen that collapses the two would mark down every
+workload in an existing installation on the strength of a fact nobody ever
+wrote down.
 
 They come from one query over the drill history for the whole page, and they
 deliberately stop short of the confidence score: scoring reaches the backup
@@ -879,13 +902,22 @@ $ curl -X POST -H "Authorization: Bearer rl_..." \
     --data-binary @web-tier.yaml \
     https://restorelab.example.com/api/v1/plans/validate
 
-{"valid":true,"name":"web-tier","workload_id":"110","provider_id":"pve","normalized_yaml":"name: web-tier\n..."}
+{"valid":true,"name":"web-tier","workload_id":"110","provider_id":"pve","normalized_yaml":"name: web-tier\n...","proof_level":"SERVICE","proof_summary":"SERVICE, the service would be verified, the data would not"}
 ```
 
 `normalized_yaml` is the document with its defaults applied — "here is what
 this actually says". It is the difference between a field left out and a field
 left out *meaning something*, which is exactly what an editor needs to show
 before anyone commits to it.
+
+`proof_level` and `proof_summary` say what this plan **would** establish if
+every one of its checks passed. They read in the conditional on purpose: a
+plan has not drilled anything, so "the service was verified" would be a claim
+about a run nobody made. They are here because "is this document valid" and
+"is this document worth running" are different questions, and only the first
+one used to have an answer on this route. A plan whose only check is a liveness
+probe answers `BOOT`, which is worth knowing while it is still five seconds'
+work to improve. The same summary is what `restorelab plan validate` prints.
 
 An invalid document is a `400` carrying every problem found, in the same shape
 `POST /plans` returns. The route requires `manage` even though it writes
@@ -1116,7 +1148,7 @@ answer: *how much can I actually count on this restore?*
 
 ```
 $ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/workloads/110/confidence
-{"workload_id":"110","score":100,"tested":true,"reasons":[],"last_run_id":"94bce70d-36c1-470c-b02f-1fa17b6d7714","runs_considered":2}
+{"workload_id":"110","score":60,"tested":true,"reasons":["only the boot was verified (capped at 60)"],"last_run_id":"94bce70d-36c1-470c-b02f-1fa17b6d7714","runs_considered":2,"proof_level":"BOOT","proof_cap":60}
 ```
 
 `score` is `null`, not `0`, for a workload that has never been drilled.
@@ -1130,6 +1162,22 @@ built from — every penalty the scorer applied, in order — and it is the
 value worth reading, not `len(reasons)` and not the number alone. Two
 workloads can both score 60 for entirely different reasons (a stale backup
 versus a check that keeps failing), and only `reasons` tells them apart.
+
+`proof_level` and `proof_cap` say what the newest drill that reached a verdict
+established, and the **ceiling** that puts on the score. The ceiling is applied
+last, after every penalty: `NONE` → 40, `BOOT` → 60, `SERVICE` → 85, `DATA` →
+no ceiling. A workload drilled daily, on time, from a fresh backup, whose only
+check prints its hostname has earned every point the penalties leave it and
+still proven only that the kernel boots — so it is capped, and the reason that
+says so is in `reasons`.
+
+The two fields are here so a client can *explain* the number instead of
+printing it: a 60 next to "only the boot was verified" is a sentence, a bare 60
+is a mystery. Both are absent when no drill that reached a verdict recorded a
+level — a history from before the field, or a workload whose only runs are
+still in flight — and an absent level caps nothing at all. See
+[architecture.md](architecture.md#the-ceiling-on-the-confidence-score) for why
+it is a ceiling rather than another penalty, and how to retune it.
 
 ## What comes next
 

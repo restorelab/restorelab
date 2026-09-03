@@ -141,6 +141,7 @@ Every check shares these fields:
 | `retries` | `0` | Extra attempts after the first |
 | `retry_interval` | `5s` | Wait between attempts |
 | `critical` | `true` | A failure fails the run; `false` downgrades it to `DEGRADED` |
+| `proves` | deduced | What this check establishes when it passes: `none`, `boot`, `service`, `data` |
 
 A freshly booted service is rarely ready on the first attempt. `retries: 10`
 with `retry_interval: 6s` is a better answer than a single long timeout,
@@ -150,6 +151,63 @@ the measured RTO honest.
 String parameters support templates against the target:
 `{{ .ip }}`, `{{ .id }}`, `{{ .node }}`, `{{ .name }}`. An unknown variable is
 an error, never a silently empty string.
+
+### `proves`
+
+A verdict says how the drill went. It does not say what the drill
+*established*, and those are two different sentences: a plan whose only check
+prints the guest's hostname can end `SUCCESS`, and all it proved is that the
+kernel came up and can still fork a process. `proves` is what a check says
+about the second one.
+
+| Level | What it establishes |
+| --- | --- |
+| `none` | nothing that counts as evidence, even when it passes |
+| `boot` | the OS started and executes code |
+| `service` | a service started, with its real configuration and its real data |
+| `data` | the data is there and coherent |
+
+The scale is ordered by **what is proven, not by what it costs to arrange**. A
+passing `tcp` check on 5432 proves that something is listening on that port,
+which is worth less than a query against the data even though it is the one
+that needs a route into the recovery network. It enters at `service` and stays
+there.
+
+Almost no plan needs to write the field. Left out, the level is deduced, and
+the deduction is built to be wrong only in the safe direction — it understates,
+never the reverse:
+
+- a `command` whose command line is a bare liveness probe — `hostname`,
+  `uname`, `whoami`, `true`, `echo`, `ver`, with or without arguments, with or
+  without a directory in front of it — proves `boot`;
+- a command line that chains or pipes (`&&`, `||`, `;`, `|`) is no longer
+  described by its first program, so it is not read as a liveness probe;
+- a `ping` proves `boot` for the same reason: ICMP is answered by the kernel's
+  network stack, not by anything anybody deployed. A guest that answers a ping
+  has booted and configured its network, and every service on it may still be
+  dead;
+- everything else proves `service`: every other command, and every `tcp`,
+  `http` and `dns` check.
+
+**`data` is only ever claimed by a declaration.** RestoreLab cannot tell from
+outside that `psql -tAc 'select count(*) from orders'` reads a row rather than
+pokes a socket, and guessing that it does is exactly how a dashboard ends up
+claiming more than the drill established.
+
+```yaml
+- type: command
+  name: orders present
+  run: psql -tAc 'select count(*) from orders'
+  proves: data
+```
+
+A declaration wins in both directions. `proves: none` on a smoke test is
+believed too, and so is `proves: boot` on a `systemctl is-system-running`
+check that RestoreLab would otherwise have read as a service check.
+
+Values are case-insensitive. An unknown one fails validation when the plan is
+written — `plan validate`, `plan apply`, or loading the file for a run — never
+silently at three in the morning.
 
 ### `ping`
 
@@ -306,6 +364,45 @@ is the normal state of affairs, since the recovery bridge is isolated on
 purpose. A check that failed for that reason says nothing about the backup,
 so the run says nothing either.
 
+### What the run proved
+
+The verdict and the proof level answer different questions, so a report prints
+both:
+
+```text
+Result   SUCCESS
+Proved   SERVICE  (the service was verified, the data was not)
+```
+
+A run's level is the **maximum over the checks that actually passed**. A check
+that failed, that could not run, or that never ran establishes nothing, and
+contributes nothing here in either direction — the exact counterpart of the
+`INCONCLUSIVE` rule above. A PostgreSQL that boots but whose `systemctl
+is-active` check fails stays at `BOOT` *and* takes the failure penalty: two
+different true statements about the same drill.
+
+`BOOT` comes from the guest agent answering — it runs inside the guest — or
+from an in-guest check passing. Never from power state: a hypervisor
+reporting a running process cannot tell a booted OS from a guest sitting at
+its boot loader. A `startup.skip` drill therefore proves `NONE`, however well
+the restore itself went.
+
+The level is also a **ceiling on the workload's confidence score**: `NONE`
+caps it at 40, `BOOT` at 60, `SERVICE` at 85, `DATA` not at all. A workload
+drilled daily, on time, from a fresh backup, whose only check prints its
+hostname has earned every point the penalties leave it and still proven only
+that the kernel boots. See
+[architecture.md](architecture.md#the-proof-level) for the ceiling and why it
+is a ceiling rather than another penalty.
+
+`plan validate` says what a plan would prove before anyone spends five minutes
+drilling with it:
+
+```
+$ restorelab plan validate examples/plans/postgres-prod.yaml
+✓ examples/plans/postgres-prod.yaml: postgres-prod (proves SERVICE, the service would be verified, the data would not)
+```
+
 ### Choosing checks for an isolated drill
 
 A guest booted on a network that goes nowhere does not behave like one on your
@@ -349,7 +446,9 @@ cannot run, and a drill that cannot run its critical checks ends
 `INCONCLUSIVE`.
 
 This is also why an ad-hoc drill with no `--check` runs `cmd:hostname`: it is
-a small claim, but it is one that holds on every installation.
+a small claim, but it is one that holds on every installation. It is also
+literally a small claim — that drill proves `BOOT` and the report says so,
+rather than letting a green verdict imply the service came back.
 
 ## Stored plans
 
@@ -433,3 +532,7 @@ different files.
    green run against a target you invented is not.
 5. **Set `max_age`.** A plan without it will happily prove that a very old
    backup restores beautifully.
+6. **Say `proves: data` on the check that reads the data.** It is the one
+   level RestoreLab never deduces on its own, and the only one that lets a
+   workload's confidence score go above 85. An empty database that boots
+   perfectly passes every other kind of check.

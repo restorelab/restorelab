@@ -111,6 +111,16 @@ the checks and the confidence score are identical before and after. Deleting
 a plan whose drill is in flight is equally harmless, because the worker
 executes the snapshot, never the catalogue row.
 
+`proof_level` records what the drill **established** — `NONE`, `BOOT`,
+`SERVICE` or `DATA` — beside `result`, which records how it went. `NULL` means
+the run predates the column, and that is deliberately *not* the same value as
+`NONE`: it means "not recorded", and nothing may be concluded from it in either
+direction. The confidence score reads it as unknown and caps nothing. There is
+no backfill, and there will not be one — writing a level, however cautious, for
+a drill nobody measured would be the mirror image of the overclaiming this
+column exists to stop. See
+[architecture.md](architecture.md#the-proof-level).
+
 **`plans`** — the catalogue. `plan_yaml` holds the document **exactly as it
 was submitted**, bytes included, so exporting a plan gives back what somebody
 wrote, comments and key order intact. `name` is unique and is the human key:

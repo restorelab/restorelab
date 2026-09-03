@@ -173,6 +173,65 @@ that — there, `net.Error.Timeout()` reports false for `WSAETIMEDOUT`, the
 portable `syscall.ECONNREFUSED` is a placeholder that never matches a real
 dial, and the message strings are localised.
 
+## The proof level
+
+`INCONCLUSIVE` is one half of the honesty rule: RestoreLab does not accuse a
+backup it could not verify. The proof level is the other half — **it does not
+congratulate one it did not verify either.**
+
+A run carries a level beside its verdict, and the two answer different
+questions: the verdict says how the drill went, the level says what it
+established. A `SUCCESS` at `BOOT` is a real success that proves the kernel
+comes up, and nothing else. Said only as `SUCCESS`, it becomes a dashboard of
+reassuring green that stops people from looking, which is the most dangerous
+way for a backup-verification tool to fail.
+
+| Level | What is established | Where it comes from |
+| --- | --- | --- |
+| `NONE` | nothing — the drill never ran code inside the guest | `startup.skip`, an agent that never answered, a run that ended before its checks |
+| `BOOT` | the OS started and executes code | the guest agent answered, or a trivial in-guest command passed |
+| `SERVICE` | a service started with its real configuration and its real data | any non-trivial check that passed: a `command`, or a `tcp`/`http`/`dns` probe |
+| `DATA` | the data is there and coherent | a passing check declaring `proves: data` in the plan |
+
+The ladder is ordered by **what is proven, not by what it costs to arrange**.
+A passing `tcp:5432` proves a service listens, no more and no less, and it does
+not outrank a query against the data because it happens to need a route into
+the recovery network.
+
+A run's level is the maximum over the checks that **actually passed**. One that
+failed, errored or never ran establishes nothing, and contributes nothing in
+either direction — the same reasoning as `INCONCLUSIVE`, applied upwards.
+
+**Powering on is not booting.** The hypervisor reports a running process, which
+a guest stuck at its boot loader also has; so `BOOT` is established by the guest
+agent answering, which happens *inside* the guest, or by an in-guest check
+passing. Never by power state alone.
+
+Where a single check's level comes from is a plan question, documented in
+[recovery-plans.md](recovery-plans.md#proves): declared with `proves:`, or
+deduced by a rule that only ever understates. `DATA` is never deduced — no
+amount of reading a command line tells you it looked at a row.
+
+### The ceiling on the confidence score
+
+The level of the newest run that reached a verdict is a **ceiling** on the
+workload's Recovery Confidence: `NONE` → 40, `BOOT` → 60, `SERVICE` → 85,
+`DATA` → no ceiling. It is applied last, after every penalty, and it enters
+`reasons` when it bites — `only the boot was verified (capped at 60)`.
+
+A ceiling rather than another penalty, because the statement is not "this drill
+went worse" but "the score cannot exceed what was proven". Penalties accumulate
+and can be tuned away; a drill that only ran `hostname` must not be able to
+display 100 however well it went. The three values are fields on
+`report.ConfidenceWeights` (`ProofNoneCap`, `ProofBootCap`, `ProofServiceCap`)
+like every other weight, and a cap of zero or less means no cap.
+
+A run recorded before the level existed carries **no level at all**, and that
+means "not recorded" — not "nothing was proven". It caps nothing, and the score
+walks past it to the newest run that did record one. There is no backfill:
+inventing a level for a run that predates the feature, even a cautious one,
+would be the mirror image of the lie this exists to correct.
+
 ## Retries
 
 Only errors explicitly marked retryable by a provider (`core.Retryable`) are
@@ -253,12 +312,13 @@ one. The CLI keeps every capability: it is what automation drives, and it is
 the only place that touches the master key.
 
 Delivered ahead of that order: persistence (SQLite and PostgreSQL), the HTTP
-API, the queue and worker behind its write paths, stored recovery plans, the
-confidence score, and the dashboard's server half — a session cookie, the
-static handler that serves the compiled interface, and plan validation for its
-editor. The confidence score and any dashboard need a history to read before
-anything else can be built on them, and a dashboard that can only watch drills
-it cannot start is half a product.
+API, the queue and worker behind its write paths, stored recovery plans,
+scheduled drills, the confidence score with the proof level that caps it, and
+the dashboard's server half — a session cookie, the static handler that serves
+the compiled interface, and plan validation for its editor. The confidence
+score and any dashboard need a history to read before anything else can be
+built on them, and a dashboard that can only watch drills it cannot start is
+half a product.
 
 The interface is being built in five slices: **C1** the server half (done),
 **C2** the read-only interface (done), **C3** the write paths (done),
@@ -323,3 +383,10 @@ not that there is a file. And `connect` and the wizard share one provisioning
 sequence rather than two: the order in it is load-bearing — the provider is
 stored before the token is verified, because Proxmox reveals a secret exactly
 once — and two copies would have drifted on somebody's cluster.
+
+**E1**, the proof level, is delivered on top of all that, and is the first
+slice of a direction rather than of the interface: what makes a drill
+conclusive. It adds no new kind of check — it classifies the ones that already
+exist, records what each run established, and stops a workload whose only check
+prints a hostname from displaying a Recovery Confidence of 100. See
+[The proof level](#the-proof-level) above.

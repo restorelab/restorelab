@@ -70,6 +70,17 @@ queues its own drills, on its own, and a slot that comes due while the server
 was off is skipped rather than caught up hours later — see
 [docs/scheduling.md](docs/scheduling.md).
 
+**A drill now says what it actually proved.** A green verdict and a proven
+recovery are not the same claim: a drill whose only check prints the guest's
+hostname establishes that the kernel booted and can fork a process, and
+nothing about the service or the data. So every run records a proof level —
+`NONE`, `BOOT`, `SERVICE` or `DATA` — the reports print it beside the verdict,
+and it is a **ceiling** on the confidence score rather than a footnote: 60 for
+a drill that only verified the boot, 85 for one that verified the service, 100
+only where a check declared `proves: data`. A dashboard of reassuring green
+that proves nothing is the most dangerous way for a tool like this to fail.
+See [docs/recovery-plans.md](docs/recovery-plans.md#proves).
+
 Two things in the list below are implemented and unit-tested but have never
 run against real infrastructure, because the cluster this was built on has
 neither: **Proxmox Backup Server**, and the **network checks**, which need a
@@ -91,6 +102,7 @@ been driven against a live Proxmox VE 9 cluster.
 | Drill history, SQLite by default, PostgreSQL optional (`runs`, `db`) | done |
 | HTTP API + token auth and scopes (`serve`, `token`) | done |
 | Recovery confidence score, computed from the stored history | done |
+| Proof level: what each drill established, and the ceiling it puts on the score | done |
 | Triggering and cancelling drills over HTTP, worker, queue, live event stream | done |
 | Recovery plans stored in the database, edited over HTTP or with `plan` | done |
 | Browser session cookie, so a dashboard can authenticate and read the event stream | done |
