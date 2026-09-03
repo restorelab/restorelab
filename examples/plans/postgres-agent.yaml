@@ -37,6 +37,10 @@ checks:
     # A recovered server often boots "degraded" for reasons that have nothing
     # to do with the service under test, so this one only downgrades the run.
     critical: false
+    # RestoreLab would read this as a service check, because it cannot tell
+    # what an arbitrary command tests. It establishes that the machine came
+    # up, and saying so keeps the drill's proof level honest.
+    proves: boot
 
   - type: command
     name: PostgreSQL running
@@ -60,6 +64,11 @@ checks:
     name: recent data present
     run: psql -U postgres -d production -tAc 'select count(*) > 0 from users'
     expect: t
+    # This is the one check here that looks at the data rather than at the
+    # process serving it, and `proves: data` is how RestoreLab is told. It
+    # never deduces that level on its own: an empty database that boots
+    # perfectly passes every check above this one.
+    proves: data
 
 cleanup:
   always: true

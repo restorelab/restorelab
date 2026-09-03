@@ -148,6 +148,13 @@ type CheckSpec struct {
 	RetryInterval Duration
 	Critical      *bool
 	Params        map[string]any
+
+	// Proves declares what this check establishes when it passes, one of
+	// none/boot/service/data. Empty means "work it out", which is what
+	// almost every plan will say: ProvenLevel deduces a level that is never
+	// higher than the truth, and a declaration is only needed by someone who
+	// knows their check proves more than RestoreLab can tell from outside.
+	Proves string
 }
 
 // reservedCheckKeys are consumed by CheckSpec itself and never forwarded to
@@ -155,6 +162,7 @@ type CheckSpec struct {
 var reservedCheckKeys = map[string]bool{
 	"type": true, "name": true, "timeout": true,
 	"retries": true, "retry_interval": true, "critical": true,
+	"proves": true,
 }
 
 // UnmarshalYAML splits a check mapping into typed fields plus free-form params.
@@ -171,6 +179,7 @@ func (c *CheckSpec) UnmarshalYAML(node *yaml.Node) error {
 		Retries       int      `yaml:"retries"`
 		RetryInterval Duration `yaml:"retry_interval"`
 		Critical      *bool    `yaml:"critical"`
+		Proves        string   `yaml:"proves"`
 	}
 	if err := node.Decode(&head); err != nil {
 		return err
@@ -182,6 +191,7 @@ func (c *CheckSpec) UnmarshalYAML(node *yaml.Node) error {
 	c.Retries = head.Retries
 	c.RetryInterval = head.RetryInterval
 	c.Critical = head.Critical
+	c.Proves = head.Proves
 
 	c.Params = make(map[string]any, len(raw))
 	for k, v := range raw {
@@ -229,6 +239,9 @@ func (c CheckSpec) MarshalYAML() (any, error) {
 	if c.Critical != nil {
 		out["critical"] = *c.Critical
 	}
+	if c.Proves != "" {
+		out["proves"] = c.Proves
+	}
 	return out, nil
 }
 
@@ -257,6 +270,7 @@ func (c CheckSpec) ToCore() core.CheckConfig {
 		RetryInterval: c.RetryInterval.Or(DefaultRetryInterval),
 		Critical:      c.IsCritical(),
 		Params:        c.Params,
+		Proves:        c.ProvenLevel(),
 	}
 }
 
@@ -372,6 +386,10 @@ func (p *Plan) Validate() error {
 		if c.Type == "" {
 			errs = append(errs, fmt.Sprintf("checks[%d].type is required", i))
 			continue
+		}
+		if _, ok := core.ParseProofLevel(strings.ToUpper(c.Proves)); !ok {
+			errs = append(errs, fmt.Sprintf(
+				"checks[%d].proves = %q: must be one of none, boot, service, data", i, c.Proves))
 		}
 		name := c.DisplayName()
 		if seen[name] {

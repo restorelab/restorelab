@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/plan"
 )
 
@@ -103,5 +104,33 @@ func TestExplicitRetryValuesAreKept(t *testing.T) {
 	}
 	if c.RetryInterval.D() != 30*time.Second {
 		t.Errorf("RetryInterval = %s, want the 30s that were asked for", c.RetryInterval.D())
+	}
+}
+
+// The default check must never claim more than it establishes.
+//
+// This is not a test of the deduction - plan has those - it is the tripwire
+// on DefaultCheck itself. The default is what every first drill on a fresh
+// install runs, so it is what decides the number a new user sees on their
+// dashboard the first time. If somebody changes it to something that reads
+// as a real service check, this fails and forces the question: does the new
+// default actually prove more, or would we just be saying so?
+func TestTheDefaultCheckClaimsTheBootAndNothingMore(t *testing.T) {
+	p := adhocPlan(t, Options{})
+
+	if got := p.ProvenLevel(); got != core.ProofBoot {
+		t.Errorf("the default drill claims to prove %s, want BOOT: %q proves that the guest "+
+			"runs and can fork a process, and a default that claimed more would put a number "+
+			"on the dashboard nothing had earned", got, DefaultCheck)
+	}
+}
+
+// An operator who writes a real check gets credit for it, without having to
+// declare anything.
+func TestAServiceCheckRaisesWhatTheDrillProves(t *testing.T) {
+	p := adhocPlan(t, Options{Checks: []string{"cmd:systemctl is-active postgresql"}})
+
+	if got := p.ProvenLevel(); got != core.ProofService {
+		t.Errorf("a drill checking a real service claims to prove %s, want SERVICE", got)
 	}
 }
