@@ -101,10 +101,21 @@ func (c *httpCheck) Run(ctx context.Context, target core.Target, cfg core.CheckC
 	resp, err := client.Do(req)
 	latency := time.Since(start)
 	if err != nil {
+		details := map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)}
+		// Nothing answered at the transport level, so there is no HTTP verdict
+		// to give: see reachability.go. A server that answered with a bad
+		// status is handled further down, and that one IS a failure.
+		if cause, silent := dialFailure(err); silent {
+			return core.CheckResult{
+				Status:  core.CheckError,
+				Message: fmt.Sprintf("%s %s: %s after %s - %s", method, rawURL, cause, latency.Round(time.Millisecond), noRouteHint),
+				Details: details,
+			}
+		}
 		return core.CheckResult{
 			Status:  core.CheckFail,
 			Message: fmt.Sprintf("%s %s failed after %s: %s", method, rawURL, latency.Round(time.Millisecond), describeHTTPErr(err)),
-			Details: map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)},
+			Details: details,
 		}
 	}
 	defer func() { _ = resp.Body.Close() }()

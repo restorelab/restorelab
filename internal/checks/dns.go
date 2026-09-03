@@ -83,10 +83,21 @@ func (DNSCheck) Run(ctx context.Context, target core.Target, cfg core.CheckConfi
 	latency := time.Since(start)
 
 	if err != nil {
+		details := map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)}
+		// The resolver never answered, so nothing was learned about it: see
+		// reachability.go. A resolver that answers with no records is a
+		// different matter, handled below, and that one IS a failure.
+		if cause, silent := dialFailure(err); silent {
+			return core.CheckResult{
+				Status:  core.CheckError,
+				Message: fmt.Sprintf("query %s %s via %s:%d: %s after %s - %s", qtype, name, server, port, cause, latency.Round(time.Millisecond), noRouteHint),
+				Details: details,
+			}
+		}
 		return core.CheckResult{
 			Status:  core.CheckFail,
 			Message: fmt.Sprintf("query %s %s via %s:%d failed after %s: %v", qtype, name, server, port, latency.Round(time.Millisecond), err),
-			Details: map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)},
+			Details: details,
 		}
 	}
 

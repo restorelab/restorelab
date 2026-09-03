@@ -87,10 +87,14 @@ func (PingCheck) Run(ctx context.Context, target core.Target, cfg core.CheckConf
 		// timeout: fall through and judge on whatever replies arrived.
 	}
 
+	// ICMP silence is the least conclusive signal there is: a host that is
+	// down, a host behind a firewall that drops echo requests, and a host this
+	// machine has no route to all look exactly the same from here. Reporting
+	// that as a failed recovery would be a guess presented as a finding.
 	if stats.PacketsRecv == 0 {
 		return core.CheckResult{
-			Status:  core.CheckFail,
-			Message: fmt.Sprintf("no replies from %s (%d/%d packets, 100%% loss)", host, stats.PacketsRecv, stats.PacketsSent),
+			Status:  core.CheckError,
+			Message: fmt.Sprintf("no replies from %s (%d/%d packets, 100%% loss) - %s", host, stats.PacketsRecv, stats.PacketsSent, noRouteHint),
 			Details: details,
 		}
 	}

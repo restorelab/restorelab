@@ -3,7 +3,6 @@ package checks
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -44,9 +43,21 @@ func (TCPCheck) Run(ctx context.Context, target core.Target, cfg core.CheckConfi
 	conn, err := d.DialContext(ctx, "tcp", addr)
 	latency := time.Since(start)
 	if err != nil {
+		cause, silent := dialFailure(err)
+		// Nothing answered, so this proves nothing about the service: see
+		// reachability.go. CheckError, not CheckFail - the check could not
+		// run, and a run graded on it would be a verdict about the operator's
+		// network wearing a backup's name.
+		if silent {
+			return core.CheckResult{
+				Status:  core.CheckError,
+				Message: fmt.Sprintf("%s on %s after %s - %s", cause, addr, formatLatency(latency), noRouteHint),
+				Details: map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)},
+			}
+		}
 		return core.CheckResult{
 			Status:  core.CheckFail,
-			Message: fmt.Sprintf("%s on %s after %s", describeDialErr(err), addr, formatLatency(latency)),
+			Message: fmt.Sprintf("%s on %s after %s", cause, addr, formatLatency(latency)),
 			Details: map[string]any{"latency_ms": float64(latency) / float64(time.Millisecond)},
 		}
 	}
@@ -89,29 +100,6 @@ func (TCPCheck) Run(ctx context.Context, target core.Target, cfg core.CheckConfi
 		Status:  core.CheckPass,
 		Message: fmt.Sprintf("connected to %s, banner matched %q", addr, expectBanner),
 		Details: details,
-	}
-}
-
-// describeDialErr turns a raw dial error into a short, admin-friendly root
-// cause, stripping Go's verbose "dial tcp host:port: " wrapping.
-func describeDialErr(err error) string {
-	if err == nil {
-		return ""
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return "timed out"
-	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "connection refused"):
-		return "connection refused"
-	case strings.Contains(msg, "no route to host"):
-		return "no route to host"
-	case strings.Contains(msg, "network is unreachable"):
-		return "network unreachable"
-	default:
-		return msg
 	}
 }
 
