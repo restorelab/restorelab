@@ -9,6 +9,8 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -28,7 +30,6 @@ import (
 const (
 	setupProviderID  = "proxmox-main"
 	setupServiceUser = "restorelab@pve"
-	setupTokenName   = "drills"
 	setupRoleName    = "RestoreLabDrill"
 	setupPool        = "restorelab"
 
@@ -37,7 +38,33 @@ const (
 	// whoever reads that list a year later should be able to tell where this
 	// token came from.
 	dashboardTokenName = "dashboard"
+
+	// setupTokenPrefix names the Proxmox API token the wizard creates. The
+	// suffix is what makes it unique - see setupProxmoxTokenName.
+	setupTokenPrefix = "drills"
 )
+
+// setupProxmoxTokenName is the Proxmox API token this installation creates.
+//
+// It carries a random suffix, and that is not decoration. Proxmox reveals a
+// token's secret exactly once, at creation, so an installation that finds a
+// token of the same name already there cannot use it: it never saw the
+// secret, and RestoreLab will not delete somebody's existing token to make
+// room. The CLI escapes that with --token-name; a browser has no flags, and
+// telling the person installing to "choose a different TokenName" is not an
+// instruction they can act on.
+//
+// A fresh installation therefore always makes its own token. Two installs
+// against the same cluster show up as two tokens in `pveum user token list`,
+// which is the truth: they hold different secrets, and only one of them is
+// the machine you are looking at.
+func setupProxmoxTokenName() (string, error) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("naming the API token: %w", err)
+	}
+	return setupTokenPrefix + "-" + hex.EncodeToString(b[:]), nil
+}
 
 // cliSetup drives the same provisioning `restorelab connect` drives.
 type cliSetup struct{ a *app }
@@ -81,6 +108,11 @@ func (s *cliSetup) Connect(ctx context.Context, req api.SetupRequest) (*api.Setu
 		return out, err
 	}
 
+	proxmoxToken, err := setupProxmoxTokenName()
+	if err != nil {
+		return out, err
+	}
+
 	provisioned, provErr := s.a.provision(ctx, provisionOptions{
 		Endpoint:      req.Endpoint,
 		AdminUser:     req.AdminUser,
@@ -89,7 +121,7 @@ func (s *cliSetup) Connect(ctx context.Context, req api.SetupRequest) (*api.Setu
 
 		ProviderID:  setupProviderID,
 		ServiceUser: setupServiceUser,
-		TokenName:   setupTokenName,
+		TokenName:   proxmoxToken,
 		RoleName:    setupRoleName,
 		Pool:        setupPool,
 		Storages:    req.Storages,
