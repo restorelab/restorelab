@@ -65,5 +65,6 @@
   "rto_target_seconds": 300,
   "rto_target": "5m00s",
   "rto_exceeded": false,
-  "cleanup_done": false
+  "cleanup_done": false,
+  "proof_level": "NONE"
 }

@@ -4,5 +4,7 @@
   "description": "nightly drill of the web tier",
   "workload_id": "110",
   "provider_id": "proxmox-main",
-  "normalized_yaml": "name: web-tier\ndescription: nightly drill of the web tier\nworkload:\n    provider: proxmox-main\n    id: \"110\"\nbackup:\n    strategy: latest\nrestore:\n    network: isolated\n    timeout: 1h0m0s\nstartup:\n    timeout: 5m0s\n    wait_for_ip: true\n    wait_for_agent: false\nchecks:\n    - port: 22\n      retry_interval: 5s\n      timeout: 30s\n      type: tcp\ncleanup:\n    always: true\nrto_target: 5m0s\n"
+  "normalized_yaml": "name: web-tier\ndescription: nightly drill of the web tier\nworkload:\n    provider: proxmox-main\n    id: \"110\"\nbackup:\n    strategy: latest\nrestore:\n    network: isolated\n    timeout: 1h0m0s\nstartup:\n    timeout: 5m0s\n    wait_for_ip: true\n    wait_for_agent: false\nchecks:\n    - port: 22\n      retry_interval: 5s\n      timeout: 30s\n      type: tcp\ncleanup:\n    always: true\nrto_target: 5m0s\n",
+  "proof_level": "SERVICE",
+  "proof_summary": "SERVICE, the service would be verified, the data would not"
 }

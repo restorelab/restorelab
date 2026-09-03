@@ -13,7 +13,8 @@
       "rto": "0s",
       "rto_target_seconds": 600,
       "rto_exceeded": false,
-      "cleanup_done": false
+      "cleanup_done": false,
+      "proof_level": "NONE"
     },
     {
       "id": "8f1c6d20-0000-4000-8000-000000000002",
@@ -27,7 +28,8 @@
       "rto": "0s",
       "rto_target_seconds": 300,
       "rto_exceeded": false,
-      "cleanup_done": false
+      "cleanup_done": false,
+      "proof_level": "NONE"
     },
     {
       "id": "8f1c6d20-0000-4000-8000-000000000001",
@@ -43,7 +45,8 @@
       "rto": "1m24s",
       "rto_target_seconds": 300,
       "rto_exceeded": false,
-      "cleanup_done": true
+      "cleanup_done": true,
+      "proof_level": "SERVICE"
     }
   ]
 }

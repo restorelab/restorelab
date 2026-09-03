@@ -58,6 +58,13 @@ type Validated struct {
 	// says" - the difference between a plan that omits a field and a plan
 	// whose omitted field means something.
 	Normalised string
+
+	// ProofLevel is what this plan would establish if every one of its checks
+	// passed, and ProofSummary says it in a sentence. They are here so an
+	// editor can answer "what will this actually prove" while the plan is
+	// still being written - which is the only moment improving it is free.
+	ProofLevel   string
+	ProofSummary string
 }
 
 // derive reads the indexed facts out of a parsed plan.
@@ -67,10 +74,12 @@ type Validated struct {
 // has already met once, in adhocFields.
 func derive(parsed *plan.Plan) Validated {
 	return Validated{
-		Name:        parsed.Name,
-		Description: parsed.Description,
-		WorkloadID:  parsed.Workload.ID,
-		ProviderID:  parsed.Workload.Provider,
+		Name:         parsed.Name,
+		Description:  parsed.Description,
+		WorkloadID:   parsed.Workload.ID,
+		ProviderID:   parsed.Workload.Provider,
+		ProofLevel:   string(parsed.ProvenLevel()),
+		ProofSummary: parsed.ProofSummary(),
 	}
 }
 

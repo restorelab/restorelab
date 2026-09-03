@@ -173,6 +173,11 @@ func fixtureFinishedRun() core.RecoveryRun {
 		State:  core.RunSuccess,
 		Result: core.ResultSuccess,
 
+		// The drill checked a real service and got an answer, so it proved
+		// the service and not the data. That is the ordinary case, and it is
+		// what pins the confidence capture at its ceiling rather than at 100.
+		ProofLevel: core.ProofService,
+
 		StartedAt:   started,
 		CompletedAt: started.Add(96 * time.Second),
 
@@ -249,6 +254,10 @@ func fixtureRunningRun() core.RecoveryRun {
 
 		State: core.RunWaitingForGuest,
 
+		// Still waiting for the guest: nothing has been established yet, and
+		// the capture has to show that a drill in flight claims nothing.
+		ProofLevel: core.ProofNone,
+
 		StartedAt: started,
 
 		Steps: []core.Step{
@@ -284,6 +293,7 @@ func fixtureQueuedRun() core.RecoveryRun {
 		SourceWorkloadID: "120",
 		SourceName:       "db-node",
 		State:            core.RunQueued,
+		ProofLevel:       core.ProofNone,
 		StartedAt:        fixtureNow.Add(-1 * time.Minute),
 		RTOTarget:        10 * time.Minute,
 	}
@@ -410,6 +420,7 @@ func fixtureCases() []fixtureCase {
 					State:            core.RunSuccess,
 					Result:           core.ResultSuccess,
 					StartedAt:        fixtureNow.Add(-2 * time.Hour),
+					ProofLevel:       core.ProofService,
 				},
 			}
 			s, _ := newTestServer(t, Options{
@@ -433,6 +444,7 @@ func fixtureCases() []fixtureCase {
 					State:            core.RunSuccess,
 					Result:           core.ResultSuccess,
 					StartedAt:        fixtureNow.Add(-2 * time.Hour),
+					ProofLevel:       core.ProofService,
 				},
 			}
 			s := fixtureReadServer(t, history, fakeProviders{hv: testFleet(t)})

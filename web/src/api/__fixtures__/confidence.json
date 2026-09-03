@@ -1,8 +1,12 @@
 {
   "workload_id": "110",
-  "score": 100,
+  "score": 85,
   "tested": true,
-  "reasons": [],
+  "reasons": [
+    "the service was verified, the data was not (capped at 85)"
+  ],
   "last_run_id": "8f1c6d20-0000-4000-8000-000000000001",
-  "runs_considered": 1
+  "runs_considered": 1,
+  "proof_level": "SERVICE",
+  "proof_cap": 85
 }

@@ -50,6 +50,10 @@ type workloadDTO struct {
 	LastRunAt     *time.Time `json:"last_run_at,omitempty"`
 	LastRunState  string     `json:"last_run_state,omitempty"`
 	LastRunResult string     `json:"last_run_result,omitempty"`
+	// LastRunProof is what that drill established. Absent both when the
+	// workload has never been drilled and when the drill predates the field:
+	// the screen says "not recorded" for the second, never "nothing".
+	LastRunProof string `json:"last_run_proof,omitempty"`
 
 	Status *workloadStatusDTO `json:"status,omitempty"`
 }
@@ -87,6 +91,7 @@ func applyLastRun(dto *workloadDTO, run store.RunSummary) {
 	dto.LastRunID = run.ID
 	dto.LastRunState = string(run.State)
 	dto.LastRunResult = string(run.Result)
+	dto.LastRunProof = string(run.ProofLevel)
 	if !run.StartedAt.IsZero() {
 		at := run.StartedAt
 		dto.LastRunAt = &at
@@ -146,6 +151,14 @@ type confidenceDTO struct {
 
 	LastRunID      string `json:"last_run_id,omitempty"`
 	RunsConsidered int    `json:"runs_considered"`
+
+	// ProofLevel is what the newest drill that reached a verdict
+	// established, and ProofCap the ceiling it puts on the score. The two are
+	// here so a client can explain the number rather than just print it: a
+	// score of 60 next to "only the boot was verified" is a sentence; a bare
+	// 60 is a mystery.
+	ProofLevel string `json:"proof_level,omitempty"`
+	ProofCap   *int   `json:"proof_cap,omitempty"`
 }
 
 // hypervisor resolves the provider a request asked for, answering the request
@@ -320,6 +333,12 @@ func (s *Server) handleWorkloadConfidence(w http.ResponseWriter, r *http.Request
 		dto.Score = &value
 		dto.LastRunID = runs[0].ID
 	}
+	if score.Proof.Recorded() {
+		dto.ProofLevel = string(score.Proof)
+		if ceiling := s.weights.ProofCap(score.Proof); ceiling > 0 {
+			dto.ProofCap = &ceiling
+		}
+	}
 	if dto.Reasons == nil {
 		dto.Reasons = []string{}
 	}
@@ -342,5 +361,6 @@ func runFromSummary(s store.RunSummary) *core.RecoveryRun {
 		RTO:              s.RTO,
 		RTOTarget:        s.RTOTarget,
 		CleanupDone:      s.CleanupDone,
+		ProofLevel:       s.ProofLevel,
 	}
 }

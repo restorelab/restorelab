@@ -13,6 +13,7 @@
   "last_run_at": "2026-09-01T10:00:00Z",
   "last_run_state": "SUCCESS",
   "last_run_result": "SUCCESS",
+  "last_run_proof": "SERVICE",
   "status": {
     "power_state": "running",
     "uptime_seconds": 0,

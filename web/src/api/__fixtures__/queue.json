@@ -13,7 +13,8 @@
       "rto": "0s",
       "rto_target_seconds": 600,
       "rto_exceeded": false,
-      "cleanup_done": false
+      "cleanup_done": false,
+      "proof_level": "NONE"
     },
     {
       "id": "8f1c6d20-0000-4000-8000-000000000002",
@@ -28,6 +29,7 @@
       "rto_target_seconds": 300,
       "rto_exceeded": false,
       "cleanup_done": false,
+      "proof_level": "NONE",
       "worker": "worker-a",
       "lease_expires_at": "2026-09-01T12:01:30Z"
     }

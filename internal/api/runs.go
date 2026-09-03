@@ -44,6 +44,11 @@ type runSummaryDTO struct {
 	RTOExceeded      bool    `json:"rto_exceeded"`
 
 	CleanupDone bool `json:"cleanup_done"`
+
+	// ProofLevel is what this drill established: NONE, BOOT, SERVICE or
+	// DATA. Absent when the run predates the field, which a client must
+	// render as "not recorded" rather than as "nothing was proven".
+	ProofLevel string `json:"proof_level,omitempty"`
 }
 
 func newRunSummaryDTO(r store.RunSummary) runSummaryDTO {
@@ -61,6 +66,7 @@ func newRunSummaryDTO(r store.RunSummary) runSummaryDTO {
 		RTOTargetSeconds: r.RTOTarget.Seconds(),
 		RTOExceeded:      r.RTOTarget > 0 && r.RTO > r.RTOTarget,
 		CleanupDone:      r.CleanupDone,
+		ProofLevel:       string(r.ProofLevel),
 	}
 	// A run still going has no completion time. null says that; the zero
 	// instant would read as "completed in 1970".

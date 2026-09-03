@@ -219,6 +219,13 @@ type validatedDTO struct {
 	// shows it as "here is what this actually says": the difference between
 	// a field left out and a field left out *meaning something*.
 	NormalizedYAML string `json:"normalized_yaml"`
+
+	// ProofLevel and ProofSummary say what this plan would establish if
+	// every check passed. The editor shows them beside the validation tick,
+	// because "valid" and "worth running" are different questions and only
+	// the first one used to have an answer here.
+	ProofLevel   string `json:"proof_level,omitempty"`
+	ProofSummary string `json:"proof_summary,omitempty"`
 }
 
 // handleValidatePlan reports whether a document is a valid plan, storing
@@ -248,6 +255,8 @@ func (s *Server) handleValidatePlan(w http.ResponseWriter, r *http.Request) {
 		WorkloadID:     v.WorkloadID,
 		ProviderID:     v.ProviderID,
 		NormalizedYAML: v.Normalised,
+		ProofLevel:     v.ProofLevel,
+		ProofSummary:   v.ProofSummary,
 	})
 }
 

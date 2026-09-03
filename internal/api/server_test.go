@@ -78,6 +78,7 @@ func (f *fakeHistory) add(run core.RecoveryRun) {
 		RTO:              run.RTO,
 		RTOTarget:        run.RTOTarget,
 		CleanupDone:      run.CleanupDone,
+		ProofLevel:       run.ProofLevel,
 	}}, f.runs...)
 }
 
