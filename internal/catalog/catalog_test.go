@@ -311,3 +311,31 @@ func TestDeleteReportsTheNameItRemoved(t *testing.T) {
 		t.Errorf("Get after delete = %v, want ErrNotFound", err)
 	}
 }
+
+// A schedule is refused when the plan is written. The alternative is a
+// scheduler discovering the typo at three in the morning, where all it can do
+// is skip the plan - and a machine that quietly stops being tested is the
+// failure mode this product exists to prevent.
+func TestSaveRejectsAnInvalidSchedule(t *testing.T) {
+	s := newMemStore()
+	doc := []byte("name: nightly\nworkload:\n  provider: proxmox-main\n  id: \"110\"\nschedule: \"every tuesday\"\n")
+	if _, _, err := catalog.Save(context.Background(), s, doc, 0); !errors.Is(err, catalog.ErrInvalid) {
+		t.Fatalf("Save = %v, want catalog.ErrInvalid", err)
+	}
+}
+
+func TestSaveAcceptsAValidSchedule(t *testing.T) {
+	s := newMemStore()
+	doc := []byte("name: nightly\nworkload:\n  provider: proxmox-main\n  id: \"110\"\nschedule: \"0 3 * * 0\"\n")
+	if _, _, err := catalog.Save(context.Background(), s, doc, 0); err != nil {
+		t.Fatalf("Save rejected a valid schedule: %v", err)
+	}
+}
+
+func TestValidateRejectsAnUnknownScheduleTimezone(t *testing.T) {
+	doc := []byte("name: nightly\nworkload:\n  provider: proxmox-main\n  id: \"110\"\n" +
+		"schedule: \"0 3 * * 0\"\nschedule_timezone: Mars/Olympus_Mons\n")
+	if _, err := catalog.Validate(doc); !errors.Is(err, catalog.ErrInvalid) {
+		t.Fatalf("Validate = %v, want catalog.ErrInvalid", err)
+	}
+}

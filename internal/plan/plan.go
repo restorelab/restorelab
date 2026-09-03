@@ -50,9 +50,17 @@ type Plan struct {
 	// RTOTarget is the recovery time objective the run is graded against.
 	RTOTarget Duration `yaml:"rto_target,omitempty"`
 
-	// Schedule is a cron expression or a keyword (manual, daily, weekly,
-	// monthly). Only consumed by the scheduler; the CLI ignores it.
+	// Schedule is a standard five-field cron expression, or one of the
+	// @weekly family of shorthands. A plan carrying one is drilled by the
+	// scheduler at the stated time; a plan without one is only ever drilled
+	// on request, which is the case for most plans.
 	Schedule string `yaml:"schedule,omitempty"`
+
+	// ScheduleTimezone names the zone Schedule is read in. Empty means the
+	// server's local zone, because "0 3 * * 0" means three in the morning
+	// where the operator lives. It qualifies Schedule and nothing else,
+	// which is why it sits beside it rather than in a block of its own.
+	ScheduleTimezone string `yaml:"schedule_timezone,omitempty"`
 }
 
 // WorkloadRef points at the production workload to be recovery-tested.
@@ -348,6 +356,15 @@ func (p *Plan) Validate() error {
 	}
 	if p.Startup.Skip && len(p.Checks) > 0 {
 		errs = append(errs, "checks cannot run when startup.skip is set")
+	}
+
+	// A schedule is refused here, when the plan is written, rather than
+	// discovered at three in the morning by a scheduler that can only skip
+	// the plan and log about it. This is the one field whose mistakes are
+	// otherwise invisible: nothing fails, a machine simply stops being
+	// tested.
+	if _, err := ParseSchedule(p.Schedule, p.ScheduleTimezone); err != nil {
+		errs = append(errs, err.Error())
 	}
 
 	seen := map[string]bool{}
