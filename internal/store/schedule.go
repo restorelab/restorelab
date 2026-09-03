@@ -117,7 +117,7 @@ FROM schedule_slots s`
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Slot
 	for rows.Next() {

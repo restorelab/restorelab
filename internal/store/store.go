@@ -89,8 +89,13 @@ type Slot struct {
 // make unrepresentable.
 type SlotOutcome string
 
+// The two outcomes a slot can carry.
 const (
-	SlotQueued  SlotOutcome = "queued"
+	// SlotQueued means the drill was put on the queue; RunID names it.
+	SlotQueued SlotOutcome = "queued"
+	// SlotSkipped means the scheduler decided against drilling this slot,
+	// and Reason says why. It is still a decision, and still recorded: a
+	// machine nobody tested must not look like one nobody scheduled.
 	SlotSkipped SlotOutcome = "skipped"
 )
 
