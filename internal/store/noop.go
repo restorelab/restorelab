@@ -130,3 +130,16 @@ func (Noop) StaleRuns(context.Context, time.Time) ([]QueuedRun, error) { return 
 func (Noop) RunLease(context.Context, string) (string, time.Time, error) {
 	return "", time.Time{}, ErrNotFound
 }
+
+// ClaimSlot refuses without a database, and that refusal is the honest
+// answer rather than a limitation. With nowhere to record that a slot was
+// decided, a scheduler would re-decide the same slot every tick and queue a
+// drill each time - so scheduling is the one feature that genuinely needs a
+// database, and it says so.
+func (Noop) ClaimSlot(context.Context, Slot, *core.RecoveryRun, string) error {
+	return ErrNoHistory
+}
+
+func (Noop) LastSlot(context.Context, string) (*Slot, error) { return nil, ErrNoHistory }
+
+func (Noop) ListSlots(context.Context, SlotFilter) ([]Slot, error) { return nil, ErrNoHistory }

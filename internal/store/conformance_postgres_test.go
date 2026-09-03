@@ -119,6 +119,10 @@ func TestPostgresSessionsConformance(t *testing.T) {
 
 func TestPostgresPlanConformance(t *testing.T) { PlanConformance(t, newTestPostgresStore) }
 
+func TestPostgresScheduleConformance(t *testing.T) {
+	ScheduleConformance(t, newTestPostgresStore)
+}
+
 func TestPostgresTempWorkloadConformance(t *testing.T) {
 	TempWorkloadConformance(t, newTestPostgresStore)
 }

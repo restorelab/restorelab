@@ -64,6 +64,49 @@ type PlanFilter struct {
 	Limit      int // 0 means DefaultListLimit
 }
 
+// Slot is one cron slot the scheduler has decided about.
+//
+// SlotAt is the instant the cron designated, and it is a key rather than a
+// timestamp: it is always UTC, and it is what makes a scheduled drill
+// impossible to queue twice.
+type Slot struct {
+	PlanID    string
+	SlotAt    time.Time
+	DecidedAt time.Time
+	Outcome   SlotOutcome
+	// Reason says why a slot was skipped, in words an operator can act on.
+	// Empty for a queued slot.
+	Reason string
+	// RunID names the drill this slot queued. Empty for a skipped slot.
+	RunID string
+}
+
+// SlotOutcome is what the scheduler decided about a slot.
+//
+// There are only two, and there is deliberately no "pending": a slot the
+// scheduler has not decided about yet has no row at all. A third value would
+// mean a slot could be half-claimed, which is the state this table exists to
+// make unrepresentable.
+type SlotOutcome string
+
+const (
+	SlotQueued  SlotOutcome = "queued"
+	SlotSkipped SlotOutcome = "skipped"
+)
+
+// SlotFilter narrows a slot listing. A zero value lists every plan's slots,
+// most recent first.
+type SlotFilter struct {
+	PlanID string
+	// WorkloadID lists the slots of every plan covering this workload. A
+	// machine can be covered by more than one plan, and "why was this
+	// machine not tested" is a question about the machine rather than about
+	// any one plan - so it is resolved in one join here rather than by a
+	// caller fetching each plan's slots in turn.
+	WorkloadID string
+	Limit      int // 0 means DefaultListLimit
+}
+
 // Event is one line of a run's progress stream, as the engine emitted it.
 //
 // It mirrors recovery.Event deliberately rather than importing it: store must
@@ -384,6 +427,30 @@ type Store interface {
 	// only lose the link: ON DELETE SET NULL, so history reads identically
 	// before and after.
 	DeletePlan(ctx context.Context, ref string) error
+
+	// ClaimSlot records the decision taken for one cron slot and, when that
+	// decision is to drill, queues the run - in the same transaction.
+	//
+	// It returns ErrDuplicate when the slot has already been decided, and
+	// that refusal is the whole safety story of scheduling. A drill is not
+	// idempotent: replaying one allocates a second temporary workload and can
+	// strand the first. The primary key on (plan_id, slot_at) is what makes
+	// queueing the same slot twice impossible, whatever happens to the
+	// process in between - which a lease could not do, because a lease
+	// cannot cover the gap between writing the run and recording that it was
+	// written.
+	//
+	// run and planYAML are nil and empty for a skipped slot; a queued slot
+	// without a run is an error, and leaves nothing behind.
+	ClaimSlot(ctx context.Context, slot Slot, run *core.RecoveryRun, planYAML string) error
+	// LastSlot returns the most recent slot decided for this plan, or
+	// ErrNotFound when it has never been scheduled. It is where the
+	// scheduler resumes from: the next slot is the first one after this.
+	LastSlot(ctx context.Context, planID string) (*Slot, error)
+	// ListSlots returns decided slots, most recent first. Skipped slots are
+	// included, because "why was this machine not tested" is the question
+	// the table exists to answer.
+	ListSlots(ctx context.Context, f SlotFilter) ([]Slot, error)
 
 	// Describe names the engine and location, for `db status`. It must never
 	// include a password.

@@ -48,3 +48,39 @@ func (s *sqlStore) execCount(ctx context.Context, query string, args ...any) (in
 	}
 	return res.RowsAffected()
 }
+
+// withTx runs fn inside a transaction, rolling back on any error.
+//
+// It is the only transactional path in the package, and it exists for
+// ClaimSlot: writing a schedule slot and queueing the run it decided on must
+// be one atomic act. Split them, and a process that dies in between either
+// drills a slot twice or forgets it - and the first of those restores a
+// production clone a second time.
+//
+// On SQLite the transaction is immediate (_txlock=immediate on the DSN), so
+// two writers contend at BEGIN, where busy_timeout applies, rather than
+// halfway through with no way to back out.
+func (s *sqlStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		// The rollback error is deliberately dropped: fn's error is the
+		// diagnosis, and a failing rollback would replace it with its own
+		// consequence.
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// execTx runs a statement inside a transaction and reports how many rows it
+// changed, rebinding placeholders for the dialect the way exec does.
+func (s *sqlStore) execTx(ctx context.Context, tx *sql.Tx, query string, args ...any) (int64, error) {
+	res, err := tx.ExecContext(ctx, rebind(s.dialect, query), args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

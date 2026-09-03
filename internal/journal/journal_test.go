@@ -109,6 +109,17 @@ func (b *brokenStore) DeletePlan(context.Context, string) error {
 	b.calls++
 	return errBroken
 }
+
+func (b *brokenStore) ClaimSlot(context.Context, store.Slot, *core.RecoveryRun, string) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) LastSlot(context.Context, string) (*store.Slot, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) ListSlots(context.Context, store.SlotFilter) ([]store.Slot, error) {
+	return nil, errBroken
+}
 func (b *brokenStore) Enqueue(context.Context, *core.RecoveryRun, string, time.Time) error {
 	b.calls++
 	return errBroken
