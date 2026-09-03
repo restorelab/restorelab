@@ -37,8 +37,8 @@ INSERT INTO runs (
 	id, plan_name, plan_snapshot, plan_id, plan_version,
 	provider_id, backup_provider_id,
 	source_workload_id, source_name, state, started_at, queued_at,
-	rto_ms, rto_target_ms, cleanup_done
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0)`
+	rto_ms, rto_target_ms, cleanup_done, proof_level
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?)`
 
 // Enqueue records a run to be executed later.
 //
@@ -58,6 +58,13 @@ func (s *sqlStore) Enqueue(ctx context.Context, run *core.RecoveryRun, planYAML 
 		run.ProviderID, nullString(run.BackupProviderID),
 		run.SourceWorkloadID, nullString(run.SourceName), string(core.RunQueued),
 		formatTime(at), formatTime(at), run.RTOTarget.Milliseconds(),
+		// A queued run has established nothing, and saying so is not the same
+		// as leaving it unrecorded: a drill the worker never got to - one
+		// reconciled to FAILED after a restart - would otherwise read as
+		// "unknown" and leave the workload's score uncapped, which is exactly
+		// the reassuring silence this slice exists to remove. The moment it
+		// runs, UpdateRun overwrites this with what it actually proved.
+		string(core.ProofNone),
 	)
 }
 

@@ -49,6 +49,7 @@ func (s *sqlStore) ClaimSlot(ctx context.Context, slot Slot, run *core.RecoveryR
 				run.ProviderID, nullString(run.BackupProviderID),
 				run.SourceWorkloadID, nullString(run.SourceName), string(core.RunQueued),
 				decidedAt, decidedAt, run.RTOTarget.Milliseconds(),
+				string(core.ProofNone),
 			); err != nil {
 				return err
 			}

@@ -49,6 +49,7 @@ func sampleRun(id string) *core.RecoveryRun {
 		RTO:              28 * time.Second,
 		RTOTarget:        5 * time.Minute,
 		CleanupDone:      true,
+		ProofLevel:       core.ProofService,
 	}
 }
 
@@ -111,6 +112,89 @@ func RunConformance(t *testing.T, open OpenFunc) {
 		}
 		if !got.CleanupDone {
 			t.Error("CleanupDone = false, want true")
+		}
+		if got.ProofLevel != want.ProofLevel {
+			t.Errorf("ProofLevel = %q, want %q", got.ProofLevel, want.ProofLevel)
+		}
+	})
+
+	// The level is what the confidence score caps on, and the score is
+	// graded from summaries rather than from full runs - so a level that
+	// round-trips through GetRun but not through the listing would leave
+	// every workload uncapped on the one screen that shows them all.
+	t.Run("the proof level survives the listing as well as the run", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		run := sampleRun("7c2e1f00-1111-4222-8333-944455556666")
+		if err := s.CreateRun(ctx, run, "name: x\n"); err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+
+		list, err := s.ListRuns(ctx, Filter{WorkloadID: run.SourceWorkloadID})
+		if err != nil {
+			t.Fatalf("ListRuns: %v", err)
+		}
+		if len(list) != 1 || list[0].ProofLevel != run.ProofLevel {
+			t.Fatalf("ListRuns gave %+v, want one row proving %s", list, run.ProofLevel)
+		}
+
+		last, err := s.LastRuns(ctx, []string{run.SourceWorkloadID})
+		if err != nil {
+			t.Fatalf("LastRuns: %v", err)
+		}
+		if last[run.SourceWorkloadID].ProofLevel != run.ProofLevel {
+			t.Errorf("LastRuns proof level = %q, want %q",
+				last[run.SourceWorkloadID].ProofLevel, run.ProofLevel)
+		}
+	})
+
+	// A run written before the column existed reads back as unrecorded, not
+	// as NONE. The two are different claims: the score caps on the second
+	// and refuses to draw any conclusion from the first, so a store that
+	// blurred them would mark down every workload in an existing install.
+	t.Run("a run with no proof level reads back unrecorded", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		run := sampleRun("8d3f2011-2222-4333-8444-955566667777")
+		run.ProofLevel = core.ProofUnknown
+		if err := s.CreateRun(ctx, run, "name: x\n"); err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+
+		got, err := s.GetRun(ctx, run.ID)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if got.ProofLevel != core.ProofUnknown {
+			t.Errorf("ProofLevel = %q, want it to stay unrecorded", got.ProofLevel)
+		}
+		if got.ProofLevel == core.ProofNone {
+			t.Error("an unrecorded level came back as NONE: that is a claim nobody made")
+		}
+	})
+
+	// The level moves as the run learns things, so it has to be among the
+	// fields UpdateRun overwrites - the queued row starts at NONE and the
+	// worker raises it.
+	t.Run("update raises the proof level", func(t *testing.T) {
+		s := open(t)
+		ctx := context.Background()
+		run := sampleRun("9e405122-3333-4444-8555-966677778888")
+		run.ProofLevel = core.ProofNone
+		if err := s.CreateRun(ctx, run, "name: x\n"); err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+
+		run.ProofLevel = core.ProofData
+		if err := s.UpdateRun(ctx, run); err != nil {
+			t.Fatalf("UpdateRun: %v", err)
+		}
+		got, err := s.GetRun(ctx, run.ID)
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		if got.ProofLevel != core.ProofData {
+			t.Errorf("ProofLevel = %q, want DATA", got.ProofLevel)
 		}
 	})
 

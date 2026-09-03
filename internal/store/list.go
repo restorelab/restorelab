@@ -12,7 +12,7 @@ import (
 
 const selectRunsPrefix = `
 SELECT id, plan_name, plan_id, source_workload_id, source_name, state, result,
-	started_at, completed_at, rto_ms, rto_target_ms, cleanup_done
+	started_at, completed_at, rto_ms, rto_target_ms, cleanup_done, proof_level
 FROM runs`
 
 // ListRuns returns run summaries, most recent first.
@@ -101,9 +101,11 @@ func scanRunSummary(rows *sql.Rows) (RunSummary, error) {
 		rtoMS              sql.NullInt64
 		rtoTargetMS        sql.NullInt64
 		cleanupDone        int
+		proofLevel         sql.NullString
 	)
 	if err := rows.Scan(&r.ID, &r.PlanName, &planID, &r.SourceWorkloadID, &sourceName,
-		&state, &result, &startedAt, &completedAt, &rtoMS, &rtoTargetMS, &cleanupDone); err != nil {
+		&state, &result, &startedAt, &completedAt, &rtoMS, &rtoTargetMS, &cleanupDone,
+		&proofLevel); err != nil {
 		return r, err
 	}
 
@@ -114,6 +116,7 @@ func scanRunSummary(rows *sql.Rows) (RunSummary, error) {
 	r.RTO = time.Duration(rtoMS.Int64) * time.Millisecond
 	r.RTOTarget = time.Duration(rtoTargetMS.Int64) * time.Millisecond
 	r.CleanupDone = intToBool(cleanupDone)
+	r.ProofLevel, _ = core.ParseProofLevel(proofLevel.String)
 
 	var err error
 	if r.StartedAt, err = parseTime(startedAt); err != nil {
@@ -137,10 +140,10 @@ func scanRunSummary(rows *sql.Rows) (RunSummary, error) {
 // else. No caller value ever reaches the query text.
 const lastRunsSQL = `
 SELECT id, plan_name, plan_id, source_workload_id, source_name, state, result,
-	started_at, completed_at, rto_ms, rto_target_ms, cleanup_done
+	started_at, completed_at, rto_ms, rto_target_ms, cleanup_done, proof_level
 FROM (
 	SELECT id, plan_name, plan_id, source_workload_id, source_name, state, result,
-		started_at, completed_at, rto_ms, rto_target_ms, cleanup_done,
+		started_at, completed_at, rto_ms, rto_target_ms, cleanup_done, proof_level,
 		ROW_NUMBER() OVER (
 			PARTITION BY source_workload_id
 			ORDER BY started_at DESC, id DESC

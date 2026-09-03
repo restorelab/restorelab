@@ -16,8 +16,8 @@ INSERT INTO runs (
 	provider_id, backup_provider_id,
 	source_workload_id, source_name, temp_workload_id, temp_name, node,
 	backup, state, result, started_at, completed_at,
-	rto_ms, rto_target_ms, cleanup_done, err
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	rto_ms, rto_target_ms, cleanup_done, err, proof_level
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // CreateRun records a run that has just started, with the plan exactly as it
 // was at that moment. Plans become editable later; a report must keep saying
@@ -42,6 +42,7 @@ func (s *sqlStore) CreateRun(ctx context.Context, run *core.RecoveryRun, planYAM
 		formatTime(run.StartedAt), formatNullTime(run.CompletedAt),
 		run.RTO.Milliseconds(), run.RTOTarget.Milliseconds(),
 		boolToInt(run.CleanupDone), nullString(run.Err),
+		nullString(string(run.ProofLevel)),
 	)
 }
 
@@ -49,7 +50,8 @@ const updateRunSQL = `
 UPDATE runs SET
 	source_name = ?, temp_workload_id = ?, temp_name = ?, node = ?, backup = ?,
 	state = ?, result = ?, completed_at = ?,
-	rto_ms = ?, rto_target_ms = ?, cleanup_done = ?, err = ?
+	rto_ms = ?, rto_target_ms = ?, cleanup_done = ?, err = ?,
+	proof_level = ?
 WHERE id = ?`
 
 // UpdateRun overwrites the fields that change as a run progresses. The id,
@@ -71,6 +73,7 @@ func (s *sqlStore) UpdateRun(ctx context.Context, run *core.RecoveryRun) error {
 		formatNullTime(run.CompletedAt),
 		run.RTO.Milliseconds(), run.RTOTarget.Milliseconds(),
 		boolToInt(run.CleanupDone), nullString(run.Err),
+		nullString(string(run.ProofLevel)),
 		run.ID,
 	)
 }
@@ -94,7 +97,7 @@ const selectRunSQL = `
 SELECT id, plan_name, plan_id, plan_version, provider_id, backup_provider_id,
 	source_workload_id, source_name, temp_workload_id, temp_name, node,
 	backup, state, result, started_at, completed_at,
-	rto_ms, rto_target_ms, cleanup_done, err
+	rto_ms, rto_target_ms, cleanup_done, err, proof_level
 FROM runs WHERE id = ?`
 
 // resolveRunID turns an id or a unique prefix into a full id.
@@ -157,6 +160,7 @@ func (s *sqlStore) GetRun(ctx context.Context, idOrPrefix string) (*core.Recover
 		backupProvider, sourceName  sql.NullString
 		tempID, tempName, node      sql.NullString
 		backupJSON, result, errText sql.NullString
+		proofLevel                  sql.NullString
 		startedAt                   string
 		completedAt                 sql.NullString
 		rtoMS, rtoTargetMS          sql.NullInt64
@@ -168,7 +172,7 @@ func (s *sqlStore) GetRun(ctx context.Context, idOrPrefix string) (*core.Recover
 		&run.ID, &run.PlanName, &planID, &planVersion, &run.ProviderID, &backupProvider,
 		&run.SourceWorkloadID, &sourceName, &tempID, &tempName, &node,
 		&backupJSON, &state, &result, &startedAt, &completedAt,
-		&rtoMS, &rtoTargetMS, &cleanupDone, &errText,
+		&rtoMS, &rtoTargetMS, &cleanupDone, &errText, &proofLevel,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, idOrPrefix)
@@ -191,6 +195,10 @@ func (s *sqlStore) GetRun(ctx context.Context, idOrPrefix string) (*core.Recover
 	run.Result = core.RunResult(result.String)
 	run.Err = errText.String
 	run.CleanupDone = intToBool(cleanupDone)
+	// A level this build does not recognise reads back as unrecorded rather
+	// than as itself: a newer RestoreLab writing a level an older one cannot
+	// interpret must not have that level clamp a score by accident.
+	run.ProofLevel, _ = core.ParseProofLevel(proofLevel.String)
 	run.RTO = time.Duration(rtoMS.Int64) * time.Millisecond
 	run.RTOTarget = time.Duration(rtoTargetMS.Int64) * time.Millisecond
 

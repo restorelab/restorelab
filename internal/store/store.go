@@ -149,6 +149,11 @@ type RunSummary struct {
 	// every full run it ever had.
 	RTOTarget   time.Duration
 	CleanupDone bool
+	// ProofLevel is what the run established. It is in the summary because
+	// the confidence score caps on it, and grading a workload must not mean
+	// loading every full run it ever had. Empty means the run predates the
+	// column: unknown, not "nothing".
+	ProofLevel core.ProofLevel
 }
 
 // Position is a run's place in the listing order: when it started, then its
