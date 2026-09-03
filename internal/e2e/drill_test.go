@@ -522,6 +522,11 @@ func TestFullDrillSucceedsAndCleansUp(t *testing.T) {
 	if len(run.Checks) != 1 || !run.Checks[0].OK() {
 		t.Errorf("checks = %+v, want one passing check", run.Checks)
 	}
+	// A drill that answered on the service port proved the service, and the
+	// report is entitled to say so. Not DATA: nothing here looked at a row.
+	if run.ProofLevel != core.ProofService {
+		t.Errorf("ProofLevel = %s, want SERVICE", run.ProofLevel)
+	}
 
 	// The temporary workload must be gone from the cluster.
 	if _, exists := pve.vms[tempVMID]; exists {
@@ -577,6 +582,13 @@ func TestDrillFailsWhenServiceIsDownButStillCleansUp(t *testing.T) {
 	}
 	if !run.CleanupDone {
 		t.Error("cleanup must run after a failed check, not only after a success")
+	}
+	// The service is down and the drill says so - and the guest agent still
+	// answered, so the boot is established. "This backup boots but its
+	// service did not come back" is more useful than either half alone, and
+	// the drill must not throw away the half it did establish.
+	if run.ProofLevel != core.ProofBoot {
+		t.Errorf("ProofLevel = %s, want BOOT: the check failed, the boot did not", run.ProofLevel)
 	}
 	if _, exists := pve.vms[tempVMID]; exists {
 		t.Error("the temporary workload survived a failed run")
@@ -817,6 +829,11 @@ func TestFullDrillWithInGuestCheckNeedsNoNetworkPath(t *testing.T) {
 	}
 	if len(run.Checks) != 1 || !run.Checks[0].OK() {
 		t.Errorf("checks = %+v, want one passing check", run.Checks)
+	}
+	// A drill that answered on the service port proved the service, and the
+	// report is entitled to say so. Not DATA: nothing here looked at a row.
+	if run.ProofLevel != core.ProofService {
+		t.Errorf("ProofLevel = %s, want SERVICE", run.ProofLevel)
 	}
 	if !run.CleanupDone {
 		t.Error("cleanup must still run")

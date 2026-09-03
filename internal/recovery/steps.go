@@ -307,6 +307,14 @@ func (e *Engine) waitForGuest(ctx context.Context, run *core.RecoveryRun, p *pla
 		last = status
 
 		if guestReady(status, p) {
+			// The guest agent answering is the first thing in the whole
+			// workflow that happened *inside* the guest, so it is the first
+			// thing that establishes the OS came up. Power state does not:
+			// the hypervisor reports a running process, which a guest stuck
+			// at its boot loader also has.
+			if status.AgentReady {
+				run.ProofLevel = run.ProofLevel.Raise(core.ProofBoot)
+			}
 			ip := p.Startup.IP
 			if ip == "" {
 				ip = status.PrimaryIP()
@@ -419,6 +427,26 @@ func (e *Engine) runChecks(ctx context.Context, run *core.RecoveryRun, p *plan.P
 
 	results := e.checks.RunAll(ctx, target, cfgs)
 	run.Checks = results
+
+	// What the drill is entitled to claim, recorded before the verdict is
+	// decided: a run whose service check fails still established the boot,
+	// and the failure penalty and the proof level are two different true
+	// statements about it. RunAll returns one result per config, in order,
+	// so the pairing is exact.
+	//
+	// Paired defensively rather than by trusting the lengths to match: this
+	// runs inside a drill that has a temporary workload on the cluster, and
+	// an index panic here would take the cleanup down with it and leave a
+	// clone behind. A missing pair is worth less than a stranded VM.
+	pairs := len(results)
+	if len(cfgs) < pairs {
+		pairs = len(cfgs)
+	}
+	proven := make([]core.ProofCheck, pairs)
+	for i := range proven {
+		proven[i] = core.ProofCheck{Config: cfgs[i], Result: results[i]}
+	}
+	run.ProofLevel = run.ProofLevel.Raise(core.ProvenBy(proven))
 
 	for _, r := range results {
 		cr := r

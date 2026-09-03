@@ -310,6 +310,10 @@ func (e *Engine) newRun(p *plan.Plan, opts RunOptions) *core.RecoveryRun {
 		State:            core.RunQueued,
 		StartedAt:        e.now(),
 		RTOTarget:        p.RTOTarget.D(),
+		// A run starts having proven nothing, and can only ever raise this
+		// as it learns something. A run that dies before reaching the guest
+		// therefore ends where it started, which is the truth about it.
+		ProofLevel: core.ProofNone,
 	}
 }
 
