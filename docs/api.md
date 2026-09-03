@@ -619,8 +619,12 @@ nothing they could not learn from the port being open.
 
 `POST` provisions the cluster. It needs the one-time token `serve` printed on
 its console, as `Authorization: Bearer rls_...`, and that token is spent by
-this request whether it succeeds or fails. Over plain HTTP to anything but
-this machine it is refused with a 400 naming TLS, before the body is read.
+the first request that actually tries to provision, whether that attempt
+succeeds or fails. A body this endpoint refuses to read - malformed JSON, no
+storage named - does not cost it: the caller has already proved it holds the
+token, and making a typo cost a restart of the whole server buys nothing.
+Over plain HTTP to anything but this machine it is refused with a 400 naming
+TLS, before the body is read.
 
 ```
 $ curl -X POST -H "Authorization: Bearer rls_..." -H "content-type: application/json" \

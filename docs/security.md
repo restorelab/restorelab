@@ -344,10 +344,17 @@ The setup routes are guarded four ways, and the fourth is the strongest:
    keep it in — and compared in constant time. The person installing is the
    one sitting at that console; nobody else is.
 
-2. **Spent on first use, whatever the outcome.** A token still live after a
-   wrong password would be a secret printed on a console and valid until the
-   process ends, which is not what one-time means. A failed attempt therefore
-   costs a restart to get a new token, and that is the intended trade.
+2. **Spent by the first attempt to provision, whatever its outcome.** A token
+   still live after a wrong password would be a secret printed on a console
+   and valid until the process ends, which is not what one-time means. A
+   failed attempt therefore costs a restart to get a new token, and that is
+   the intended trade.
+
+   It is spent at the last moment before the cluster is touched, and
+   atomically, so two requests arriving together cannot both provision. A
+   request the endpoint refuses before that point - malformed JSON, no storage
+   named - does not spend it. The caller has already proved it holds the
+   token, and a typo costing a restart of the whole server buys nothing.
 
 3. **Refused in clear off loopback.** The same rule `POST /session` applies,
    through the same function: without TLS, and to anything but this machine,
