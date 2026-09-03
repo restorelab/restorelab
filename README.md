@@ -1,4 +1,6 @@
-<h1 align="center">RestoreLab</h1>
+<p align="center">
+  <img src="docs/img/banner.jpg" alt="RestoreLab" width="820">
+</p>
 
 <p align="center">
   <strong>Your backups are green. But can you actually recover?</strong>
