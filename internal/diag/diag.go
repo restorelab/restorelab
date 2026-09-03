@@ -205,7 +205,16 @@ func (r *Report) appendNetwork(ctx context.Context, in Input, node string) {
 		r.fail(AreaNetwork, fmt.Sprintf("bridge %q on %s is not usable", in.Network.Bridge, node),
 			err.Error()+" - see docs/network-isolation.md to create a bridge with no uplink")
 	default:
-		r.ok(AreaNetwork, fmt.Sprintf("isolated bridge %q present on %s", in.Network.Bridge, node), "")
+		// Said here, on the line that confirms the isolation works, because
+		// this is the one moment an operator is thinking about that network.
+		// It is not a warning: an unreachable recovery network is the product
+		// working as designed. It is the consequence nobody expects until a
+		// drill has already spent minutes timing out on it.
+		r.ok(AreaNetwork, fmt.Sprintf("isolated bridge %q present on %s", in.Network.Bridge, node),
+			"a restored guest on this bridge is unreachable from here by design - that is the point of it. "+
+				"Checks that dial the guest (tcp:, http:, dns:, ping) therefore need a route into this network, "+
+				"and a drill whose critical checks cannot reach it ends INCONCLUSIVE rather than claiming the "+
+				"backup failed. Checks written as cmd: run inside the guest through the agent and need no route at all")
 	}
 }
 
@@ -229,10 +238,15 @@ func (r *Report) appendWorkload(ctx context.Context, in Input) {
 			fmt.Sprintf("workload %s is %s", in.WorkloadID, status.PowerState),
 			"the guest agent can only be checked while the workload runs")
 	case !status.AgentReady:
-		// A warning, not a failure: network checks work without an agent.
-		// Only in-guest checks and address discovery need one.
+		// A warning rather than a failure, because a plan that pins
+		// startup.ip and checks over the network still works. Everything
+		// else needs the agent: it is how a cmd: check runs, and how the
+		// restored guest's address is discovered in the first place.
 		r.warn(AreaWorkload, fmt.Sprintf("no QEMU guest agent responding on %s", in.WorkloadID),
-			"in-guest checks and address discovery need it: install qemu-guest-agent, then enable the agent in the workload's options")
+			"without it a drill can restore and boot this workload but cannot check anything inside it, and cannot "+
+				"discover the restored guest's address either - which leaves only network checks against an address "+
+				"pinned by hand in the plan (startup.ip). Install qemu-guest-agent in the guest, then enable the agent "+
+				"in the workload's options")
 	default:
 		r.ok(AreaWorkload,
 			fmt.Sprintf("guest agent responding on %s (%v)", in.WorkloadID, status.IPs), "")

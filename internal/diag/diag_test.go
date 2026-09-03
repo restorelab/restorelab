@@ -281,3 +281,37 @@ func TestARecentBackupIsAPass(t *testing.T) {
 		t.Fatal("OK() = false with no problem finding")
 	}
 }
+
+// doctor exists to tell somebody what will bite them before it does. The
+// isolation itself is working as designed here - which is exactly why nobody
+// expects it to be the reason their first drill sat timing out for five
+// minutes and then reported a good backup as broken.
+func TestAnIsolatedBridgeExplainsWhatItMeansForChecks(t *testing.T) {
+	p := &fakeProvider{t: t, nodes: []core.Node{onlineNode("pve1")}}
+
+	r := Run(context.Background(), Input{
+		Provider:    isolationValidator{fakeProvider: p},
+		ProviderID:  "pve",
+		NetworkName: "isolated",
+		Network:     core.NetworkConfig{Bridge: "vmbr99", Isolated: true},
+	})
+
+	net := findingsIn(r, "network")
+	if len(net) != 1 {
+		t.Fatalf("network findings = %+v, want one", net)
+	}
+	// Still not a problem: a network nothing can reach is the product
+	// working. Counting it as one would be its own kind of crying wolf.
+	if net[0].Level != LevelOK {
+		t.Errorf("Level = %s, want ok: an unreachable recovery network is by design", net[0].Level)
+	}
+	if r.Problems() != 0 {
+		t.Errorf("Problems() = %d, want 0", r.Problems())
+	}
+
+	for _, want := range []string{"cmd:", "INCONCLUSIVE", "route"} {
+		if !strings.Contains(net[0].Detail, want) {
+			t.Errorf("detail does not mention %q, so it does not actually help:\n%s", want, net[0].Detail)
+		}
+	}
+}
