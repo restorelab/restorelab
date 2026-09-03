@@ -26,7 +26,7 @@ type Event struct {
 	// TempWorkloadID and Node name the temporary workload the run reserved
 	// for itself, and the node it lives on. They are empty only on the
 	// events emitted before prepare_environment allocated that identity, and
-	// set on EVERY event from then on — including the one that opens the
+	// set on EVERY event from then on, including the one that opens the
 	// restore step, which is the first step that creates anything on the
 	// cluster.
 	//

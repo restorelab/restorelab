@@ -94,7 +94,7 @@ type ConfidenceWeights struct {
 }
 
 // DefaultWeights returns RestoreLab's default confidence-scoring weights.
-// These are product defaults, not the result of any statistical model — see
+// These are product defaults, not the result of any statistical model. See
 // the Confidence doc comment.
 func DefaultWeights() ConfidenceWeights {
 	return ConfidenceWeights{
@@ -148,7 +148,7 @@ func (w ConfidenceWeights) ProofCap(level core.ProofLevel) int {
 // Confidence is the Recovery Confidence result: a product indicator meant to
 // give an operator a fast, honest read on "would this recovery actually
 // work today", not a scientific or statistically calibrated measure. Treat
-// Score as a configurable heuristic — the Reasons are the actual value,
+// Score as a configurable heuristic: the Reasons are the actual value,
 // since they say *why* the number is what it is; the bare integer alone
 // should never be presented without them.
 type Confidence struct {

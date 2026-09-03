@@ -11,7 +11,7 @@ import (
 
 // fakeProvider is an in-memory core.HypervisorProvider + core.BackupProvider
 // used by engine tests. Every behaviour is scriptable through plain fields
-// (populate only what a given test needs — the zero value is a "happy path"
+// (populate only what a given test needs: the zero value is a "happy path"
 // stub); every call is recorded so tests can assert exactly what the engine
 // did and did not do to the provider.
 type fakeProvider struct {

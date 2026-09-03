@@ -6,7 +6,7 @@ package store
 // Le cas qui compte est « un token révoqué » : la révocation écrit
 // revoked_at, elle ne supprime pas la ligne, donc ON DELETE CASCADE ne se
 // déclenche pas. Une session dont le token vient d'être révoqué doit
-// disparaître immédiatement, et c'est la jointure qui le garantit — pas un
+// disparaître immédiatement, et c'est la jointure qui le garantit, pas un
 // contrôle en Go que quelqu'un finirait par oublier.
 
 import (

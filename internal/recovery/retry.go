@@ -13,7 +13,7 @@ import (
 // surface on the first try, never be masked behind a silent delay-and-repeat.
 //
 // It is a method (not a free function) so it sleeps through e.sleep, the
-// same injectable clock the rest of the engine uses — that is what lets
+// same injectable clock the rest of the engine uses. That is what lets
 // tests exercise retry/backoff paths without actually waiting.
 func (e *Engine) retry(ctx context.Context, attempts int, backoff time.Duration, fn func() error) error {
 	if attempts < 1 {

@@ -86,13 +86,13 @@ func (CommandCheck) Run(ctx context.Context, target core.Target, cfg core.CheckC
 	}
 
 	// detectErr records why automatic shell selection fell back to the
-	// default. It is not itself a failure — the fallback may well be right —
+	// default. It is not itself a failure (the fallback may well be right),
 	// but if the command then fails to run at all, it is the first thing an
 	// operator needs to see.
 	var detectErr error
 	var argv []string
 	if hasRun {
-		// A blank shell — absent, or templated down to nothing — means
+		// A blank shell (absent, or templated down to nothing) means
 		// "you decide", not "run the empty interpreter".
 		if strings.TrimSpace(shell) == "" {
 			shell, detectErr = autoShell(ctx, target)
@@ -237,8 +237,8 @@ const defaultShell = "/bin/sh"
 //
 // Nobody should have to know our packaging conventions to drill a Windows
 // VM: "--check 'cmd:sc query Winmgmt'" must work the same way it does on
-// Linux. The returned error is advisory — the caller still gets a usable
-// shell — and only says why the default was used instead of a detected one.
+// Linux. The returned error is advisory (the caller still gets a usable
+// shell) and only says why the default was used instead of a detected one.
 func autoShell(ctx context.Context, target core.Target) (string, error) {
 	detector, ok := target.Exec.(core.GuestOSDetector)
 	if !ok {

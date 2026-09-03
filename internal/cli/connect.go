@@ -368,7 +368,7 @@ func (a *app) printConnectNextSteps(f *connectFlags) {
 	}
 	fmt.Fprintf(a.out, "  %s\n", a.paint(colorCyan, "restorelab recovery test <vmid> --dry-run"))
 	fmt.Fprintf(a.out, "  %s\n", a.paint(colorCyan, "restorelab recovery test <vmid> --check 'cmd:systemctl is-active nginx'"))
-	fmt.Fprintf(a.out, "\n%s a real drill needs an isolated bridge on the target node — see docs/network-isolation.md\n",
+	fmt.Fprintf(a.out, "\n%s a real drill needs an isolated bridge on the target node; see docs/network-isolation.md\n",
 		a.paint(colorDim, "note:"))
 }
 

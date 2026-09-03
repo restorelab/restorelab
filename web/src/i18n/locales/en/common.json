@@ -68,7 +68,7 @@
   },
   "common": {
     "never": "Never",
-    "none": "—",
+    "none": "--",
     "copy": "Copy",
     "copied": "Copied",
     "loading": "Loading"

@@ -117,7 +117,7 @@ func stepEnd(run *core.RecoveryRun, name string) time.Time {
 // computeRTO implements the run's Recovery Time Objective measurement: the
 // time from run start to the end of run_checks, or to the end of
 // wait_for_guest when the plan has no checks. Cleanup and report generation
-// happen after this point and are deliberately excluded — RTO measures how
+// happen after this point and are deliberately excluded: RTO measures how
 // long the workload was actually down for, not how long RestoreLab spent
 // tidying up its own scratch resources afterwards.
 func computeRTO(run *core.RecoveryRun, startedAt time.Time) time.Duration {

@@ -9,7 +9,7 @@ import (
 // text form is fixed width.
 //
 // This is not cosmetic. Both engines store timestamps as text here, so
-// "ORDER BY started_at DESC" is a lexicographic sort — the order of the whole
+// "ORDER BY started_at DESC" is a lexicographic sort, the order of the whole
 // history. time.RFC3339Nano trims trailing zeros, which makes "…:05.1Z" sort
 // after "…:05.05Z" even though it is the earlier instant. A fixed width
 // removes that problem, and forcing UTC removes the other one: a column

@@ -15,7 +15,7 @@ import (
 )
 
 // newTestHistoryAt gives a real, migrated SQLite history in a throwaway
-// directory — the same engine a user gets, with nothing installed — and says
+// directory (the same engine a user gets, with nothing installed) and says
 // which file it lives in.
 //
 // The path is handed back because one caller needs to open the same database

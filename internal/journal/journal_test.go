@@ -213,7 +213,7 @@ func quietRecorder(s store.Store) *Recorder {
 // production cluster; the journal does not command the operation.
 //
 // The recorder's methods return nothing at all, so this test is really about
-// keeping that true — if someone adds an error return, this stops compiling.
+// keeping that true: if someone adds an error return, this stops compiling.
 func TestRecorderSwallowsEveryStoreFailure(t *testing.T) {
 	broken := &brokenStore{}
 	rec := quietRecorder(broken)
@@ -239,7 +239,7 @@ func TestRecorderSwallowsEveryStoreFailure(t *testing.T) {
 	}
 }
 
-// Every event must reach the store, numbered in emission order — that number
+// Every event must reach the store, numbered in emission order. That number
 // is what phase B's SSE replays from.
 func TestRecorderNumbersEventsInEmissionOrder(t *testing.T) {
 	spy := &spyStore{}
@@ -369,7 +369,7 @@ func TestRecorderFinishOnANilRunDoesNothing(t *testing.T) {
 }
 
 // An event carrying the identity of the temporary workload must reach the
-// store before that workload is ever created on the cluster — that ordering
+// store before that workload is ever created on the cluster. That ordering
 // is the whole point of TempWorkloadID/Node existing on Event at all.
 func TestRecorderRecordsTempWorkloadAsSoonAsItIsKnown(t *testing.T) {
 	spy := &spyStore{}

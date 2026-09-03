@@ -41,7 +41,7 @@ var agentUnavailablePhrases = []string{
 //
 // The heuristic, documented honestly: PVE reports "the guest agent could
 // not service this call" (no agent installed, agent not started, QMP
-// timeout) as a plain HTTP 500 with a free-text body — the exact status
+// timeout) as a plain HTTP 500 with a free-text body, the exact status
 // code it also uses for a genuine internal server error, with nothing else
 // to tell the two apart. client.go's mapStatusError therefore wraps every
 // 500 as core.Retryable, which is the right default everywhere else in
@@ -52,7 +52,7 @@ var agentUnavailablePhrases = []string{
 // guest that will never answer. So: match known phrasing in the body when
 // present, and unconditionally treat any HTTP 5xx from these endpoints as
 // agent-unavailable even when the body doesn't match a known phrase.
-// Connection failures and timeouts (no HTTP status at all — p.request
+// Connection failures and timeouts (no HTTP status at all: p.request
 // never gets far enough to call mapStatusError) carry no "unexpected
 // status" text and no agent phrase, so they fall through unchanged and
 // stay core.Retryable, per contract.
@@ -127,7 +127,7 @@ func (p *Provider) agentExecStart(ctx context.Context, node, id string, req core
 	// command=c"), one value per argv element, not as a single
 	// space-joined or JSON-encoded string. url.Values naturally supports a
 	// repeated key with ordered values, and Values.Encode preserves that
-	// order for a given key (it only sorts across distinct keys) — assign
+	// order for a given key (it only sorts across distinct keys), so assign
 	// req.Argv directly rather than building it with repeated Add calls.
 	form := url.Values{"command": req.Argv}
 	if req.Input != "" {

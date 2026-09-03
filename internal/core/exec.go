@@ -28,7 +28,7 @@ type ExecResult struct {
 }
 
 // GuestExecutor is implemented by providers that can run a command inside a
-// guest through an out-of-band channel — the QEMU guest agent for Proxmox,
+// guest through an out-of-band channel: the QEMU guest agent for Proxmox,
 // VMware Tools elsewhere.
 //
 // This is what makes RestoreLab usable without a network path into the
@@ -41,7 +41,7 @@ type GuestExecutor interface {
 	//
 	// A non-zero exit code is a successful call with a failing command, not an
 	// error: it is returned in ExecResult.ExitCode. An error means the command
-	// could not be run at all — no agent, no permission, guest not responding.
+	// could not be run at all: no agent, no permission, guest not responding.
 	// Providers return a wrapped ErrGuestAgentUnavailable in that last case so
 	// callers can tell "your service is broken" apart from "I could not ask".
 	ExecInGuest(ctx context.Context, workloadID string, req ExecRequest) (*ExecResult, error)
@@ -80,7 +80,7 @@ const (
 // operator remember that a Windows drill needs "shell: cmd" spelled out.
 //
 // Callers must type-assert for it and degrade gracefully when it is absent
-// or fails — the guest is often still booting when the first check runs,
+// or fails: the guest is often still booting when the first check runs,
 // and "I could not ask" is a normal, temporary answer, not a fatal one.
 type GuestOSDetector interface {
 	// GuestOS reports the OS running inside the guest. It returns a wrapped

@@ -1,7 +1,7 @@
 package store
 
 // La conformité de la file. Comme le reste, elle tourne contre les deux
-// moteurs — et ici ce n'est pas une précaution de principe : le claim est la
+// moteurs, et ici ce n'est pas une précaution de principe : le claim est la
 // seule requête du projet écrite deux fois, une par moteur. Un test qui ne
 // tournerait que sur SQLite ne prouverait rien de ce qui compte.
 

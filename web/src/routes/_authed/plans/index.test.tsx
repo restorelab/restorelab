@@ -120,7 +120,7 @@ describe("PlansContent and the schedule", () => {
     )
     expect(screen.queryByText(/invalid date/i)).toBeNull()
     expect(screen.queryByText(/nan/i)).toBeNull()
-    expect(screen.getByText("—")).toBeInTheDocument()
+    expect(screen.getByText("--")).toBeInTheDocument()
   })
 
   // A plan whose cron stopped parsing has silently stopped being tested. The

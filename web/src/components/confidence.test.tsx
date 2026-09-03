@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest"
 import { ConfidenceScore } from "./confidence"
 
 describe("ConfidenceScore", () => {
-  it("renders a never-tested workload as an em dash, never as zero", () => {
+  it("renders a never-tested workload as a dash, never as zero", () => {
     render(<ConfidenceScore value={null} tested={false} />)
-    expect(screen.getByText("—")).toBeInTheDocument()
+    expect(screen.getByText("--")).toBeInTheDocument()
     expect(screen.queryByText("0")).toBeNull()
     expect(screen.queryByText("0%")).toBeNull()
   })
@@ -15,7 +15,7 @@ describe("ConfidenceScore", () => {
     expect(screen.getByText("82")).toBeInTheDocument()
   })
 
-  it("renders a genuine zero as zero — that is a measurement, not an absence", () => {
+  it("renders a genuine zero as zero: that is a measurement, not an absence", () => {
     render(<ConfidenceScore value={0} tested={true} />)
     expect(screen.getByText("0")).toBeInTheDocument()
   })

@@ -66,7 +66,7 @@ func (p *Provider) GuestOS(ctx context.Context, workloadID string) (core.GuestOS
 // The Windows agent answers id "mswindows" and name "Microsoft Windows"; a
 // Linux agent answers the distribution's /etc/os-release ID ("debian",
 // "ubuntu", "rhel", ...) and kernel-name "Linux". Rather than enumerate every
-// distribution — a list that would be wrong the day a new one ships — this
+// distribution (a list that would be wrong the day a new one ships), this
 // recognises Windows explicitly and treats a reported Linux kernel as Linux;
 // anything else stays unknown, so callers fall back to their own default
 // instead of guessing wrong.

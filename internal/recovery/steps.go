@@ -14,7 +14,7 @@ import (
 // plan.Backup.Strategy, and enforces plan.Backup.MaxAge. A backup older than
 // MaxAge is the "your backups are stale" signal this product exists to
 // catch, so it fails the run immediately with a message an operator cannot
-// miss — never a generic "check failed" wrapper.
+// miss, never a generic "check failed" wrapper.
 // resolveSourceName fills in the production workload's real name for reports
 // and check templates. It is best effort on purpose: in a genuine disaster the
 // source workload may no longer exist, and that must not stop the drill that
@@ -48,7 +48,7 @@ func (e *Engine) discoverBackup(ctx context.Context, run *core.RecoveryRun, p *p
 	if maxAge := p.Backup.MaxAge.D(); maxAge > 0 {
 		if age := e.now().Sub(backup.CreatedAt); age > maxAge {
 			err := fmt.Errorf(
-				"STALE BACKUP: newest backup for %s is %s old, plan requires max_age %s — recovery aborted, your backups are stale",
+				"STALE BACKUP: newest backup for %s is %s old, plan requires max_age %s. Recovery aborted, your backups are stale",
 				p.Workload.ID, age.Round(time.Second), maxAge,
 			)
 			e.endStep(run, idx, core.StepFailed, err.Error(), err)
@@ -130,13 +130,13 @@ func (e *Engine) prepareEnvironment(ctx context.Context, run *core.RecoveryRun, 
 
 // checkNetworkIsolation enforces that a restore can only ever land on a
 // network proven isolated from production. opts.Network.Isolated == false is
-// refused unconditionally — there is no plan-level override for this, by
+// refused unconditionally. There is no plan-level override for this, by
 // design: an isolated-by-default posture is the entire safety premise of
 // restoring a copy of production data. When the provider can additionally
 // prove isolation (core.NetworkValidator), that proof is required too.
 func (e *Engine) checkNetworkIsolation(ctx context.Context, node string, network core.NetworkConfig) error {
 	if !network.Isolated {
-		return fmt.Errorf("%w: restore network is not marked isolated — refusing to restore production data onto it",
+		return fmt.Errorf("%w: restore network is not marked isolated; refusing to restore production data onto it",
 			core.ErrNetworkNotIsolated)
 	}
 	if nv, ok := e.hv.(core.NetworkValidator); ok {
@@ -183,7 +183,7 @@ func (e *Engine) checkCapacity(ctx context.Context, node string, memoryLimitMB i
 }
 
 // finalizer is implemented by providers that need a post-restore hardening
-// pass — the Proxmox provider uses it to rewrite the restored workload's
+// pass: the Proxmox provider uses it to rewrite the restored workload's
 // network onto the isolated bridge and stamp ownership metadata, since
 // Proxmox's restore API restores the original network config verbatim.
 // Detected structurally so core stays provider-agnostic.
@@ -197,7 +197,7 @@ type finalizer interface {
 // needsCleanup is set to true the instant Restore returns successfully:
 // from that point the provider may have begun materialising a workload
 // under tempID even if the job later fails, so cleanup must run for it no
-// matter what happens afterwards. Restore itself is never retried — it is
+// matter what happens afterwards. Restore itself is never retried: it is
 // not idempotent (it materialises disks against a specific target ID) and a
 // transient failure must surface rather than risk being silently resubmitted
 // against a half-populated target.
@@ -283,7 +283,7 @@ func (e *Engine) startWorkload(ctx context.Context, run *core.RecoveryRun, p *pl
 
 // waitForGuest polls GetStatus until the guest is up, or until
 // plan.Startup.Timeout elapses. "Up" means powered on and, when
-// plan.Startup.WaitForIP is set, an IP address available — unless
+// plan.Startup.WaitForIP is set, an IP address available, unless
 // plan.Startup.IP pins the address, which skips discovery entirely.
 func (e *Engine) waitForGuest(ctx context.Context, run *core.RecoveryRun, p *plan.Plan, tempID string) (core.Target, error) {
 	idx := e.beginStep(run, StepWaitForGuest, core.RunWaitingForGuest)
@@ -415,7 +415,7 @@ func describeStatus(s *core.WorkloadStatus) string {
 // runChecks runs every configured check against the recovered workload and
 // fails the run when any critical check did not pass. Non-critical failures
 // are recorded but graded as DEGRADED, not FAILED, by gradeSuccess. Skipped
-// entirely (no step recorded at all) when the plan has no checks — the
+// entirely (no step recorded at all) when the plan has no checks. The
 // caller decides whether to call this.
 func (e *Engine) runChecks(ctx context.Context, run *core.RecoveryRun, p *plan.Plan, target core.Target) error {
 	idx := e.beginStep(run, StepRunChecks, core.RunRunningChecks)
@@ -494,7 +494,7 @@ func (e *Engine) runChecks(ctx context.Context, run *core.RecoveryRun, p *plan.P
 
 // runDryRun resolves the backup and validates the restore plan without
 // creating anything. It reuses checkNetworkIsolation/checkCapacity directly
-// rather than prepareEnvironment, specifically to avoid AllocateWorkloadID —
+// rather than prepareEnvironment, specifically to avoid AllocateWorkloadID,
 // the first call in the workflow with a provider-side side effect.
 func (e *Engine) runDryRun(ctx context.Context, run *core.RecoveryRun, p *plan.Plan, opts RunOptions) error {
 	if err := e.discoverBackup(ctx, run, p); err != nil {

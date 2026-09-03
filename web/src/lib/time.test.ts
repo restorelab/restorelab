@@ -41,8 +41,8 @@ describe("formatRelative", () => {
     })
   }
 
-  it("renders an unreadable instant as an em dash rather than Invalid Date", () => {
-    expect(formatRelative("not a date", now)).toBe("—")
+  it("renders an unreadable instant as a dash rather than Invalid Date", () => {
+    expect(formatRelative("not a date", now)).toBe("--")
   })
 })
 
@@ -75,6 +75,6 @@ describe("formatUntil", () => {
   })
 
   it("renders a nonsense instant as a dash rather than Invalid Date", () => {
-    expect(formatUntil("not a date", now)).toBe("—")
+    expect(formatUntil("not a date", now)).toBe("--")
   })
 })

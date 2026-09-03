@@ -620,7 +620,7 @@ func TestRun_CtxCancelledMidRun_CleanupStillRuns(t *testing.T) {
 	}
 }
 
-// A drill that blew its deadline FAILED — it did not get cancelled. Only a
+// A drill that blew its deadline FAILED: it did not get cancelled. Only a
 // deliberate cancellation (context.Canceled) earns CANCELLED; a timeout is a
 // recovery that did not happen in time, which is exactly the thing this
 // product exists to report.
@@ -722,7 +722,7 @@ func TestRun_CancelledHonoursKeepOnFailure(t *testing.T) {
 // The rule this test freezes: nothing is created on the cluster before a
 // listener has been told how to find it. The restore step is the first one
 // that creates anything, so the event that OPENS it must already name the
-// temporary workload and its node — otherwise a process killed mid-drill
+// temporary workload and its node; otherwise a process killed mid-drill
 // leaves an orphan the database cannot name.
 func TestRun_EventsCarryTempWorkloadIdentityBeforeRestore(t *testing.T) {
 	clock := newFakeClock()
@@ -757,7 +757,7 @@ func TestRun_EventsCarryTempWorkloadIdentityBeforeRestore(t *testing.T) {
 		t.Fatalf("no %q event with status %q in %d events", StepRestore, core.StepRunning, len(events))
 	}
 	if restoreStart.TempWorkloadID != "9042" {
-		t.Errorf("restore-start event TempWorkloadID = %q, want %q — the database must know the id before the restore creates it",
+		t.Errorf("restore-start event TempWorkloadID = %q, want %q; the database must know the id before the restore creates it",
 			restoreStart.TempWorkloadID, "9042")
 	}
 	if restoreStart.Node != "node-a" {

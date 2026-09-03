@@ -21,7 +21,7 @@ export function formatDuration(seconds: number): string {
 /** Renders an instant as an age: just now, 15m ago, 3h ago, 2d ago. */
 export function formatRelative(iso: string, now: Date = new Date()): string {
   const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return "—"
+  if (Number.isNaN(then)) return "--"
   const seconds = Math.round((now.getTime() - then) / 1000)
   if (seconds < 60) return "just now"
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
@@ -32,7 +32,7 @@ export function formatRelative(iso: string, now: Date = new Date()): string {
 /** Renders an instant as a short local date and time. */
 export function formatAbsolute(iso: string): string {
   const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return "—"
+  if (Number.isNaN(at.getTime())) return "--"
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
@@ -61,7 +61,7 @@ export function elapsedSeconds(startedAt: string, now: Date = new Date()): numbe
  */
 export function formatUntil(iso: string, now: Date = new Date()): string {
   const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return "—"
+  if (Number.isNaN(then)) return "--"
   const seconds = Math.round((then - now.getTime()) / 1000)
   if (seconds < 60) return "due now"
   if (seconds < 3600) return `in ${Math.floor(seconds / 60)}m`

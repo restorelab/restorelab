@@ -1,5 +1,5 @@
-// Package recovery implements RestoreLab's recovery engine: the workflow
-// that turns a plan.Plan into a proven (or disproven) recovery, end to end —
+// Package recovery implements RestoreLab's recovery engine, the workflow
+// that turns a plan.Plan into a proven (or disproven) recovery, end to end:
 // find a backup, restore it into an isolated temporary workload, boot it,
 // wait for the guest, run checks, measure the RTO, and ALWAYS clean up.
 //
@@ -41,7 +41,7 @@ type CheckRunner interface {
 }
 
 // Deps wires the engine to the outside world. Every optional field has a
-// safe, production-appropriate default when left nil — see New.
+// safe, production-appropriate default when left nil. See New.
 type Deps struct {
 	Hypervisor core.HypervisorProvider
 	Backups    core.BackupProvider // may be the same object as Hypervisor
@@ -140,14 +140,14 @@ func realSleep(ctx context.Context, d time.Duration) error {
 // Run executes a recovery plan end to end.
 //
 // Contract: Run ALWAYS returns a non-nil *core.RecoveryRun, populated as far
-// as the workflow got — callers (the CLI, the report writer) build the
+// as the workflow got. Callers (the CLI, the report writer) build the
 // report from this run even when the run failed. Run returns a non-nil error
 // exactly when the run did not succeed: run.Result == core.ResultFailed, the
 // run was cancelled (run.State == core.RunCancelled, run.Result empty), or
 // cleanup itself failed (run.State == core.RunCleanupFailed, which can
-// happen even after a graded Success/Degraded run — both are joined via
+// happen even after a graded Success/Degraded run; both are joined via
 // errors.Join when they occur together). A core.ResultDegraded run with
-// cleanup done returns a nil error — it recovered, just not perfectly.
+// cleanup done returns a nil error: it recovered, just not perfectly.
 //
 // A run whose ctx was cancelled (context.Canceled, NOT
 // context.DeadlineExceeded) ends in core.RunCancelled rather than
@@ -175,7 +175,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, opts RunOptions) (run *c
 		node         string
 		needsCleanup bool
 		// workflowErr preserves the real error chain (so callers can
-		// errors.Is/As against core sentinels like core.ErrNoBackup) —
+		// errors.Is/As against core sentinels like core.ErrNoBackup);
 		// run.Err is only ever the flattened string form of it, which is
 		// not enough to reconstruct the chain.
 		workflowErr error
@@ -203,7 +203,7 @@ func (e *Engine) Run(ctx context.Context, p *plan.Plan, opts RunOptions) (run *c
 		// Only context.Canceled counts. A context.DeadlineExceeded run
 		// FAILED: a drill that blew its deadline is a recovery that did not
 		// happen in time, which is precisely what this product exists to
-		// report — not a decision somebody made.
+		// report, not a decision somebody made.
 		//
 		// A recovered panic is an internal defect and stays FAILED even if
 		// the run was also cancelled: "we crashed" is the news, not "you
@@ -356,12 +356,12 @@ func (e *Engine) markInconclusive(run *core.RecoveryRun, err error) {
 
 // markCancelled records a run that ended because a human stopped it (Ctrl-C,
 // an API cancel), as opposed to one that failed on its own. It runs after
-// markFailed on the same run and deliberately overrides it — the distinction
+// markFailed on the same run and deliberately overrides it: the distinction
 // only becomes knowable once the workflow has unwound.
 //
 // It is called BEFORE cleanup, on purpose: cleanup snapshots the graded
-// state and restores it when it succeeds, so a cancelled run ends CANCELLED
-// — and, when the delete fails, cleanup still overrides it with
+// state and restores it when it succeeds, so a cancelled run ends CANCELLED,
+// and when the delete fails, cleanup still overrides it with
 // core.RunCleanupFailed. An orphan on the cluster is more urgent news than
 // an operator's decision to stop.
 func (e *Engine) markCancelled(run *core.RecoveryRun, err error) {
@@ -382,7 +382,7 @@ func (e *Engine) markCancelled(run *core.RecoveryRun, err error) {
 // error: SUCCESS when every critical check passed and the RTO target was
 // met, DEGRADED when the workload recovered but a non-critical check failed
 // or the RTO target was exceeded. A critical check failure never reaches
-// here — runChecks turns that into a step error handled by markFailed.
+// here: runChecks turns that into a step error handled by markFailed.
 func (e *Engine) gradeSuccess(run *core.RecoveryRun, p *plan.Plan) {
 	degraded := run.RTOExceeded()
 	if !degraded {

@@ -19,13 +19,13 @@ const cleanupTimeout = 10 * time.Minute
 // actually be destroyed:
 //
 //   - needsCleanup == false: nothing was ever created on the provider
-//     (failed before Restore was submitted, or this was a dry run) — a no-op.
+//     (failed before Restore was submitted, or this was a dry run), a no-op.
 //   - opts.KeepWorkload, or plan.Cleanup.KeepOnFailure on a run that failed
 //     or was cancelled, or !plan.Cleanup.CleanupAlways() on a run that did
 //     complete: the workload
 //     is deliberately left running, logged loudly because it is now the
 //     operator's responsibility to remove it.
-//   - otherwise: Stop then Delete, always by the TEMPORARY id — never the
+//   - otherwise: Stop then Delete, always by the TEMPORARY id, never the
 //     source workload id. Delete failing is treated as an incident, not a
 //     soft error: it sets run.State to core.RunCleanupFailed and names the
 //     exact VMID and node so an admin can remove it by hand.
@@ -35,7 +35,7 @@ const cleanupTimeout = 10 * time.Minute
 // workload torn down, otherwise cancelling a run becomes a way to leak VMs.
 //
 // It returns nil unless the delete itself failed, in which case it returns
-// an error wrapping the provider's error (for errors.Is/As) — the loud,
+// an error wrapping the provider's error (for errors.Is/As). The loud,
 // VMID-naming message is recorded on run.Err and run.State regardless, so
 // the report carries it even for callers that only look at the run.
 //
@@ -57,7 +57,7 @@ func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan,
 	// beginStep (called below, directly or via recordCleanupSkipped) always
 	// sets run.State to core.RunCleaningUp for the duration of this step, as
 	// every other step does. Unlike every other step, this one runs after
-	// the run has already been graded (Success/Degraded/Failed) — so unless
+	// the run has already been graded (Success/Degraded/Failed), so unless
 	// cleanup itself fails, that graded state must be restored once cleanup
 	// is done, not left showing "cleaning up" forever.
 	gradedState := run.State
@@ -65,7 +65,7 @@ func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan,
 	if opts.KeepWorkload {
 		e.logKept(run, tempID, node, "KeepWorkload was requested")
 		e.recordCleanupSkipped(run, fmt.Sprintf(
-			"cleanup skipped: KeepWorkload requested — workload %s on node %s left running, remove it by hand", tempID, node))
+			"cleanup skipped: KeepWorkload requested. Workload %s on node %s left running, remove it by hand", tempID, node))
 		run.State = gradedState
 		return nil
 	}
@@ -73,8 +73,8 @@ func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan,
 	// A cancelled run counts as "did not complete" for cleanup policy, the
 	// same as a failed one did back when a Ctrl-C was graded FAILED. Both
 	// halves of that matter: keep_on_failure (an explicit debugging opt-in)
-	// keeps applying to an interrupted drill, and "cleanup.always: false" —
-	// which only ever meant "leave a healthy drill up so I can poke at it" —
+	// keeps applying to an interrupted drill, and "cleanup.always: false",
+	// which only ever meant "leave a healthy drill up so I can poke at it",
 	// must never become a way for a Ctrl-C to leak a temporary VM.
 	// An inconclusive run counts as incomplete for the same reason a cancelled
 	// one does: it is precisely the case an operator would want to keep the
@@ -85,7 +85,7 @@ func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan,
 	if incomplete && p.Cleanup.KeepOnFailure {
 		e.logKept(run, tempID, node, "plan.cleanup.keep_on_failure is set and the run did not complete")
 		e.recordCleanupSkipped(run, fmt.Sprintf(
-			"cleanup skipped: keep_on_failure is set — workload %s on node %s left running for debugging, remove it by hand", tempID, node))
+			"cleanup skipped: keep_on_failure is set. Workload %s on node %s left running for debugging, remove it by hand", tempID, node))
 		run.State = gradedState
 		return nil
 	}
@@ -94,7 +94,7 @@ func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan,
 		// Always defaults to true; an explicit "always: false" on a run that
 		// didn't fail means the operator wants to inspect it.
 		e.recordCleanupSkipped(run, fmt.Sprintf(
-			"cleanup skipped by plan policy (cleanup.always: false) — workload %s left on node %s", tempID, node))
+			"cleanup skipped by plan policy (cleanup.always: false). Workload %s left on node %s", tempID, node))
 		run.State = gradedState
 		return nil
 	}
@@ -118,7 +118,7 @@ func (e *Engine) cleanup(_ context.Context, run *core.RecoveryRun, p *plan.Plan,
 		run.CleanupDone = false
 		run.State = core.RunCleanupFailed // deliberately overrides gradedState: an orphan VM trumps everything
 		msg := fmt.Sprintf(
-			"ORPHANED WORKLOAD: failed to delete temporary workload %s on node %s (run %s) — remove it manually: %v",
+			"ORPHANED WORKLOAD: failed to delete temporary workload %s on node %s (run %s). Remove it manually: %v",
 			tempID, node, run.ID, derr)
 		run.Err = msg
 		e.log.Error(msg, "run_id", run.ID, "workload_id", tempID, "node", node, "err", derr)
@@ -142,6 +142,6 @@ func (e *Engine) recordCleanupSkipped(run *core.RecoveryRun, message string) {
 }
 
 func (e *Engine) logKept(run *core.RecoveryRun, tempID, node, reason string) {
-	e.log.Warn("KEEPING restored workload — MANUAL CLEANUP REQUIRED",
+	e.log.Warn("KEEPING restored workload: MANUAL CLEANUP REQUIRED",
 		"run_id", run.ID, "workload_id", tempID, "node", node, "reason", reason)
 }

@@ -28,7 +28,7 @@
   "saving": "Saving…",
   "run": "Run this plan",
   "readOnly": "This session can read the catalogue but not change it.",
-  "notScheduled": "—",
+  "notScheduled": "--",
   "scheduleBroken": "This plan is not drilling: {{reason}}",
   "noProvider": "No provider is configured, so there is nothing to write a plan against.",
   "validation": {

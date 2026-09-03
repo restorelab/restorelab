@@ -3,7 +3,7 @@ package store
 import "testing"
 
 // The conformance suite against the embedded engine. It needs nothing
-// installed, so it runs on every `go test ./...` — which is what makes it a
+// installed, so it runs on every `go test ./...`, which is what makes it a
 // real guard against the two engines drifting apart, rather than one that
 // only fires when someone remembers to set an environment variable.
 

@@ -205,7 +205,7 @@ export function TriggerDrill({
           {err ? (
             <p className="text-sm text-state-failed">
               {err instanceof ApiError
-                ? `${err.title}${err.detail ? ` — ${err.detail}` : ""}`
+                ? `${err.title}${err.detail ? `: ${err.detail}` : ""}`
                 : String(err)}
             </p>
           ) : null}

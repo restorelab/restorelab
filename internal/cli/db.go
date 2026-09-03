@@ -52,7 +52,7 @@ func newDBMigrateCmd(a *app) *cobra.Command {
 		Long: `Applies pending schema migrations.
 
 The embedded SQLite database migrates itself whenever RestoreLab opens it, so
-this command is mostly for a PostgreSQL history — which is deliberately never
+this command is mostly for a PostgreSQL history, which is deliberately never
 migrated as a side effect of running a command, because a shared database may
 serve more than this instance.`,
 		Args: cobra.NoArgs,

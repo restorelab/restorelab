@@ -14,7 +14,7 @@ import (
 //
 // It is skipped unless RESTORELAB_TEST_DATABASE_URL points at a database we
 // may create and drop schemas in, so `go test ./...` stays green on a bare
-// machine — which is a hard requirement of this project.
+// machine, which is a hard requirement of this project.
 //
 // Run it with:
 //

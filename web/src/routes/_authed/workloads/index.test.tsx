@@ -83,7 +83,7 @@ describe("WorkloadsContent", () => {
       ),
     )
     expect(screen.getByText("82")).toBeInTheDocument()
-    expect(screen.getByText("—")).toBeInTheDocument()
+    expect(screen.getByText("--")).toBeInTheDocument()
   })
 
   it("does not invent a score while one is still loading", () => {

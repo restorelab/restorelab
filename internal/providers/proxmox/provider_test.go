@@ -730,7 +730,7 @@ func mockBackupConfig(m *mockServer, node string, nets map[string]string) {
 
 // A workload with several interfaces must have every one of them neutralised
 // in the create call. Overriding only net0 leaves the second NIC pointing at a
-// production bridge, which Proxmox refuses when SDN permissions apply — and
+// production bridge, which Proxmox refuses when SDN permissions apply, and
 // which would be a live production bridge where they do not.
 func TestRestoreNeutralisesEveryInterfaceTheBackupCarries(t *testing.T) {
 	m := newMockServer(t)

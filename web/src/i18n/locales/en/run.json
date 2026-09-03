@@ -11,7 +11,7 @@
   "checks": "Checks",
   "attempts_one": "{{count}} attempt",
   "attempts_other": "{{count}} attempts",
-  "disconnected": "Connection lost. The drill is still running — reconnecting.",
+  "disconnected": "Connection lost. The drill is still running. Reconnecting.",
   "noSteps": { "title": "This drill recorded no steps" },
   "noBackup": "No backup recorded"
 }

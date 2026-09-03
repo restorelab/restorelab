@@ -24,7 +24,7 @@
     "managed": "Created by RestoreLab",
     "confidence": {
       "title": "Recovery confidence",
-      "untested": "This workload has never been drilled, so there is no score. That is not a score of zero — nobody has measured it yet.",
+      "untested": "This workload has never been drilled, so there is no score. That is not a score of zero. Nobody has measured it yet.",
       "runsConsidered_one": "Scored on {{count}} drill",
       "runsConsidered_other": "Scored on {{count}} drills",
       "reasons": "Why the score is what it is",

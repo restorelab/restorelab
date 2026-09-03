@@ -26,7 +26,7 @@ import (
 // oversight. A drill is a destructive operation on a production cluster; a
 // locked database, a full disk or a corrupt file must never abort it. Every
 // failure becomes a debug line and the drill carries on exactly as it would
-// with no database at all — which is what recorder_test's brokenStore proves.
+// with no database at all, which is what recorder_test's brokenStore proves.
 //
 // It writes as the run happens rather than in one transaction at the end,
 // because a run that is interrupted is precisely the one whose trace is worth

@@ -3,8 +3,8 @@
 // in-process Proxmox API, and drives a complete recovery drill through them.
 //
 // It is the test that answers the question the product exists to answer:
-// does the whole chain — find backup, restore, harden, boot, reach the guest,
-// validate the service, measure the RTO, clean up — actually work?
+// does the whole chain (find backup, restore, harden, boot, reach the guest,
+// validate the service, measure the RTO, clean up) actually work?
 package e2e
 
 import (
@@ -534,7 +534,7 @@ func TestFullDrillSucceedsAndCleansUp(t *testing.T) {
 	}
 	// The production workload must be untouched.
 	if _, exists := pve.vms[sourceVMID]; !exists {
-		t.Fatal("the SOURCE workload was destroyed — this is the worst possible bug")
+		t.Fatal("the SOURCE workload was destroyed - this is the worst possible bug")
 	}
 
 	assertNoDestructiveCallOnSource(t, pve)

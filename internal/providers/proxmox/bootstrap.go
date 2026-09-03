@@ -384,7 +384,7 @@ func describeDropped(dropped []string) (string, error) {
 	var required, optional []string
 	for _, p := range dropped {
 		if why, ok := optionalPrivileges[p]; ok {
-			optional = append(optional, p+" — "+why)
+			optional = append(optional, p+" - "+why)
 			continue
 		}
 		required = append(required, p)
@@ -735,7 +735,7 @@ func (c *AdminClient) ensureRole(ctx context.Context, existing map[string]string
 		if note == "" {
 			return base
 		}
-		return base + " — " + note
+		return base + " - " + note
 	}
 
 	cur, exists := existing[roleID]

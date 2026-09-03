@@ -510,7 +510,7 @@ func TestCommandCheck_ExecutorWithoutDetectionStillRuns(t *testing.T) {
 }
 
 // A guest that is still booting cannot answer get-osinfo. That must not stop
-// the check from trying — the default shell may well be right, and the check
+// the check from trying: the default shell may well be right, and the check
 // gets retried anyway.
 func TestCommandCheck_DetectionFailureStillRunsDefaultShell(t *testing.T) {
 	exec := &osAwareExecutor{osErr: fmt.Errorf("%w: agent not answering", core.ErrGuestAgentUnavailable)}

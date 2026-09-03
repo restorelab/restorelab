@@ -40,7 +40,7 @@ func newNetworkCreateCmd(a *app) *cobra.Command {
 switch that goes nowhere, which is what keeps a restored production clone from
 reaching anything.
 
-This needs administrator credentials, not RestoreLab's service token — the
+This needs administrator credentials, not RestoreLab's service token: the
 token is deliberately not allowed to reconfigure your node's network. The
 password is used once, in memory, and never stored.
 
