@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { elapsedSeconds, formatDuration, formatRelative } from "./time"
+import { elapsedSeconds, formatDuration, formatRelative, formatUntil } from "./time"
 
 describe("formatDuration", () => {
   const cases: [number, string][] = [
@@ -55,5 +55,26 @@ describe("elapsedSeconds", () => {
   it("never runs backwards, even if the clocks disagree", () => {
     const now = new Date("2026-09-02T12:00:00Z")
     expect(elapsedSeconds("2026-09-02T12:05:00Z", now)).toBe(0)
+  })
+})
+
+describe("formatUntil", () => {
+  const now = new Date("2026-09-03T12:00:00Z")
+
+  it("counts forwards in the unit that fits", () => {
+    expect(formatUntil("2026-09-03T12:30:00Z", now)).toBe("in 30m")
+    expect(formatUntil("2026-09-03T16:00:00Z", now)).toBe("in 4h")
+    expect(formatUntil("2026-09-06T12:00:00Z", now)).toBe("in 3d")
+  })
+
+  // The scheduler ticks once a minute, so a slot that just came due is about
+  // to be acted on. "5s ago" would suggest it was missed.
+  it("reads a slot that has just come due as due now", () => {
+    expect(formatUntil("2026-09-03T11:59:30Z", now)).toBe("due now")
+    expect(formatUntil("2026-09-03T12:00:00Z", now)).toBe("due now")
+  })
+
+  it("renders a nonsense instant as a dash rather than Invalid Date", () => {
+    expect(formatUntil("not a date", now)).toBe("—")
   })
 })

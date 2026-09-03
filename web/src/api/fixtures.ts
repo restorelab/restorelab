@@ -34,6 +34,8 @@ import runEvents from "./__fixtures__/run-events.json"
 import runFinished from "./__fixtures__/run-finished.json"
 import runRunning from "./__fixtures__/run-running.json"
 import runsPage from "./__fixtures__/runs-page.json"
+import scheduleSlots from "./__fixtures__/schedule-slots.json"
+import schedule from "./__fixtures__/schedule.json"
 import session from "./__fixtures__/session.json"
 import setupFailed from "./__fixtures__/setup-failed.json"
 import setupResult from "./__fixtures__/setup-result.json"
@@ -55,9 +57,11 @@ import type {
   QueueEntry,
   RunDocument,
   RunSummary,
+  ScheduledPlan,
   Session,
   SetupFailure,
   SetupOutcome,
+  Slot,
   Validated,
   Workload,
 } from "./types"
@@ -134,6 +138,8 @@ export const problem409Fixture = fixture<Problem>(problem409)
 
 export const plansPageFixture = fixture<Page<Plan>>(plansPage)
 export const planFixture = fixture<Plan>(plan)
+export const scheduleFixture = fixture<Page<ScheduledPlan>>(schedule)
+export const slotsFixture = fixture<Page<Slot>>(scheduleSlots)
 export const validateOkFixture = fixture<Validated>(validateOk)
 export const validateInvalidFixture = fixture<Problem>(validateInvalid)
 export const problem409VersionFixture = fixture<Problem>(problem409Version)

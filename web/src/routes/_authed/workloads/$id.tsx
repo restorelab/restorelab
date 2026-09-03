@@ -1,4 +1,10 @@
-import { backupsQuery, confidenceQuery, runsQuery, workloadQuery } from "@/api/queries"
+import {
+  backupsQuery,
+  confidenceQuery,
+  runsQuery,
+  slotsQuery,
+  workloadQuery,
+} from "@/api/queries"
 import {
   type Backup,
   type Confidence,
@@ -203,6 +209,52 @@ function BackupsCard({ id }: { id: string }) {
   )
 }
 
+/**
+ * The slots the scheduler decided against, for this machine.
+ *
+ * Rendered only when there are some. A machine whose drills all happened has
+ * nothing to say here, and an empty card would suggest otherwise; a machine
+ * whose slots keep being skipped looks, without this, exactly like one nobody
+ * ever scheduled - which is the confusion the slot table exists to end.
+ */
+function SkippedSlotsCard({ id }: { id: string }) {
+  const { t } = useTranslation("workloads")
+  const slots = useQuery(slotsQuery({ workload: id }))
+
+  const skipped = (slots.data?.items ?? []).filter((s) => s.outcome === "skipped")
+  if (skipped.length === 0) return null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t("detail.skippedSlots.title")}</CardTitle>
+        <p className="text-muted-foreground text-sm">
+          {t("detail.skippedSlots.description")}
+        </p>
+      </CardHeader>
+      <CardContent>
+        <ul className="space-y-3">
+          {skipped.map((slot) => (
+            <li key={`${slot.plan_id}-${slot.slot_at}`} className="text-sm">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <span className="tabular">{formatAbsolute(slot.slot_at)}</span>
+                {slot.plan_name ? (
+                  <span className="text-muted-foreground text-xs">
+                    {slot.plan_name}
+                  </span>
+                ) : null}
+              </div>
+              {slot.reason ? (
+                <p className="text-muted-foreground text-xs">{slot.reason}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  )
+}
+
 /** Proxmox Backup Server snapshots are the only backups that carry a state. */
 function isPbsFormat(format: string | undefined): boolean {
   return format === "pbs" || (format?.startsWith("pbs-") ?? false)
@@ -358,6 +410,7 @@ function WorkloadDetailPage() {
       />
       <ConfidenceCard confidence={confidence} />
       <BackupsCard id={id} />
+      <SkippedSlotsCard id={id} />
       <RunsCard id={id} runs={runs} />
     </div>
   )

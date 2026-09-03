@@ -66,6 +66,10 @@
         "description": "Run the first drill from the machine running restorelab. It will appear here live.",
         "command": "restorelab recovery test {{id}}"
       }
+    },
+    "skippedSlots": {
+      "title": "Drills that did not happen",
+      "description": "The scheduler decided against these slots. Each says why: a slot nobody acted on is not the same news as a machine nobody scheduled."
     }
   }
 }

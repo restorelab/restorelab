@@ -10,7 +10,9 @@ import {
   type QueueEntry,
   type RunDocument,
   type RunSummary,
+  type ScheduledPlan,
   type Session,
+  type Slot,
   type Workload,
   isTerminal,
 } from "./types"
@@ -192,4 +194,37 @@ export const providersQuery = () =>
   queryOptions({
     queryKey: ["providers"] as const,
     queryFn: () => apiGet<Page<Provider>>("/providers"),
+  })
+
+/**
+ * The plans that drill themselves, and when each one drills next.
+ *
+ * A schedule changes when a human edits a plan, so this polls at the
+ * catalogue's cadence rather than a drill's.
+ */
+export const scheduleQuery = () =>
+  queryOptions({
+    queryKey: ["schedule"] as const,
+    queryFn: () => apiGet<Page<ScheduledPlan>>("/schedule"),
+    refetchInterval: SLOW_MS,
+  })
+
+/**
+ * The slots the scheduler has decided, skipped ones included.
+ *
+ * Skipped slots are the point: a workload that was never drilled because its
+ * slot kept being missed looks identical to one nobody scheduled, unless
+ * something says otherwise.
+ */
+export const slotsQuery = (filter: { plan?: string; workload?: string } = {}) =>
+  queryOptions({
+    queryKey: ["slots", filter.plan ?? null, filter.workload ?? null] as const,
+    queryFn: () => {
+      const q = new URLSearchParams()
+      if (filter.plan) q.set("plan", filter.plan)
+      if (filter.workload) q.set("workload", filter.workload)
+      const qs = q.toString()
+      return apiGet<Page<Slot>>(qs ? `/schedule/slots?${qs}` : "/schedule/slots")
+    },
+    refetchInterval: SLOW_MS,
   })

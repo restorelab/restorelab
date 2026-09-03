@@ -415,3 +415,39 @@ export interface CleanupResult {
   workload_id: string
   removed: boolean
 }
+
+/**
+ * One cron slot the scheduler has decided about.
+ *
+ * A skipped slot carries a reason and no run. It is the answer to "why was
+ * this machine not tested", which the run history cannot give: a slot that
+ * was skipped produced no run to look at.
+ */
+export interface Slot {
+  plan_id: string
+  plan_name?: string
+  slot_at: string
+  decided_at: string
+  outcome: "queued" | "skipped"
+  reason?: string
+  run_id?: string
+}
+
+/**
+ * A plan that drills itself, and what is about to happen to it.
+ *
+ * next_slot_at is null when the schedule could not be read, and `error` then
+ * says why. The two are separate fields because "nothing is coming" and "we
+ * could not work it out" are different answers, and a plan whose cron broke
+ * has silently stopped being tested.
+ */
+export interface ScheduledPlan {
+  plan_id: string
+  name: string
+  workload_id: string
+  schedule: string
+  timezone?: string
+  next_slot_at: string | null
+  error?: string
+  last_slot?: Slot
+}

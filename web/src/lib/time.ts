@@ -45,3 +45,26 @@ export function elapsedSeconds(startedAt: string, now: Date = new Date()): numbe
   if (Number.isNaN(then)) return 0
   return Math.max(0, Math.round((now.getTime() - then) / 1000))
 }
+
+/**
+ * Renders how long until an instant: "in 4h", "in 3d".
+ *
+ * The mirror of formatRelative, and separate from it on purpose. A schedule
+ * is read forwards - what a viewer wants from the plan list is how long they
+ * have, not a timestamp to subtract in their head - and a single function
+ * covering both directions would have to guess which one it was being asked
+ * for at the exact moment the two meet.
+ *
+ * A slot in the past reads as "due now": the scheduler ticks once a minute,
+ * so a slot a few seconds old is about to be acted on, and "5s ago" would
+ * suggest something was missed.
+ */
+export function formatUntil(iso: string, now: Date = new Date()): string {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return "—"
+  const seconds = Math.round((then - now.getTime()) / 1000)
+  if (seconds < 60) return "due now"
+  if (seconds < 3600) return `in ${Math.floor(seconds / 60)}m`
+  if (seconds < 86_400) return `in ${Math.floor(seconds / 3600)}h`
+  return `in ${Math.floor(seconds / 86_400)}d`
+}

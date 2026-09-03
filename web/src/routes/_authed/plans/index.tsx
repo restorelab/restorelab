@@ -1,7 +1,7 @@
 import { ApiError } from "@/api/client"
 import { useTriggerDrill } from "@/api/mutations"
-import { plansQuery } from "@/api/queries"
-import type { Page, Plan } from "@/api/types"
+import { plansQuery, scheduleQuery } from "@/api/queries"
+import type { Page, Plan, ScheduledPlan } from "@/api/types"
 import { AppLink } from "@/components/app-link"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorState } from "@/components/error-state"
@@ -16,8 +16,8 @@ import {
 } from "@/components/ui/table"
 import { addNamespace } from "@/i18n"
 import plansLocale from "@/i18n/locales/en/plans.json"
-import { formatRelative } from "@/lib/time"
-import { useSuspenseQuery } from "@tanstack/react-query"
+import { formatRelative, formatUntil } from "@/lib/time"
+import { useQuery, useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute, useNavigate, useRouteContext } from "@tanstack/react-router"
 import { FileText } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -51,6 +51,35 @@ function NoCatalogue() {
 }
 
 /**
+ * When a plan drills next, or why it does not.
+ *
+ * Three states, and they must not be allowed to look alike: a plan with no
+ * schedule (a dash - most plans, and not a problem), a plan whose schedule
+ * cannot be read (said out loud, because it has silently stopped drilling),
+ * and a plan with a slot coming.
+ */
+function NextDrill({ plan }: { plan?: ScheduledPlan }) {
+  const { t } = useTranslation("plans")
+
+  if (!plan) {
+    return <span className="text-muted-foreground">{t("notScheduled")}</span>
+  }
+  if (plan.error || !plan.next_slot_at) {
+    return (
+      <span className="text-destructive text-xs">
+        {t("scheduleBroken", { reason: plan.error ?? "" })}
+      </span>
+    )
+  }
+  return (
+    <span className="text-muted-foreground">
+      {formatUntil(plan.next_slot_at)}
+      <span className="ml-1.5 tabular text-xs opacity-70">{plan.schedule}</span>
+    </span>
+  )
+}
+
+/**
  * The catalogue, taking its data as props so it can be rendered alone.
  *
  * Three powers meet on this screen and none implies another: read lists it,
@@ -60,16 +89,26 @@ function NoCatalogue() {
  */
 export function PlansContent({
   plans,
+  schedule,
   canManage,
   canOperate,
   onRun,
 }: {
   plans: Page<Plan>
+  /**
+   * What each plan's cron is about to do, keyed by plan id below.
+   *
+   * Optional because the catalogue must still render when the schedule
+   * cannot be read - a 503 on one endpoint should not blank the screen the
+   * other one fills.
+   */
+  schedule?: Page<ScheduledPlan>
   canManage: boolean
   canOperate: boolean
   onRun: (name: string) => void
 }) {
   const { t } = useTranslation("plans")
+  const scheduled = new Map((schedule?.items ?? []).map((s) => [s.plan_id, s]))
 
   return (
     <section className="space-y-4">
@@ -105,6 +144,7 @@ export function PlansContent({
                 <TableHead>{t("columns.name")}</TableHead>
                 <TableHead>{t("columns.workload")}</TableHead>
                 <TableHead>{t("columns.version")}</TableHead>
+                <TableHead>{t("columns.nextDrill")}</TableHead>
                 <TableHead>{t("columns.updated")}</TableHead>
                 <TableHead className="text-right">{t("columns.action")}</TableHead>
               </TableRow>
@@ -130,6 +170,9 @@ export function PlansContent({
                   <TableCell className="tabular text-muted-foreground">
                     {p.version}
                   </TableCell>
+                  <TableCell className="text-sm">
+                    <NextDrill plan={scheduled.get(p.id)} />
+                  </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {formatRelative(p.updated_at)}
                   </TableCell>
@@ -152,6 +195,10 @@ export function PlansContent({
 
 function PlansPage() {
   const plans = useSuspenseQuery(plansQuery()).data
+  // useQuery rather than useSuspenseQuery: the schedule is one column, and a
+  // deployment whose slot table cannot be read should still get its
+  // catalogue rather than an error boundary over the whole screen.
+  const schedule = useQuery(scheduleQuery()).data
   const { can } = useRouteContext({ from: "/_authed" })
   const navigate = useNavigate()
   const trigger = useTriggerDrill()
@@ -159,6 +206,7 @@ function PlansPage() {
   return (
     <PlansContent
       plans={plans}
+      schedule={schedule}
       canManage={can("manage")}
       canOperate={can("operate")}
       onRun={(name) =>
