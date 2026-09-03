@@ -130,6 +130,20 @@ is deliberately no table of immutable plan versions. The history of a plan's
 second table recording the same fact would be a second thing to keep in step
 with the first.
 
+**`schedule_slots`** — one row per cron slot the scheduler has decided about,
+keyed by `(plan_id, slot_at)`. **That primary key is not bookkeeping, it is the
+safety mechanism.** A drill is not idempotent — running one twice allocates a
+second temporary VMID and can strand the first clone — so the slot row is
+written in the same transaction as the run it queues. A scheduler that dies
+between the two writes cannot double-queue, and two `serve` instances against
+one database cannot either: the second claim is simply refused.
+
+`outcome` is `queued` or `skipped`. A skipped slot carries a `reason` in plain
+words and no `run_id`; that row is why the dashboard can say *why* a machine
+was not tested, instead of only that it wasn't. Slots are removed with their
+plan (`ON DELETE CASCADE`), because a slot for a plan that no longer exists
+answers no question.
+
 **`run_steps`** and **`run_checks`** — the timeline and the verdicts, keyed by
 `(run_id, seq)` and upserted at that position. A step is written twice, once
 running and once settled, and the second write replaces the first.

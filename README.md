@@ -62,8 +62,13 @@ The dashboard runs the tool today. It shows what is running, what has run,
 what is protected and whether the cluster is configured correctly, with a
 drill's phases filling in live while it happens - and it starts drills,
 cancels them, destroys what they leave behind, and writes the plan catalogue
-with the binary itself validating each document as you type. What comes next
-is the first-run setup that removes the install commands below.
+with the binary itself validating each document as you type. First-run setup
+happens in the browser too: one command, then a link.
+
+**A plan no longer has to be launched by hand.** A plan carrying a `schedule`
+queues its own drills, on its own, and a slot that comes due while the server
+was off is skipped rather than caught up hours later — see
+[docs/scheduling.md](docs/scheduling.md).
 
 Two things in the list below are implemented and unit-tested but have never
 run against real infrastructure, because the cluster this was built on has
@@ -93,7 +98,8 @@ been driven against a live Proxmox VE 9 cluster.
 | Launching and cancelling drills from the browser, and destroying what they leave behind | done |
 | Writing the plan catalogue in the browser, validated by the binary as you type | done |
 | First-run setup in the browser, replacing the install commands | done |
-| Scheduled drills, SSH / PostgreSQL / MySQL checks, notifications | next |
+| Scheduled drills: a plan's cron queues its own drills, unattended | done |
+| SSH / PostgreSQL / MySQL checks, notifications | next |
 | Remote probes, RBAC, OIDC | planned |
 
 ## Quick start

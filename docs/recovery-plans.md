@@ -59,8 +59,26 @@ cleanup:
   keep_on_failure: false            # keep it for debugging after a failed run
 
 rto_target: 5m                      # the run is graded against this
-schedule: "0 3 * * 0"               # consumed by the scheduler, ignored by the CLI
+schedule: "0 3 * * 0"               # drill this plan every Sunday at 03:00
+schedule_timezone: Europe/Paris     # default: the server's local zone
 ```
+
+### `schedule` and `schedule_timezone`
+
+A plan carrying a `schedule` is drilled on its own, at the stated time, by the
+scheduler `restorelab serve` runs. Standard five-field crontab syntax, plus the
+`@weekly` family of shorthands.
+
+The expression is read in the server's local timezone unless
+`schedule_timezone` names another one. A slot that comes due while nothing was
+running is **skipped rather than caught up** — a drill that starts in the
+middle of a working day because a server rebooted is an incident, not a test.
+
+A plan with no `schedule` is never scheduled, which is the case for most plans:
+ad-hoc drills, one-off verifications, and plans you trigger from the dashboard.
+
+Full details, including the day-of-month/day-of-week caveat and how to read
+what the scheduler did, in [scheduling.md](scheduling.md).
 
 ### `backup.max_age`
 

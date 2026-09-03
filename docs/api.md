@@ -371,6 +371,8 @@ GET  /api/v1/providers
 GET  /api/v1/doctor                        provider, workload
 GET  /api/v1/plans                         workload, limit
 GET  /api/v1/plans/{ref}                   format=yaml for the document itself
+GET  /api/v1/schedule                      the plans that drill themselves
+GET  /api/v1/schedule/slots                plan, workload, limit
 
 POST   /api/v1/session                     unauthenticated — token for a cookie
 DELETE /api/v1/session                     log out
@@ -398,6 +400,65 @@ guess. That applies to `/cancel` as much as to the reads.
 prefix. The name wins outright, because it is what a human types and what a
 plan is called everywhere else; an ambiguous id prefix is a 409, never a
 guess.
+
+### `GET /api/v1/schedule`
+
+The plans that drill themselves, and when each one drills next. A plan with no
+`schedule` is absent from the listing; most plans have none.
+
+```json
+{
+  "items": [
+    {
+      "plan_id": "1f0b2a44-0000-4000-8000-00000000000a",
+      "name": "web-tier",
+      "workload_id": "110",
+      "schedule": "0 3 * * *",
+      "timezone": "UTC",
+      "next_slot_at": "2026-09-04T03:00:00Z",
+      "last_slot": {
+        "slot_at": "2026-09-01T04:00:00Z",
+        "outcome": "skipped",
+        "reason": "the slot was 6h0m late, past the 2h grace period: ..."
+      }
+    }
+  ]
+}
+```
+
+`next_slot_at` is `null` when the schedule could not be read, and `error` then
+says why. **A plan whose cron stopped parsing stays in the listing**, carrying
+its error: it is a plan somebody believes is scheduled, and dropping it would
+read as "not scheduled" for a machine that has silently stopped being tested.
+
+### `GET /api/v1/schedule/slots`
+
+The slots the scheduler has decided, most recent first. `plan` narrows to one
+plan (name, id, or unique id prefix); `workload` narrows to every plan
+covering one machine, which is the shape the question usually has.
+
+```json
+{
+  "items": [
+    {
+      "plan_id": "1f0b2a44-...",
+      "plan_name": "web-tier",
+      "slot_at": "2026-09-01T04:00:00Z",
+      "decided_at": "2026-09-01T10:00:00Z",
+      "outcome": "skipped",
+      "reason": "the slot was 6h0m late, past the 2h grace period: ..."
+    }
+  ]
+}
+```
+
+`outcome` is `queued` or `skipped`. A queued slot names its `run_id`; a
+skipped one carries a `reason` and no run — and that row is the only place
+"why was this machine not tested" can be answered from, because a skipped slot
+produced no run to look at.
+
+There is no write here. A slot is decided by the scheduler, which queues the
+drill in the same transaction, and an HTTP handler has no business doing that.
 
 ### `GET /api/v1/health`
 

@@ -106,8 +106,18 @@ second implementation would have become a second answer:
 - **`worker`** holds the only mutating provider calls reachable from an HTTP
   request, and reaches them through `recovery.Engine`.
 
-Planned, not yet present: plans stored in the database, `scheduler`,
-`notifications`, `audit`, `probe`.
+- **`scheduler`** queues the drills a stored plan's cron asks for, and does
+  nothing else. It holds no provider and no engine, and cannot be constructed
+  with either: automating drills had to add no destructive surface, and the
+  compiler is what guarantees it. Idempotence lives in the database — a slot is
+  a row keyed by `(plan_id, slot_at)`, claimed in the same transaction as the
+  run it queues, so a scheduler that dies mid-write cannot drill twice.
+- **`trigger`** builds and queues a run: the conflict check, the plan snapshot,
+  the row. The API and the scheduler both go through it, because a drill
+  launched by a cron and one launched from the dashboard must obey the same
+  guards.
+
+Planned, not yet present: `notifications`, `audit`, `probe`.
 
 ## The recovery workflow
 
