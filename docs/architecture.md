@@ -297,8 +297,8 @@ it would destroy the temporary workload of a live restore.
 | Version | Content |
 | --- | --- |
 | v0.1 | Proxmox VE + PBS, QEMU VMs, CLI drill, isolated restore, ping/tcp/http checks, cleanup, text/JSON/HTML report |
-| v0.2 | **The web interface**: watching drills live, launching and cancelling them, editing the plan catalogue, and a first-run setup that replaces the install commands |
-| v0.3 | Scheduled drills, SSH / PostgreSQL / MySQL checks, Discord & Slack alerts |
+| v0.2 | **The web interface**: watching drills live, launching and cancelling them, editing the plan catalogue, and a first-run setup that replaces the install commands. Shipped alongside it, earlier than this list planned: **scheduled drills** and **the proof level** |
+| v0.3 | SSH / PostgreSQL / MySQL checks, Discord & Slack alerts |
 | v0.4 | Multi-workload plans, dependencies, restore ordering, parallel restores |
 | v0.5 | Remote probes, RBAC, OIDC, PDF reports |
 | v0.6 | LXC, multi-cluster, multiple PBS, capacity checks |
