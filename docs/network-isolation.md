@@ -5,8 +5,8 @@ This is the single most important safety property in RestoreLab.
 A restored production workload is a **perfect clone** of a live server: the same
 hostname, the same IP configuration, the same MAC address, the same credentials,
 the same cron jobs, the same mail queue, the same replication configuration, the
-same certificates. Booting that clone on the production network is not a test —
-it is an incident.
+same certificates. Booting that clone on the production network is not a test.
+It is an incident.
 
 Concretely, an unisolated recovery drill can:
 
@@ -15,7 +15,7 @@ Concretely, an unisolated recovery drill can:
 - resume a replication stream and write to a live database;
 - re-register with a service discovery, a load balancer or a cluster and take
   real traffic;
-- call external APIs — payment providers, webhooks, monitoring — as itself;
+- call external APIs (payment providers, webhooks, monitoring) as itself;
 - renew or revoke a certificate under the production identity.
 
 RestoreLab therefore restores onto an isolated network **by default**, rewrites
@@ -24,18 +24,18 @@ cannot verify isolation.
 
 ## What RestoreLab does on every restore
 
-1. **Reserved ID range** — the temporary workload is created with a VMID in
+1. **Reserved ID range**: the temporary workload is created with a VMID in
    `9000–9999` (configurable), never over an existing workload.
-2. **Network rewrite** — after the restore and *before the first boot*, every
+2. **Network rewrite**: after the restore and *before the first boot*, every
    interface from the backup is dropped and a single interface is attached to
    the isolated bridge, with a freshly generated MAC address. The production
    bridge and MAC never make it to a running workload.
-3. **Isolation validation** — the target bridge is inspected on the node. A
+3. **Isolation validation**: the target bridge is inspected on the node. A
    bridge with physical ports (`bridge_ports`) or a gateway has an uplink and is
    rejected with `restore network is not isolated`.
-4. **Boot hygiene** — `onboot=0` (the clone must never come back after a node
+4. **Boot hygiene**: `onboot=0` (the clone must never come back after a node
    reboot) and `protection=0` (so cleanup can always destroy it).
-5. **Ownership metadata** — `restorelab_managed=true`, the run ID and the source
+5. **Ownership metadata**: `restorelab_managed=true`, the run ID and the source
    workload ID are stamped on the description, and the `restorelab` tag is set.
 
 ## Creating the isolated bridge on Proxmox
@@ -66,7 +66,7 @@ Two things it will refuse to do, on purpose:
   It stops and tells you what it found.
 - **pretend applying is free.** Activating the configuration reloads the
   node's networking. Adding a portless bridge touches no existing interface,
-  but the change is real — `--no-apply` writes the configuration and leaves it
+  but the change is real: `--no-apply` writes the configuration and leaves it
   to take effect at the next reboot.
 
 The manual alternatives below remain valid, and are what `network create` does
@@ -84,8 +84,8 @@ on your behalf.
 | Bridge ports | *(empty)* |
 | Comment | `RestoreLab isolated recovery network` |
 
-Apply the configuration. Repeat on **every node** that can be a restore target —
-a bridge missing on one node turns into a failed drill, or worse, a silent
+Apply the configuration. Repeat on **every node** that can be a restore target.
+A bridge missing on one node turns into a failed drill, or worse, a silent
 fallback if you configured one.
 
 ### /etc/network/interfaces
@@ -115,7 +115,7 @@ networks:
 ## Getting an IP address inside the isolation
 
 **Or don't.** If your plan uses `command` checks, the validation runs inside the
-guest through the agent and never needs an address at all — no DHCP, no route,
+guest through the agent and never needs an address at all: no DHCP, no route,
 nothing on this bridge but the workload under test. That is the simplest
 answer and usually the right one; see [recovery-plans.md](recovery-plans.md#command)
 and [deployment.md](deployment.md).
@@ -127,7 +127,7 @@ an isolated bridge has no DHCP. Pick one of:
 The agent reports the interfaces the guest configured itself, including static
 addresses baked into the image. RestoreLab reads them through the Proxmox API.
 Requires `qemu-guest-agent` installed in the guest and the agent enabled on the
-VM — which is good practice for backup consistency anyway.
+VM, which is good practice for backup consistency anyway.
 
 **b. A DHCP server on the isolated bridge.**
 Run `dnsmasq` on the Proxmox node, bound to `vmbr99` only:
@@ -214,7 +214,7 @@ restorelab cleanup 9101
 
 ## When isolation is deliberately not what you want
 
-Some drills need real connectivity — validating that a restored application can
+Some drills need real connectivity: validating that a restored application can
 actually reach an external dependency, for example. That is a legitimate but
 dangerous scenario, so it is never a default:
 
@@ -225,5 +225,5 @@ restore:
 
 RestoreLab will refuse to use a non-isolated profile unless the plan names it
 explicitly, and every such run is flagged in the report. Before you do this, be
-sure the restored guest cannot claim a production IP or send mail — usually that
+sure the restored guest cannot claim a production IP or send mail. Usually that
 means preparing the workload for it, not weakening the network.

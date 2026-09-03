@@ -56,7 +56,7 @@ that drains a queue.
 
 **The web interface is the priority, and its first half is here.** Proving a
 backup can recover a service is worth doing by an operations team, not only by
-whoever is comfortable in a terminal — so the goal is one binary, one command,
+whoever is comfortable in a terminal. So the goal is one binary, one command,
 and a browser that sets itself up and runs everything from there. The command
 line keeps every capability; it is what automation drives.
 
@@ -69,14 +69,14 @@ happens in the browser too: one command, then a link.
 
 **A plan no longer has to be launched by hand.** A plan carrying a `schedule`
 queues its own drills, on its own, and a slot that comes due while the server
-was off is skipped rather than caught up hours later — see
+was off is skipped rather than caught up hours later. See
 [docs/scheduling.md](docs/scheduling.md).
 
 **A drill now says what it actually proved.** A green verdict and a proven
 recovery are not the same claim: a drill whose only check prints the guest's
 hostname establishes that the kernel booted and can fork a process, and
-nothing about the service or the data. So every run records a proof level —
-`NONE`, `BOOT`, `SERVICE` or `DATA` — the reports print it beside the verdict,
+nothing about the service or the data. So every run records a proof level
+(`NONE`, `BOOT`, `SERVICE` or `DATA`), the reports print it beside the verdict,
 and it is a **ceiling** on the confidence score rather than a footnote: 60 for
 a drill that only verified the boot, 85 for one that verified the service, 100
 only where a check declared `proves: data`. A dashboard of reassuring green
@@ -122,8 +122,8 @@ been driven against a live Proxmox VE 9 cluster.
 docker run -p 8080:8080 -v restorelab:/home/restorelab/.restorelab   ghcr.io/restorelab/restorelab serve --listen 0.0.0.0:8080
 ```
 
-Or a binary, from the [latest release](https://github.com/restorelab/restorelab/releases/latest)
-— one file, no runtime, `SHA256SUMS` beside it:
+Or a binary, from the [latest release](https://github.com/restorelab/restorelab/releases/latest).
+One file, no runtime, `SHA256SUMS` beside it:
 
 ```bash
 curl -fsSL -O https://github.com/restorelab/restorelab/releases/latest/download/restorelab_v0.2.0_linux_amd64.tar.gz
@@ -151,7 +151,7 @@ prints an address carrying a one-time setup token:
 Open it and the browser asks for your cluster's address, an administrator's
 password, and the storage drills restore onto. RestoreLab uses that password
 once, in memory, to create its own least-privilege service account, then
-throws it away — only the resulting token is stored, sealed with a master key
+throws it away. Only the resulting token is stored, sealed with a master key
 it generates for you. It offers to create the isolated bridge on the same
 screen, saying plainly that no existing interface is touched and that the
 node's network configuration will be reloaded.
@@ -162,7 +162,7 @@ to the terminal.
 
 The token is printed on the console of the machine running the server,
 because the person installing is the one sitting at it. It is spent by the
-first request that actually tries to provision — whether that attempt
+first request that actually tries to provision, whether that attempt
 succeeds or fails, because a token still live after a wrong password would be
 a secret printed on a console and valid until the process ends. A form that
 forgot a field does not cost it: making a typo restart the whole server buys
@@ -174,7 +174,7 @@ and says so instead of 404ing; `make ui` is what compiles it.
 
 ### The same thing from a terminal
 
-Every capability stays on the command line — it is what automation drives:
+Every capability stays on the command line; it is what automation drives:
 
 ```bash
 # Connect your cluster. Same password handling, same service account.
@@ -191,7 +191,7 @@ bin/restorelab token create dashboard --operate
 bin/restorelab serve
 ```
 
-Start read-only if you would rather look before touching anything —
+Start read-only if you would rather look before touching anything.
 `connect --read-only` produces a token that cannot create or destroy, and is
 enough for discovery and `recovery test --dry-run`.
 
@@ -298,29 +298,29 @@ and what cancelling a drill does and does not do.
 RestoreLab holds credentials that can restore, start and delete workloads. It is
 built so that a bug cannot cost you production:
 
-- **Isolated by default** — restores land on a dedicated bridge with no uplink,
+- **Isolated by default**: restores land on a dedicated bridge with no uplink,
   the network configuration inherited from the backup is rewritten, and a run is
   refused when isolation cannot be verified.
-- **Never touches production** — every temporary resource is created by
+- **Never touches production**: every temporary resource is created by
   RestoreLab with `restorelab_managed=true` metadata, and delete refuses any
   workload that does not carry it.
-- **Temporary IDs only** — restores go to a reserved VMID range (9000–9999 by
+- **Temporary IDs only**: restores go to a reserved VMID range (9000–9999 by
   default), never over an existing workload.
-- **Cleanup always runs** — including after a failure, a timeout or a cancelled
+- **Cleanup always runs**: including after a failure, a timeout or a cancelled
   run; a failed cleanup is a loud, named alert, never a silent orphan.
-- **An interrupted drill is never replayed** — a run whose worker died is
+- **An interrupted drill is never replayed**: a run whose worker died is
   failed and cleaned up, not retried. A drill is destructive and not
   idempotent, so re-running one would restore a second time and orphan the
   first temporary workload.
-- **No plaintext secrets** — API tokens are sealed with AES-256-GCM under a
+- **No plaintext secrets**: API tokens are sealed with AES-256-GCM under a
   master key that is never stored in the config file.
-- **Least privilege by default** — `connect` creates a service account scoped to
+- **Least privilege by default**: `connect` creates a service account scoped to
   a dedicated resource pool, because a safe setup that takes one command is the
   one people actually deploy.
 
 See [docs/security.md](docs/security.md) and
 [docs/proxmox-permissions.md](docs/proxmox-permissions.md) for the minimal
-Proxmox permission set — RestoreLab does not want, and should never be given,
+Proxmox permission set. RestoreLab does not want, and should never be given,
 global administrator rights.
 
 ## Documentation
@@ -342,23 +342,23 @@ A tool whose whole job is to tell you whether your backups are recoverable has
 to be worth believing. So rather than a claim that it is carefully built, here
 is what can be checked:
 
-- **765 Go tests and 230 front-end tests** — 25,517 lines of Go test code
+- **765 Go tests and 230 front-end tests**: 25,517 lines of Go test code
   against 27,192 lines of Go, close to one for one;
 - the persistence layer runs **the same conformance suite against SQLite and
   PostgreSQL**, because two engines behind one set of queries drift apart
   otherwise;
 - CI runs the race detector, that PostgreSQL suite, `govulncheck` and
   `golangci-lint` on every push, and the dashboard's TypeScript types are
-  checked against **captured responses from the real Go handlers** — a renamed
+  checked against **captured responses from the real Go handlers**: a renamed
   field fails the build rather than the browser;
-- the whole destructive path — restore, boot, in-guest checks, and the refusal
-  to delete anything RestoreLab did not create — has been **exercised against a
+- the whole destructive path (restore, boot, in-guest checks, and the refusal
+  to delete anything RestoreLab did not create) has been **exercised against a
   real Proxmox VE cluster**, not only a simulated one. The two parts that have
   not are named as such in [Status](#status), rather than left for somebody to
   find out.
 
 That last habit is the one worth judging the project on, because the failure
-that matters for a tool like this is not a bug — it is a reassuring green
+that matters for a tool like this is not a bug: it is a reassuring green
 nobody thought to doubt. So a drill that could not evaluate its checks reports
 `INCONCLUSIVE` instead of blaming a backup it never verified; and every run
 records what it actually established, which is why a workload checked with
@@ -367,8 +367,8 @@ nothing but `hostname` cannot display full confidence however well it went.
 The code is written with heavy use of AI assistance, under a design-first
 workflow: each slice begins as a written design, is argued about before a line
 is written, and ends in review. The architecture, the safety invariants and
-every trade-off that costs something — what the product refuses to do, what it
-will not claim, which dependency is allowed in — are decided by a human, and
+every trade-off that costs something (what the product refuses to do, what it
+will not claim, which dependency is allowed in) are decided by a human, and
 [docs/architecture.md](docs/architecture.md) records the reasoning behind each
 of them.
 
@@ -376,7 +376,7 @@ of them.
 
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 Providers and checks are deliberately behind small interfaces
-(`core.HypervisorProvider`, `core.BackupProvider`, `core.Check`) — adding a new
+(`core.HypervisorProvider`, `core.BackupProvider`, `core.Check`). Adding a new
 one should not require touching the engine.
 
 ## License

@@ -78,7 +78,7 @@ scheduler:
 | `endpoint` | all | Base URL, including the port (`:8006` for PVE, `:8007` for PBS). |
 | `token_id` | all | API token identifier, e.g. `restorelab@pve!drills`. |
 | `token_secret` | all | Always stored sealed (`rlsec:v1:…`). Saving an unsealed value is refused. |
-| `insecure` | all | Skip TLS verification. Homelab escape hatch — prefer `fingerprint` or `ca_cert_path`. |
+| `insecure` | all | Skip TLS verification. Homelab escape hatch. Prefer `fingerprint` or `ca_cert_path`. |
 | `fingerprint` | pbs | SHA-256 certificate fingerprint to pin. The right answer for a self-signed PBS. |
 | `ca_cert_path` | all | PEM file for a private CA. |
 | `node` | proxmox | Default node for API calls that need one. |
@@ -86,7 +86,7 @@ scheduler:
 | `pool` | proxmox | Resource pool temporary workloads are created in. Required when the token's destructive rights are scoped to a pool, which is what `restorelab connect` sets up. |
 | `temp_id_min` / `temp_id_max` | proxmox | Reserved VMID range for temporary workloads. Default 9000–9999. |
 | `datastore` | pbs | PBS datastore name. |
-| `pve_storage` | pbs | The name that datastore is attached under in PVE — used to build the restore volid. Defaults to `datastore`. |
+| `pve_storage` | pbs | The name that datastore is attached under in PVE, used to build the restore volid. Defaults to `datastore`. |
 
 The fastest way to create all of this, including the service account itself:
 
@@ -124,7 +124,7 @@ Named network profiles, referenced by `restore.network` in a plan.
 `isolated: true` is an assertion you make; RestoreLab verifies it against the
 node (a bridge with physical ports or a gateway is rejected) and refuses the run
 if it cannot. A profile with `isolated: false` cannot be used as
-`defaults.network` — production-network restores are opt-in per plan, never a
+`defaults.network`: production-network restores are opt-in per plan, never a
 default. See [network-isolation.md](network-isolation.md).
 
 ## `limits`
@@ -144,7 +144,7 @@ isolated profile.
 ## `scheduler`
 
 Governs the drills stored plans queue for themselves. Every field has a
-working default, so the whole block is absent from most configurations — and
+working default, so the whole block is absent from most configurations, and
 **its absence means scheduling is on**, so an installation that upgrades into
 a version with a scheduler starts honouring the schedules its plans already
 carry.
@@ -160,14 +160,14 @@ gigabytes onto production storage; one that starts hours outside its window,
 because a server happened to reboot, is an incident rather than a test. Raising
 this to a day means a machine that was off overnight gets drilled at lunchtime.
 
-Only a process that runs the worker schedules anything — a process that queued
+Only a process that runs the worker schedules anything: a process that queued
 scheduled drills without draining them would fill a queue nobody empties.
 `restorelab serve --no-scheduler` turns it off for one run of the server,
 which is the switch for a night of cluster maintenance.
 
 See [scheduling.md](scheduling.md) for what the scheduler does with all this.
 
-## `database` — drill history
+## `database`: drill history
 
 RestoreLab records every drill so you can see whether an RTO is degrading,
 when a workload was last validated, and whether a check has been failing for
@@ -177,8 +177,8 @@ weeks.
 embedded SQLite file, and `restorelab runs list` works from there. There is no
 service to install and nothing to configure.
 
-To keep the history in PostgreSQL instead — for a shared or server deployment
-— point `database.url` at it and run `restorelab db migrate` once:
+To keep the history in PostgreSQL instead (for a shared or server deployment),
+point `database.url` at it and run `restorelab db migrate` once:
 
 ```yaml
 database:
@@ -191,20 +191,20 @@ database somewhere other than the default.
 PostgreSQL migrations are never applied automatically: a shared database may
 serve several instances, and migrating someone else's schema as a side effect
 of running a command would be rude. The SQLite file belongs to RestoreLab, so
-it migrates itself — after copying the file aside first.
+it migrates itself, after copying the file aside first.
 
 A PostgreSQL URL may carry a password. It is treated as a secret: never
 printed back, never in an error, never in `doctor`.
 
 **A broken history never fails a drill.** Database unreachable, schema behind,
-file corrupt — RestoreLab says so once and carries on without recording. The
+file corrupt: RestoreLab says so once and carries on without recording. The
 journal does not command the operation.
 
 ## The master key
 
 Provider secrets are sealed with AES-256-GCM. The key is resolved in this order:
 
-1. `RESTORELAB_MASTER_KEY` — base64 or hex, 32 bytes. Use this in containers,
+1. `RESTORELAB_MASTER_KEY`: base64 or hex, 32 bytes. Use this in containers,
    systemd units and CI.
 2. `--master-key-file <path>`.
 3. `~/.restorelab/master.key`, created with mode `0600` by `restorelab init`.

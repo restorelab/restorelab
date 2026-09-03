@@ -12,7 +12,7 @@ rejected, so a typo fails the plan instead of silently changing its meaning.
 
 A plan can also be **stored** in RestoreLab's database, which is what lets the
 API trigger it by name and what the scheduler will reference. Storing one is
-not a condition for running it — see [Stored plans](#stored-plans) below.
+not a condition for running it. See [Stored plans](#stored-plans) below.
 
 ## Full reference
 
@@ -71,7 +71,7 @@ scheduler `restorelab serve` runs. Standard five-field crontab syntax, plus the
 
 The expression is read in the server's local timezone unless
 `schedule_timezone` names another one. A slot that comes due while nothing was
-running is **skipped rather than caught up** — a drill that starts in the
+running is **skipped rather than caught up**: a drill that starts in the
 middle of a working day because a server rebooted is an incident, not a test.
 
 A plan with no `schedule` is never scheduled, which is the case for most plans:
@@ -117,8 +117,8 @@ a first onboarding step. Checks are not allowed in a plan that skips startup.
 ### `cleanup`
 
 `always: true` is the default and should stay that way. `keep_on_failure: true`
-preserves the temporary workload after a failed run so you can open its console
-— remember to destroy it afterwards (`restorelab cleanup <vmid>`), because
+preserves the temporary workload after a failed run so you can open its console.
+Remember to destroy it afterwards (`restorelab cleanup <vmid>`), because
 RestoreLab will not do it for you on the next run.
 
 ### `rto_target`
@@ -145,7 +145,7 @@ Every check shares these fields:
 
 A freshly booted service is rarely ready on the first attempt. `retries: 10`
 with `retry_interval: 6s` is a better answer than a single long timeout,
-because the check passes as soon as the service is up — which is also what makes
+because the check passes as soon as the service is up, which is also what makes
 the measured RTO honest.
 
 String parameters support templates against the target:
@@ -174,12 +174,12 @@ that needs a route into the recovery network. It enters at `service` and stays
 there.
 
 Almost no plan needs to write the field. Left out, the level is deduced, and
-the deduction is built to be wrong only in the safe direction — it understates,
+the deduction is built to be wrong only in the safe direction. It understates,
 never the reverse:
 
-- a `command` whose command line is a bare liveness probe — `hostname`,
+- a `command` whose command line is a bare liveness probe (`hostname`,
   `uname`, `whoami`, `true`, `echo`, `ver`, with or without arguments, with or
-  without a directory in front of it — proves `boot`;
+  without a directory in front of it) proves `boot`;
 - a command line that chains or pipes (`&&`, `||`, `;`, `|`) is no longer
   described by its first program, so it is not read as a liveness probe;
 - a `ping` proves `boot` for the same reason: ICMP is answered by the kernel's
@@ -206,7 +206,7 @@ believed too, and so is `proves: boot` on a `systemctl is-system-running`
 check that RestoreLab would otherwise have read as a service check.
 
 Values are case-insensitive. An unknown one fails validation when the plan is
-written — `plan validate`, `plan apply`, or loading the file for a run — never
+written (`plan validate`, `plan apply`, or loading the file for a run), never
 silently at three in the morning.
 
 ### `ping`
@@ -221,7 +221,7 @@ Is the guest answering ICMP at all?
 | `privileged` | `false` | Raw ICMP instead of unprivileged UDP ping |
 
 Reports `packets_sent`, `packets_recv`, `avg_rtt_ms`, `packet_loss`. ICMP is
-often filtered — a failing ping check with a passing TCP check usually means a
+often filtered: a failing ping check with a passing TCP check usually means a
 firewall, not a broken recovery. If the OS refuses the socket, the check reports
 an *error* (not a failure) and points you at `privileged`.
 
@@ -233,7 +233,7 @@ The workhorse: is the port actually open?
 | --- | --- | --- |
 | `host` | the target IP | Host to connect to |
 | `port` | required | TCP port |
-| `expect_banner` | — | Substring the server must send on connect |
+| `expect_banner` |  | Substring the server must send on connect |
 
 ```yaml
 - type: tcp
@@ -252,13 +252,13 @@ Does the application answer, and answer correctly?
 | `url` | required | Target URL, template-expanded |
 | `method` | `GET` | HTTP method |
 | `expected_status` | `200` | Expected status code |
-| `expected_statuses` | — | List of acceptable codes; wins over `expected_status` |
-| `headers` | — | Request headers (values template-expanded) |
-| `body` | — | Request body |
-| `body_contains` | — | Substring the response must contain |
-| `body_matches` | — | Regular expression the response must match |
-| `json_path` | — | Dotted path into the JSON response (`status.database`, `items.0.name`) |
-| `json_equals` | — | Value that path must equal |
+| `expected_statuses` |  | List of acceptable codes; wins over `expected_status` |
+| `headers` |  | Request headers (values template-expanded) |
+| `body` |  | Request body |
+| `body_contains` |  | Substring the response must contain |
+| `body_matches` |  | Regular expression the response must match |
+| `json_path` |  | Dotted path into the JSON response (`status.database`, `items.0.name`) |
+| `json_equals` |  | Value that path must equal |
 | `insecure_tls` | `false` | Skip certificate verification |
 | `follow_redirects` | `true` | Follow 3xx |
 | `max_body_bytes` | `1 MiB` | Response bytes read before truncating |
@@ -280,21 +280,21 @@ Reports `status_code`, `latency_ms`, `body_size` and a truncated `body_snippet`.
 
 Runs a command **inside** the restored guest through the hypervisor's guest
 agent. It travels over the Proxmox API, so it needs no network path into the
-recovery network at all — no route, no DHCP on the isolated bridge, no runner
+recovery network at all: no route, no DHCP on the isolated bridge, no runner
 beside it. It also sees things a network probe never could: a systemd unit's
 real state, a file's contents, a local socket, a database query over a Unix
 socket.
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `run` | — | Command line, executed through a shell in the guest |
-| `argv` | — | List of strings, executed directly with no shell |
+| `run` |  | Command line, executed through a shell in the guest |
+| `argv` |  | List of strings, executed directly with no shell |
 | `shell` | auto-detected | Interpreter for `run`: a path, or `sh`, `bash`, `cmd`, `powershell` |
-| `expect` | — | Trimmed stdout must equal this exactly |
-| `stdout_contains` | — | Substring stdout must contain |
-| `stdout_matches` | — | Regular expression stdout must match |
+| `expect` |  | Trimmed stdout must equal this exactly |
+| `stdout_contains` |  | Substring stdout must contain |
+| `stdout_matches` |  | Regular expression stdout must match |
 | `expect_exit_code` | `0` | Required exit code |
-| `input` | — | Written to the command's standard input |
+| `input` |  | Written to the command's standard input |
 | `max_output_bytes` | `65536` | Cap on captured output |
 
 Exactly one of `run` and `argv` is required. Assertions are evaluated in
@@ -303,7 +303,7 @@ order: exit code, `expect`, `stdout_contains`, `stdout_matches`.
 Leave `shell` out and the check asks the guest agent what operating system it
 is running (`agent/get-osinfo`, the same privilege IP discovery already uses)
 and picks `cmd` on Windows, `/bin/sh` everywhere else. Set it explicitly when
-you want something specific — `powershell`, `bash`, an interpreter path — or
+you want something specific (`powershell`, `bash`, an interpreter path) or
 when the guest is one the agent does not describe. If detection fails and the
 command then cannot run at all, the check says so, naming the shell it fell
 back to.
@@ -323,11 +323,11 @@ back to.
 ```
 
 Requires `qemu-guest-agent` installed and running in the guest, and the agent
-enabled on the VM (*VM → Options → QEMU Guest Agent*) — which is also what
+enabled on the VM (*VM → Options → QEMU Guest Agent*), which is also what
 gives you filesystem-consistent backups, so it is worth having anyway.
 
 A command that runs and gives the wrong answer is a **failure**. A guest with
-no agent, or an API that refuses the call, is an **error** — the report says
+no agent, or an API that refuses the call, is an **error**: the report says
 "I could not ask", never "your service is broken". See
 [deployment.md](deployment.md) for when to prefer in-guest over network checks.
 
@@ -335,7 +335,7 @@ Reports `exit_code`, `stdout`, `stderr`, `truncated` and the resolved `argv`.
 
 ### `dns`
 
-Does the restored resolver answer — or does a name resolve from inside the
+Does the restored resolver answer, or does a name resolve from inside the
 recovery network?
 
 | Parameter | Default | Meaning |
@@ -344,7 +344,7 @@ recovery network?
 | `server` | the target IP | DNS server to query |
 | `port` | `53` | Server port |
 | `type` | `A` | `A`, `AAAA`, `CNAME`, `MX`, `TXT` |
-| `expect` | — | Expected answers; passes when **any** answer matches |
+| `expect` |  | Expected answers; passes when **any** answer matches |
 
 ## Grading
 
@@ -353,13 +353,13 @@ recovery network?
 | `SUCCESS` | Every critical check passed and the RTO target was met |
 | `DEGRADED` | Recovered, but a non-critical check failed or the RTO target was exceeded |
 | `FAILED` | A workflow step failed, or a critical check failed |
-| `INCONCLUSIVE` | The workload restored and booted, but a critical check could not be evaluated at all — so the drill reached no verdict. It carries **no** result and does not count against the workload's confidence score |
-| `CLEANUP_FAILED` | The drill finished but the temporary workload could not be destroyed — needs manual attention, with the node and VMID named in the error |
+| `INCONCLUSIVE` | The workload restored and booted, but a critical check could not be evaluated at all, so the drill reached no verdict. It carries **no** result and does not count against the workload's confidence score |
+| `CLEANUP_FAILED` | The drill finished but the temporary workload could not be destroyed: needs manual attention, with the node and VMID named in the error |
 
 `INCONCLUSIVE` exists because "I could not tell" is not the same news as "your
 backup is broken", and a tool that confuses the two stops being worth
 believing. The usual cause is a `tcp:`, `http:`, `dns:` or `ping` check
-dialling a guest that the machine running RestoreLab has no route to — which
+dialling a guest that the machine running RestoreLab has no route to, which
 is the normal state of affairs, since the recovery bridge is isolated on
 purpose. A check that failed for that reason says nothing about the backup,
 so the run says nothing either.
@@ -376,12 +376,12 @@ Proved   SERVICE  (the service was verified, the data was not)
 
 A run's level is the **maximum over the checks that actually passed**. A check
 that failed, that could not run, or that never ran establishes nothing, and
-contributes nothing here in either direction — the exact counterpart of the
+contributes nothing here in either direction: the exact counterpart of the
 `INCONCLUSIVE` rule above. A PostgreSQL that boots but whose `systemctl
 is-active` check fails stays at `BOOT` *and* takes the failure penalty: two
 different true statements about the same drill.
 
-`BOOT` comes from the guest agent answering — it runs inside the guest — or
+`BOOT` comes from the guest agent answering (it runs inside the guest) or
 from an in-guest check passing. Never from power state: a hypervisor
 reporting a running process cannot tell a booted OS from a guest sitting at
 its boot loader. A `startup.skip` drill therefore proves `NONE`, however well
@@ -434,8 +434,8 @@ what it can reach.
 
 The same reasoning applies from the other direction, and it decides which
 *kind* of check to write. `command` checks run inside the guest, through the
-hypervisor's guest agent — the same path RestoreLab already used to restore
-and boot the workload — so they work no matter where RestoreLab is installed.
+hypervisor's guest agent (the same path RestoreLab already used to restore
+and boot the workload), so they work no matter where RestoreLab is installed.
 `tcp`, `http`, `dns` and `ping` checks dial the guest from wherever RestoreLab
 runs, and the recovery bridge is built so that nothing can do that. They are
 worth using when you have deliberately arranged a route into the recovery
@@ -447,7 +447,7 @@ cannot run, and a drill that cannot run its critical checks ends
 
 This is also why an ad-hoc drill with no `--check` runs `cmd:hostname`: it is
 a small claim, but it is one that holds on every installation. It is also
-literally a small claim — that drill proves `BOOT` and the report says so,
+literally a small claim: that drill proves `BOOT` and the report says so,
 rather than letting a green verdict imply the service came back.
 
 ## Stored plans
@@ -459,8 +459,8 @@ restorelab recovery run examples/plans/postgres-prod.yaml
 ```
 
 That path needs no database at all. It is deliberate: a drill must never
-depend on the journal — a locked database or a full disk cannot be allowed to
-stop a recovery test — and a plan under git, applied by a CI job, is a
+depend on the journal (a locked database or a full disk cannot be allowed to
+stop a recovery test), and a plan under git, applied by a CI job, is a
 perfectly sound way to work.
 
 Storing a plan is how it becomes something *other machines* can name:
@@ -490,7 +490,7 @@ silently is how the wrong drill ends up running.
 
 ### What is stored, and what a run remembers
 
-The document is stored **verbatim** — comments, key order, the lot. `plan show`
+The document is stored **verbatim**: comments, key order, the lot. `plan show`
 gives back what was written, not a re-serialised approximation of it.
 
 Each run keeps its own **snapshot** of the plan it actually executed, defaults
@@ -509,7 +509,7 @@ snapshot taken when the run was queued, never the catalogue row.
 ### Node, storage and pool are not in the plan
 
 A plan describes a **drill**, not a deployment. Where the temporary workload
-lands — node, storage, resource pool — comes from the configuration of
+lands (node, storage, resource pool) comes from the configuration of
 whoever executes it, not from the plan. The fields exist in `restore:` as
 overrides for the case where one plan genuinely must pin its placement, but
 leaving them out is the normal thing to do: it is what lets the same plan run
@@ -520,7 +520,7 @@ different files.
 
 1. **Start with `tcp` on SSH, or a `command` check.** Either proves the guest
    booted and started a service. Prefer `command` when you have no route into
-   the recovery network — which is the common case. Add application checks
+   the recovery network, which is the common case. Add application checks
    after that works.
 2. **Check the thing that matters, not the thing that is easy.** "Port 5432 is
    open" is weaker than "the health endpoint reports the database is

@@ -7,15 +7,15 @@ right to do so.
 
 ## How a write actually happens
 
-No handler in `internal/api` calls a mutating provider method — `Restore`,
+No handler in `internal/api` calls a mutating provider method: `Restore`,
 `Start`, `Stop`, `Delete` or `AllocateWorkloadID`. That is still true now that
 the API can trigger a drill, and it is not a promise kept by code review: the
 fake provider the handler tests run against fails the test outright if any of
 those methods is reached, and a second test greps the package for those names
 outside `_test.go` files.
 
-What `POST /recovery-runs` does instead is write one row. A worker — in the
-same process by default, or on another machine — claims that row and runs the
+What `POST /recovery-runs` does instead is write one row. A worker (in the
+same process by default, or on another machine) claims that row and runs the
 drill through the same `recovery.Engine` the CLI uses, with every guard the
 engine already carries. The API and the worker never call each other; they
 share a database and nothing else, which is what makes splitting them a
@@ -38,8 +38,8 @@ RestoreLab that appeared on every interface the moment someone typed `serve`
 would be a surprise, and surprises with API surfaces are how clusters end up
 readable by strangers.
 
-TLS is not handled by RestoreLab. Put a reverse proxy in front of it — nginx,
-Caddy, whatever you already run:
+TLS is not handled by RestoreLab. Put a reverse proxy in front of it (nginx,
+Caddy, whatever you already run):
 
 ```nginx
 server {
@@ -74,7 +74,7 @@ error: refusing to listen on 0.0.0.0:8080 with no API token: create one with `re
 ```
 
 `serve` checks this once, at startup, by listing tokens and counting the live
-ones — so a server that starts with a token and later has that token revoked
+ones, so a server that starts with a token and later has that token revoked
 keeps running; nothing re-checks the binding on every request.
 
 ### One process, or two
@@ -93,7 +93,7 @@ that accepts `POST /recovery-runs` with nobody draining the queue answers
 `201 Created` to a caller that will then wait forever: the run is genuinely
 queued, the response is genuinely correct, and the drill will never happen.
 Nothing can verify from inside the process that a worker exists somewhere else
-— a worker on another machine leaves no trace until it claims something — so
+(a worker on another machine leaves no trace until it claims something), so
 the honest design is to make the operator say it out loud with
 `--worker-elsewhere` rather than to guess.
 
@@ -101,7 +101,7 @@ the honest design is to make the operator say it out loud with
 leaves a process that neither serves nor executes.
 
 A worker needs a history database, and `--no-listen` refuses to start without
-one — a worker with no queue to claim from has nothing it could ever do. A
+one: a worker with no queue to claim from has nothing it could ever do. A
 read-only API is different: it still answers questions about the cluster, so
 it starts.
 
@@ -115,7 +115,7 @@ restorelab token list                       name, scopes, created, last used, st
 restorelab token revoke <name>
 ```
 
-A token looks like `rl_` followed by 43 base64url characters — the encoding
+A token looks like `rl_` followed by 43 base64url characters: the encoding
 of 32 bytes from `crypto/rand`. The prefix exists so a secret that leaks into
 a log, a ticket or a public repository is recognisable as a RestoreLab token,
 which is what lets it be revoked instead of puzzled over; it is the same idea
@@ -132,7 +132,7 @@ Send it as a bearer token:
 Authorization: Bearer rl_<secret>
 ```
 
-`/health` is the only route that skips authentication — it says nothing about
+`/health` is the only route that skips authentication: it says nothing about
 the deployment beyond "the process is up". Every other route returns 401
 without a valid token:
 
@@ -143,7 +143,7 @@ Content-Type: application/problem+json
 Www-Authenticate: Bearer realm="restorelab"
 ```
 
-`last_used_at` is updated at most once a minute per token — an exact counter
+`last_used_at` is updated at most once a minute per token. An exact counter
 would cost a database write on every single request for a field nobody reads
 to the second.
 
@@ -161,7 +161,7 @@ A cookie is a different way to present the same credential, never a way to
 hold more of it.
 
 ```
-POST   /api/v1/session    unauthenticated — trade a token for a cookie
+POST   /api/v1/session    unauthenticated: trade a token for a cookie
 GET    /api/v1/session    describe the session this cookie carries
 DELETE /api/v1/session    log out
 ```
@@ -181,7 +181,7 @@ Content-Type: application/json
 This is the one route that authenticates nothing beforehand: it is what
 creates the credential every other route checks. It answers 200 rather than
 201, because a session has no URL that identifies *this* session rather than
-whoever's cookie arrives — there is no `Location` to give.
+whoever's cookie arrives. There is no `Location` to give.
 
 `scopes` lists what the caller can actually do, with `read` spelled out even
 though no token stores it: it is implied by every token, and a UI deciding
@@ -190,7 +190,7 @@ happens to be written.
 
 An unknown or revoked token is **401 and no cookie**, the same rejection every
 other route gives. A body that is not `{"token":"rl_..."}` is a 400. A
-deployment with no history database is a 503 — the session table is a table,
+deployment with no history database is a 503: the session table is a table,
 and saying so beats pretending the login failed.
 
 The secret in the cookie is `rls_` followed by 32 bytes of `crypto/rand`,
@@ -225,7 +225,7 @@ HTTP/1.1 400 Bad Request
 ```
 
 Loopback is exempt, because browsers treat `localhost` as a trustworthy
-origin. `X-Forwarded-Proto: https` is believed — the guard exists against a
+origin. `X-Forwarded-Proto: https` is believed. The guard exists against a
 misconfiguration, not an attacker, and anyone able to forge that header is
 already speaking to the process directly.
 
@@ -248,7 +248,7 @@ HTTP/1.1 403 Forbidden
 A missing `Origin` is refused too: browsers send it on every write, so its
 absence on a cookie request is not the ordinary case.
 
-The reference is the request's own `Host`, not a configured origin — the
+The reference is the request's own `Host`, not a configured origin: the
 dashboard is served by this same binary, so the legitimate origin is by
 construction the one just reached, and a value to configure is a value to get
 wrong. **This is a deployment requirement**: a reverse proxy that does not
@@ -261,14 +261,14 @@ exempt whatever the credential.
 ### Expiry
 
 Twelve hours from the moment the session is opened, absolute, never extended.
-A sliding expiry would be more comfortable — nobody would be logged out
-mid-drill — but an open tab polling a listing would then hold a session
+A sliding expiry would be more comfortable (nobody would be logged out
+mid-drill), but an open tab polling a listing would then hold a session
 forever, and this one can destroy machines. Twelve hours covers a working day;
 coming back tomorrow means logging in.
 
 An expired session is a 401, exactly like an unknown one. So is a session
 whose token has been revoked, from the next request onwards. Opening a session
-also sweeps every session that has already expired, in the same transaction —
+also sweeps every session that has already expired, in the same transaction:
 the table cleans itself at exactly the rate it fills.
 
 ### `GET /api/v1/session`
@@ -292,7 +292,7 @@ HTTP/1.1 204 No Content
 Set-Cookie: __Host-restorelab_session=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict
 ```
 
-The row is deleted and the cookie is expired whatever happened — a browser
+The row is deleted and the cookie is expired whatever happened: a browser
 holding a cookie for a row that is gone would keep sending it forever. Calling
 it twice is not a failure: the second call arrives with a cookie the store no
 longer knows, so it is simply unauthenticated (401). It is an unsafe method,
@@ -316,7 +316,7 @@ thing to hand anyone.
 that is the whole reason `manage` exists as a separate scope rather than as
 more room inside `operate`. Triggering a drill and deciding what a drill *is*
 are two different powers. A token handed to a dashboard so it can launch and
-cancel has no business rewriting the definition of what it launches — and a
+cancel has no business rewriting the definition of what it launches, and a
 token given to a CI job so it can `plan apply` from a git repository has no
 business restoring backups by itself. A token can hold both; it has to say so.
 
@@ -355,7 +355,7 @@ anonymous request still gets its 401.
 ## The surface
 
 ```
-GET  /                                     unauthenticated — the dashboard
+GET  /                                     unauthenticated: the dashboard
 GET  /api/v1/health                        unauthenticated
 GET  /api/v1/session                       describe this cookie session
 GET  /api/v1/recovery-runs                 workload, state, result, since, limit, cursor
@@ -374,18 +374,18 @@ GET  /api/v1/plans/{ref}                   format=yaml for the document itself
 GET  /api/v1/schedule                      the plans that drill themselves
 GET  /api/v1/schedule/slots                plan, workload, limit
 
-POST   /api/v1/session                     unauthenticated — token for a cookie
+POST   /api/v1/session                     unauthenticated: token for a cookie
 DELETE /api/v1/session                     log out
-POST   /api/v1/recovery-runs               operate — queue a drill
-POST   /api/v1/recovery-runs/{id}/cancel   operate — stop one
-POST   /api/v1/cleanup/{vmid}              operate — destroy a leftover workload
-POST   /api/v1/plans/validate              manage  — check a document, store nothing
-POST   /api/v1/plans                       manage  — store a new plan
-PUT    /api/v1/plans/{ref}                 manage  — replace one, version=N to guard
-DELETE /api/v1/plans/{ref}                 manage  — remove one
+POST   /api/v1/recovery-runs               operate: queue a drill
+POST   /api/v1/recovery-runs/{id}/cancel   operate: stop one
+POST   /api/v1/cleanup/{vmid}              operate: destroy a leftover workload
+POST   /api/v1/plans/validate              manage:  check a document, store nothing
+POST   /api/v1/plans                       manage:  store a new plan
+PUT    /api/v1/plans/{ref}                 manage:  replace one, version=N to guard
+DELETE /api/v1/plans/{ref}                 manage:  remove one
 ```
 
-`GET /` is the dashboard, served from the binary. It needs no token — it is
+`GET /` is the dashboard, served from the binary. It needs no token: it is
 the login screen as much as the application, and the API underneath it checks
 every request the page then makes. Anything that is not a file in the bundle
 falls back to `index.html`, so the client's own router owns `/runs/94bce70d`.
@@ -453,7 +453,7 @@ covering one machine, which is the shape the question usually has.
 ```
 
 `outcome` is `queued` or `skipped`. A queued slot names its `run_id`; a
-skipped one carries a `reason` and no run — and that row is the only place
+skipped one carries a `reason` and no run. That row is the only place
 "why was this machine not tested" can be answered from, because a skipped slot
 produced no run to look at.
 
@@ -489,29 +489,29 @@ $ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/r
 
 `rto_exceeded` is `true` only when the plan carried an RTO target and the
 measured RTO went over it; a run with no target never sets it. `completed_at`
-is `null` for a run still in progress rather than the zero time — a run that
+is `null` for a run still in progress rather than the zero time: a run that
 has not finished must not read as one that finished at the epoch.
 
-`proof_level` is what the drill **established** — `NONE`, `BOOT`, `SERVICE` or
-`DATA` — as opposed to `result`, which says how the drill went. The two are
+`proof_level` is what the drill **established** (`NONE`, `BOOT`, `SERVICE` or
+`DATA`), as opposed to `result`, which says how the drill went. The two are
 different sentences and a listing that shows only the second one is the
 reassuring kind of useless: a `SUCCESS` at `BOOT` is a real success that proved
 the kernel comes up and nothing else. See
 [architecture.md](architecture.md#the-proof-level) for the ladder and
 [recovery-plans.md](recovery-plans.md#proves) for where a check's level comes
 from. The field is **absent** on a run recorded before it existed, and that
-means "not recorded", not "nothing was proven" — render the two differently.
+means "not recorded", not "nothing was proven". Render the two differently.
 
 A `limit` above 200 is not refused, it is honoured up to 200: the caller gets
 a smaller page and a cursor, which is what it wanted anyway. A `limit` of
-zero or below is refused — that is a value the caller computed and got
+zero or below is refused: that is a value the caller computed and got
 wrong, not a preference to accommodate.
 
 ### `GET /api/v1/recovery-runs/{id}`
 
 The full run: steps, checks, RTO, backup, everything `restorelab runs show`
 prints. The body is `report.Document`, the exact schema `--format json`
-writes to a file and `/recovery-runs/{id}/report?format=json` returns below —
+writes to a file and `/recovery-runs/{id}/report?format=json` returns below:
 one wire shape for a run, wherever it is read from.
 
 ```
@@ -527,7 +527,7 @@ does not have to relitigate it.
 
 ### `GET /api/v1/recovery-runs/{id}/events`
 
-The stored progress stream for a run — the same events a live drill printed
+The stored progress stream for a run: the same events a live drill printed
 to the terminal, as JSON. `?after=<seq>` resumes from a sequence number, for
 anything that would rather poll.
 
@@ -537,7 +537,7 @@ $ curl -H "Authorization: Bearer rl_..." "https://restorelab.example.com/api/v1/
 ```
 
 One endpoint serves two representations, chosen by `Accept`. Send
-`Accept: text/event-stream` and the same events arrive as they happen — see
+`Accept: text/event-stream` and the same events arrive as they happen. See
 [Following a drill live](#following-a-drill-live) below. Both are the same
 replay of the same `seq` column, which is why a client can switch from one to
 the other without translating anything.
@@ -546,7 +546,7 @@ the other without translating anything.
 
 `?format=json` (the default) returns the same `report.Document` as the run
 endpoint above. `?format=html` returns the same self-contained HTML report
-`restorelab recovery run --format html` writes — open it directly in a
+`restorelab recovery run --format html` writes. Open it directly in a
 browser.
 
 ```
@@ -555,7 +555,7 @@ $ curl -H "Authorization: Bearer rl_..." "https://restorelab.example.com/api/v1/
 
 ### `GET /api/v1/workloads`
 
-The fleet, read from the provider on every call — there is no cache. `?temporary=true`
+The fleet, read from the provider on every call. There is no cache. `?temporary=true`
 includes the temporary workloads RestoreLab itself creates during a drill,
 which are excluded by default; templates are always excluded.
 
@@ -570,7 +570,7 @@ coloured without one request per row:
 | Field | Meaning |
 | --- | --- |
 | `last_run_id` | the drill's id, for a link straight to it |
-| `last_run_at` | when that drill **started** — a drill still running has no completion time, and "last tested" has to have an answer while it is in flight |
+| `last_run_at` | when that drill **started**: a drill still running has no completion time, and "last tested" has to have an answer while it is in flight |
 | `last_run_state` | its state, `SUCCESS` through `CLEANUP_FAILED` |
 | `last_run_result` | its grade, absent while the drill is still going or when it was cancelled |
 | `last_run_proof` | what that drill established: `NONE`, `BOOT`, `SERVICE` or `DATA` |
@@ -591,7 +591,7 @@ provider for a restore point's date, which would be one cluster round-trip per
 row. The score stays on its own route below.
 
 Reading them is best-effort. A deployment whose history database cannot be
-read still answers with its inventory, simply without these fields — the same
+read still answers with its inventory, simply without these fields: the same
 shape a never-drilled workload has.
 
 ### `GET /api/v1/workloads/{id}`
@@ -604,13 +604,13 @@ by an error.
 ### `GET /api/v1/workloads/{id}/backups`
 
 Its restore points, from the configured backup provider. A workload with no
-backup at all comes back as an empty `items` list, not a 404 — the workload
+backup at all comes back as an empty `items` list, not a 404: the workload
 exists, and "you have nothing to restore" is the honest answer.
 
 ### `GET /api/v1/setup` and `POST /api/v1/setup`
 
 **These two exist only on a server that has no cluster connected.** They are
-not mounted otherwise — a configured RestoreLab answers 404, not 403, because
+not mounted otherwise: a configured RestoreLab answers 404, not 403, because
 the absence of a route is a stronger guarantee than a check on one.
 
 `GET` says that installing is possible and needs no token: somebody who
@@ -635,7 +635,7 @@ $ curl -X POST -H "Authorization: Bearer rls_..." -H "content-type: application/
 ```
 
 The answer carries the provisioning steps in the order they were performed,
-the provider it stored, the bridge it created, and — exactly once — an API
+the provider it stored, the bridge it created, and (exactly once) an API
 token named `dashboard` with the read, operate and manage scopes. A refusal
 is a `problem+json` carrying the same `steps`, so a caller can show how far it
 got; every step is idempotent, so running it again is safe.
@@ -645,7 +645,7 @@ echoed back. See `docs/security.md`, "The first-run setup token".
 
 ### `GET /api/v1/providers`
 
-The configured providers, with every secret already stripped — no sealed
+The configured providers, with every secret already stripped: no sealed
 token, no token id either. A token id is half a credential, and nothing here
 needs it badly enough to risk a dashboard logging it.
 
@@ -656,7 +656,7 @@ $ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/p
 
 ### `GET /api/v1/doctor`
 
-The same readiness diagnostic `restorelab doctor` prints, as JSON — one
+The same readiness diagnostic `restorelab doctor` prints, as JSON: one
 implementation of "is this cluster ready for a drill", read by both the CLI
 and the API. It always answers `200`, findings and all: a misconfigured
 cluster is exactly what this endpoint exists to report, and answering `502`
@@ -693,17 +693,17 @@ the RTO target all come from the plan, so the body says nothing the plan
 already says. The plan is loaded, defaulted and validated inside the request;
 an unknown one is a `404`, and one that no longer parses is a `400` naming the
 field at fault, never a queued row that fails an hour later. Triggering stays
-in `operate` — naming a plan in order to run it does not require the right to
+in `operate`: naming a plan in order to run it does not require the right to
 write one.
 
 The other form describes the drill in the same terms `restorelab recovery
-test` takes on the command line — the two build the same plan through the same
+test` takes on the command line: the two build the same plan through the same
 code, so a drill triggered over HTTP and one triggered from a terminal are the
 same drill.
 
 | Field | Meaning |
 | --- | --- |
-| `workload_id` | **required** in this form — the source workload to recovery-test |
+| `workload_id` | **required** in this form: the source workload to recovery-test |
 | `provider` | provider id; the configured default when omitted |
 | `backup` | a specific restore point; the most recent one when omitted |
 | `checks` | shorthand specs: `tcp:22`, `ping`, `dns:name`, `cmd:...`, or an `http(s)://` URL. Defaults to `cmd:hostname`, which runs inside the guest and needs no route into the isolated recovery network. A network check that cannot reach the guest ends the run `INCONCLUSIVE`, not `FAILED` |
@@ -728,7 +728,7 @@ The response is the same shape a run reads back as, so a client that already
 parses `GET /recovery-runs` needs no second parser. `started_at` on a queued
 run is the moment it was queued; it is rewritten when a worker picks it up.
 
-A run queued from a stored plan carries `plan_id` — in this response, in
+A run queued from a stored plan carries `plan_id`: in this response, in
 every listing afterwards, and in the run's own report, which adds
 `plan_version` so a report can say *which version* of the plan ran. A
 dashboard can therefore group drills by plan without fetching each one, and a
@@ -753,8 +753,8 @@ would stop having a single answer. A drill that deviates from a plan is an
 ad-hoc drill, and this endpoint already knows how to make one.
 
 The plan is built and validated **synchronously, inside the request**, before
-any row is written. A body that cannot become a drill — no `workload_id`, an
-`rto_target` that is not a duration, a check spec that does not parse — is a
+any row is written. A body that cannot become a drill (no `workload_id`, an
+`rto_target` that is not a duration, a check spec that does not parse) is a
 `400` and never a queued row somebody has to explain an hour later.
 
 A second drill of a workload that already has one queued or running is a
@@ -769,7 +769,7 @@ twice, and a dashboard where somebody double-clicks must not queue two of
 them.
 
 **A run that is interrupted is never replayed.** If the worker executing a
-drill dies — a crash, a `kill -9`, a power-cycled machine — the next worker to
+drill dies (a crash, a `kill -9`, a power-cycled machine), the next worker to
 reconcile the queue marks that run `FAILED`, attempts to destroy whatever
 temporary workload it had created, and moves on. It never picks the drill up
 again. That is a decision, not a missing feature: a drill is destructive and
@@ -794,7 +794,7 @@ A caller that treated the `202` as a `200` would report a machine gone that
 still exists.
 
 **What "cancelled" actually means.** The worker notices the request on its
-next lease tick — within about fifteen seconds — and cancels the run's
+next lease tick (within about fifteen seconds) and cancels the run's
 context. The engine then stops at its next observable point and destroys the
 temporary workload on the way out, on a detached context, so the teardown
 happens even though the run was cancelled. The run settles as `CANCELLED`,
@@ -841,7 +841,7 @@ is never deleted, whatever id it carries.
 ### `GET /api/v1/queue`
 
 What is waiting and what is running, with the lease over each row. It needs
-only the `read` scope — watching the queue is not operating it.
+only the `read` scope: watching the queue is not operating it.
 
 ```
 $ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/queue
@@ -852,7 +852,7 @@ This is a listing, not a second source of truth: the same rows
 `/recovery-runs` serves, filtered to the states that have not settled. A row
 with no `worker` is still waiting for one. A `lease_expires_at` in the past
 means the worker holding that run stopped renewing and reconciliation has not
-swept it yet — which is exactly the moment an operator wants to be looking at
+swept it yet, which is exactly the moment an operator wants to be looking at
 this endpoint.
 
 ## The plan catalogue
@@ -874,7 +874,7 @@ $ curl -H "Authorization: Bearer rl_..." https://restorelab.example.com/api/v1/p
 
 `?workload=110` narrows it to one workload's plans. The listing carries **no
 documents**: a catalogue of fifty plans must not ship fifty YAML files to draw
-a table. There is no cursor either — the catalogue is dozens of rows on a
+a table. There is no cursor either: the catalogue is dozens of rows on a
 stable ordering, and a keyset over that would be ceremony. `limit` exists so a
 listing is never unbounded.
 
@@ -891,7 +891,7 @@ $ curl -H "Authorization: Bearer rl_..." \
 be written straight to a file without pulling a string out of a JSON object
 and unescaping it. Without it, the JSON carries the document in `yaml`.
 
-**The document comes back exactly as it was submitted** — comments, key order,
+**The document comes back exactly as it was submitted**: comments, key order,
 everything. A plan exported and re-imported is the same bytes. What each run
 actually executed is kept separately, in that run's snapshot, so there is no
 information to gain from canonicalising the text and a comment to lose.
@@ -909,7 +909,7 @@ $ curl -X POST -H "Authorization: Bearer rl_..." \
 {"valid":true,"name":"web-tier","workload_id":"110","provider_id":"pve","normalized_yaml":"name: web-tier\n...","proof_level":"SERVICE","proof_summary":"SERVICE, the service would be verified, the data would not"}
 ```
 
-`normalized_yaml` is the document with its defaults applied — "here is what
+`normalized_yaml` is the document with its defaults applied: "here is what
 this actually says". It is the difference between a field left out and a field
 left out *meaning something*, which is exactly what an editor needs to show
 before anyone commits to it.
@@ -967,7 +967,7 @@ $ curl -i -X PUT -H "Authorization: Bearer rl_..." \
 
 `?version=N` is an optional guard: if the plan is no longer at that version,
 somebody wrote in between and the answer is a `409` rather than an overwrite.
-Omit it to overwrite whatever is there — which is what a CI applying a
+Omit it to overwrite whatever is there, which is what a CI applying a
 directory of plans wants, since it has no idea what the current version is.
 
 A document naming a *different* plan than the URL is a `409`, and nothing is
@@ -980,7 +980,7 @@ Removes a plan. Needs `manage`. Answers `204`.
 
 **Its runs are not touched.** They keep their name and the copy of the plan
 they actually executed, so their reports, their timelines and the confidence
-score read identically before and after — only the `plan_id` link goes. A
+score read identically before and after: only the `plan_id` link goes. A
 drill in flight is unaffected too: the worker executes the snapshot taken when
 the run was queued, never the catalogue row, so deleting a plan cannot disturb
 an execution or rewrite a report.
@@ -1021,14 +1021,14 @@ Three event types, and the difference between two of them matters:
 | --- | --- |
 | `progress` | one journal entry. `data` is exactly the JSON object the polling representation returns, and `id` is its `seq`. |
 | `done` | the run reached a terminal state. `data` carries it: `SUCCESS`, `FAILED`, `CANCELLED`, `CLEANUP_FAILED` or `INCONCLUSIVE`. The drill is over. |
-| `disconnected` | **this connection** is ending — the server is shutting down. The drill is not over. |
+| `disconnected` | **this connection** is ending: the server is shutting down. The drill is not over. |
 
 A lone `: heartbeat` comment goes out after fifteen seconds of silence, so a
 reverse proxy does not time out a stream that is merely waiting for a guest to
 boot. It is a comment, and every SSE client ignores it by design.
 
 **`disconnected` is not `done`.** When `serve` is stopped, every open stream
-is told first, then the HTTP server drains — otherwise a stop would wait for
+is told first, then the HTTP server drains. Otherwise a stop would wait for
 each stream to end, and a stream ends when its drill ends, minutes later. The
 frame that goes out at that moment says the connection ended and reports the
 last state the stream had seen:
@@ -1039,7 +1039,7 @@ data: {"state":"WAITING_FOR_GUEST","reason":"the server is shutting down"}
 ```
 
 Sending `done` there would be a lie a dashboard would act on: it would mark a
-drill finished — with whatever state it happened to be in — while a worker is
+drill finished (with whatever state it happened to be in) while a worker is
 still restoring, booting and checking a machine. Treat `disconnected` as
 "reconnect", never as an outcome.
 
@@ -1047,13 +1047,13 @@ still restoring, booting and checking a machine. Treat `disconnected` as
 
 Every `progress` event carries the `seq` already stored in `run_events` as its
 SSE `id`. A client that reconnects with `Last-Event-ID: <last seq seen>` gets
-exactly what it missed and nothing twice — it is the same
+exactly what it missed and nothing twice: it is the same
 `events after seq` query the JSON page runs for `?after=`, so no translation
 happens anywhere. A stream opened without the header replays the run from its
 first event, which is what a dashboard opening a run mid-flight wants.
 
 The browser's `EventSource` does this on its own: it remembers the last id and
-sends the header when it reconnects. It cannot set an `Authorization` header —
+sends the header when it reconnects. It cannot set an `Authorization` header,
 which is why the dashboard authenticates with a session cookie instead.
 `EventSource` sends cookies without being asked, so a browser gets the
 reconnection, the backoff and the resumption for nothing. An API client
@@ -1076,7 +1076,7 @@ Every listing shares one envelope:
 a client knows it has reached the end. Pass it back as `?cursor=...` to
 continue.
 
-The cursor is opaque to the caller — it is base64url of `(started_at, id)` —
+The cursor is opaque to the caller. It is base64url of `(started_at, id)`,
 and it is a keyset, deliberately never an `OFFSET`. A `LIMIT`/`OFFSET` page
 is defined relative to the *current* row count: a drill inserted while a
 dashboard is three pages into a listing shifts every row after it, which
@@ -1129,7 +1129,7 @@ Every error is `application/problem+json` ([RFC 9457](https://www.rfc-editor.org
 
 The row that matters most, and the one a carelessly written server gets
 wrong: a Proxmox rejection of RestoreLab's *own* provider credentials is a
-502, never a 401. A 401 is reserved for one thing only — your bearer token,
+502, never a 401. A 401 is reserved for one thing only: your bearer token,
 against this API. Answering 401 when Proxmox is the one that said no would
 send you hunting through your own token for a problem that lives entirely on
 RestoreLab's side of the connection, which is the classic way to burn an
@@ -1162,7 +1162,7 @@ number would make an untested workload look exactly as broken as one that
 fails every drill.
 
 `reasons` is not a debug field. It is the actual explanation the score is
-built from — every penalty the scorer applied, in order — and it is the
+built from (every penalty the scorer applied, in order), and it is the
 value worth reading, not `len(reasons)` and not the number alone. Two
 workloads can both score 60 for entirely different reasons (a stale backup
 versus a check that keeps failing), and only `reasons` tells them apart.
@@ -1172,14 +1172,14 @@ established, and the **ceiling** that puts on the score. The ceiling is applied
 last, after every penalty: `NONE` → 40, `BOOT` → 60, `SERVICE` → 85, `DATA` →
 no ceiling. A workload drilled daily, on time, from a fresh backup, whose only
 check prints its hostname has earned every point the penalties leave it and
-still proven only that the kernel boots — so it is capped, and the reason that
+still proven only that the kernel boots. So it is capped, and the reason that
 says so is in `reasons`.
 
 The two fields are here so a client can *explain* the number instead of
 printing it: a 60 next to "only the boot was verified" is a sentence, a bare 60
 is a mystery. Both are absent when no drill that reached a verdict recorded a
-level — a history from before the field, or a workload whose only runs are
-still in flight — and an absent level caps nothing at all. See
+level (a history from before the field, or a workload whose only runs are
+still in flight), and an absent level caps nothing at all. See
 [architecture.md](architecture.md#the-ceiling-on-the-confidence-score) for why
 it is a ceiling rather than another penalty, and how to retune it.
 

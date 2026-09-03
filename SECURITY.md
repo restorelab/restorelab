@@ -32,7 +32,7 @@ Especially relevant to RestoreLab:
 - anything that could cause a **production** workload to be modified or
   destroyed;
 - anything that could place a restored workload on a **non-isolated** network;
-- **secret exposure** — tokens in logs, in error messages, in reports, or
+- **secret exposure**: tokens in logs, in error messages, in reports, or
   written unsealed to disk;
 - privilege escalation through the Proxmox or PBS API beyond the documented
   minimal role;
@@ -44,5 +44,5 @@ the documented limitations in [docs/security.md](docs/security.md#what-restorela
 ## Please do not
 
 Test against someone else's infrastructure, or against a production Proxmox
-cluster you do not own. This project restores and deletes virtual machines —
-use a lab.
+cluster you do not own. This project restores and deletes virtual machines.
+Use a lab.

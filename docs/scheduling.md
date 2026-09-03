@@ -2,7 +2,7 @@
 
 A drill you have to remember to launch is not a verification, it is a reminder.
 
-RestoreLab penalises a stale backup in its confidence score — a reproach it can
+RestoreLab penalises a stale backup in its confidence score, a reproach it can
 only justify if something in the product takes care of testing regularly. That
 something is the scheduler: a plan carrying a `schedule` is drilled at the
 stated time, with nobody at the keyboard.
@@ -31,8 +31,8 @@ restorelab schedule list
 The scheduler **queues** drills. It does not run them.
 
 It reads the catalogue, works out which cron slots are due, and writes one
-queue row per slot. The worker — the same one that already executes drills
-triggered from the API or the dashboard — picks them up and does the work, with
+queue row per slot. The worker (the same one that already executes drills
+triggered from the API or the dashboard) picks them up and does the work, with
 every guard it already carries. The scheduler holds no provider credential, no
 recovery engine and no path to your cluster; it cannot be built with one.
 
@@ -66,14 +66,14 @@ Standard five-field crontab syntax:
 **One caveat worth knowing**, because it is the one everybody gets wrong: when
 **both** the day-of-month and the day-of-week fields are restricted, crontab
 combines them with **OR**, not AND. So `0 3 13 * 5` means *the 13th of the
-month, or any Friday* — not *Friday the 13th*. RestoreLab follows the standard
+month, or any Friday*, not *Friday the 13th*. RestoreLab follows the standard
 here rather than what looks intuitive.
 
 ### Timezones
 
 `0 3 * * 0` means three in the morning where you are. The expression is
 therefore evaluated in **the server's local timezone** by default, and
-`schedule_timezone: Europe/Paris` makes it explicit — which is worth doing on a
+`schedule_timezone: Europe/Paris` makes it explicit, which is worth doing on a
 server whose clock you do not control.
 
 Slots are stored in UTC. Daylight saving is handled the boring way: when a
@@ -89,7 +89,7 @@ hours late.
 
 That is a deliberate choice, and the reasoning is worth stating: a drill
 restores tens of gigabytes and occupies your storage. One that starts in the
-middle of a working day, because a server happened to reboot, is an incident —
+middle of a working day, because a server happened to reboot, is an incident,
 not a test. Nothing about a backup is learned more usefully at 09:00 than it
 would be next Sunday.
 
@@ -99,8 +99,8 @@ than that runs; past it, the slot is skipped with a reason you can read.
 This holds whether the server was running and merely late, or switched off
 across the slot entirely: on the next tick after it comes back, the missed slot
 is examined, found to be past its grace, and recorded. A week of downtime
-records **one** slot — the most recent missed one, whose reason counts the
-others that went by with it — rather than one row per night.
+records **one** slot (the most recent missed one, whose reason counts the
+others that went by with it) rather than one row per night.
 
 ```bash
 $ restorelab schedule slots postgres-prod
@@ -122,7 +122,7 @@ time, would mean a twelfth drill starting at 11:00. Two things prevent that:
 
 - **The queue depth.** The scheduler stops queueing when the queue is already
   `max_queue_depth` deep (5 by default) and tries again at the next tick. A
-  full queue is a postponement, not a decision — nothing is written, and no
+  full queue is a postponement, not a decision: nothing is written, and no
   slot is burned.
 - **The grace period** then settles the ones that will never get their turn:
   they are skipped, with their reason, and next week's slot is unaffected.
@@ -140,7 +140,7 @@ on.
 
 So a slot is **a row in the database**, keyed by the plan and the exact instant
 the cron designated, written in the same transaction as the run it queues. The
-database is what refuses a duplicate — not a lock, not a leader election, not
+database is what refuses a duplicate, not a lock, not a leader election, not
 an in-memory flag. Consequences:
 
 - a process that dies at any point between the two writes cannot double-queue;
@@ -164,7 +164,7 @@ Or for one run of the server:
 restorelab serve --no-scheduler
 ```
 
-Use the global switch for what it is good at — "we are migrating the cluster
+Use the global switch for what it is good at: "we are migrating the cluster
 tonight, stop everything". To stop scheduling **one** plan, remove its
 `schedule` field, in the dashboard's plan editor or with `plan apply`. There is
 deliberately no third way: two mechanisms for the same thing would mean two
@@ -172,7 +172,7 @@ places to look when a drill did not run.
 
 ## No database, no scheduler
 
-RestoreLab works without a database — a drill runs and reports, history is
+RestoreLab works without a database: a drill runs and reports, history is
 simply not recorded. **Scheduling is the one feature that genuinely requires
 one**, and it says so rather than pretending.
 
@@ -180,7 +180,7 @@ The reason is the slot table: with nowhere to record that a slot was decided, a
 scheduler would re-decide the same slot at every tick and queue a drill every
 minute. SQLite is the default and needs no installation
 (`~/.restorelab/history.db`), so in practice this only affects an installation
-whose database is broken — where the warning is the point.
+whose database is broken, where the warning is the point.
 
 ## Reading what the scheduler did
 
@@ -191,13 +191,13 @@ restorelab schedule slots [plan]    # slot history, skipped ones included
 
 The dashboard shows the same two things: a **next drill** column on the plan
 list, and a workload's recently skipped slots on its detail page. A slot that
-was skipped is information, not a non-event — a machine reading "never
+was skipped is information, not a non-event. A machine reading "never
 tested" with no explanation is the failure mode this product exists to avoid.
 
 ## See also
 
-- [recovery-plans.md](recovery-plans.md) — the plan format, and the `schedule`
+- [recovery-plans.md](recovery-plans.md): the plan format, and the `schedule`
   field in the full reference
-- [persistence.md](persistence.md) — where slots are stored
-- [network-isolation.md](network-isolation.md) — why a scheduled drill is still
+- [persistence.md](persistence.md): where slots are stored
+- [network-isolation.md](network-isolation.md): why a scheduled drill is still
   safe to run unattended

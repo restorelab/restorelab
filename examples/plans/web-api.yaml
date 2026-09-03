@@ -1,4 +1,4 @@
-# An application recovery drill: booting is not enough — the API has to answer
+# An application recovery drill: booting is not enough. The API has to answer
 # with the right status and the right body.
 
 name: web-api

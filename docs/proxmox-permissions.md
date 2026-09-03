@@ -29,7 +29,7 @@ Then widen it when you are ready to run a real drill:
 restorelab connect https://pve.example.com:8006 --token-name drills-rw
 ```
 
-The rest of this document is what `connect` does on your behalf — read it if you
+The rest of this document is what `connect` does on your behalf. Read it if you
 would rather do it by hand, if your security policy requires reviewing it, or if
 you need to explain it to whoever owns the cluster.
 
@@ -80,7 +80,7 @@ pveum role add RestoreLabStorage --privs "Datastore.Audit,Datastore.AllocateSpac
 | `VM.Audit` | List workloads and read their configuration |
 | `VM.Backup` | Read the backup catalogue of a production workload (no write access to it) |
 | `Datastore.Audit` | List storages and their contents |
-| `Datastore.AllocateSpace` | Write the restored disks onto the target storage — **and see backup volumes at all**, see below |
+| `Datastore.AllocateSpace` | Write the restored disks onto the target storage, **and see backup volumes at all** (see below) |
 | `Sys.Audit` | Read node capacity and the bridge list, to verify isolation and free RAM |
 
 RestoreLab never needs `VM.Console`, `VM.Clone`, `Sys.Modify`, `Realm.*`,
@@ -98,7 +98,7 @@ omits the backup, with no error. This was verified against Proxmox VE 9.2.3.
 
 `Datastore.AllocateSpace` is the narrowest privilege that reveals them.
 `Datastore.Allocate` also works, but it additionally allows **deleting
-volumes** — never grant it to an account pointed at your backups.
+volumes**. Never grant it to an account pointed at your backups.
 
 So "read-only" in RestoreLab means: cannot restore, start, stop or destroy a
 workload, and cannot delete a backup. It can allocate space on a storage. If
@@ -110,7 +110,7 @@ Server: its `DatastoreAudit` token really is read-only.
 An ACL on a deeper path **replaces** the one inherited from above rather than
 adding to it. Granting a storage-specific role on `/storage/local` removes,
 for that path, whatever `/storage` was providing. Any narrower grant must
-therefore repeat every privilege that path still needs — which is why the
+therefore repeat every privilege that path still needs, which is why the
 storage role below includes `Datastore.Audit` even though `/storage` already
 granted it.
 
@@ -150,7 +150,7 @@ RestoreLab seals it with AES-256-GCM before writing anything to disk. See
 
 ## 4. Proxmox Backup Server
 
-PBS is only used for discovery and metadata in v0.1 — the restore itself is
+PBS is only used for discovery and metadata in v0.1: the restore itself is
 driven by PVE. A read-only token on the datastore is enough:
 
 ```bash

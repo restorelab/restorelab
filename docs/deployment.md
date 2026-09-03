@@ -3,7 +3,7 @@
 **You do not install RestoreLab on your Proxmox node.** It talks to the API over
 HTTPS and can run anywhere: your laptop, a container, a CI runner, a small VM.
 
-The one question worth thinking about is not *where the binary lives* — it is
+The one question worth thinking about is not *where the binary lives*. It is
 *how your checks reach the restored service*.
 
 ## Two different network needs
@@ -23,7 +23,7 @@ recovery bridge deliberately has no uplink, so a laptop on your office LAN
 cannot reach `10.99.0.14` on `vmbr99`.
 
 > "Isolated" means the guest cannot get **out**. It does not mean nothing can
-> get **in**. You need exactly one controlled path inwards — that asymmetry is
+> get **in**. You need exactly one controlled path inwards. That asymmetry is
 > the design, and it is what the `nftables` rules in
 > [network-isolation.md](network-isolation.md) enforce.
 
@@ -50,12 +50,12 @@ The drill waits for the guest agent to answer instead of waiting for an address.
 
 Requirements: `qemu-guest-agent` installed and running in the guest, and the
 agent enabled on the VM (*VM → Options → QEMU Guest Agent*). That is good
-practice anyway — it is also what gives you filesystem-consistent backups.
+practice anyway. It is also what gives you filesystem-consistent backups.
 
 ## When you do want network checks
 
-Testing the service the way a client sees it — through its listening socket, its
-TLS certificate, its HTTP stack — has real value that an in-guest command cannot
+Testing the service the way a client sees it (through its listening socket, its
+TLS certificate, its HTTP stack) has real value that an in-guest command cannot
 replace. For that you need a path into the recovery network. In order of
 preference:
 
@@ -84,7 +84,7 @@ and to remember.
 
 ### 3. On the Proxmox node itself
 
-It works — the node has an interface on the bridge. But you are putting a tool
+It works: the node has an interface on the bridge. But you are putting a tool
 that can destroy virtual machines on the hypervisor itself, which is the one
 place where a compromise costs you everything. Lab only.
 
@@ -142,7 +142,7 @@ and the container image both carry the interface; a binary produced by
 Go developer must not. `make ui` compiles it, and `make dist` depends on that,
 so a release cannot ship without one.
 
-Signing in needs an API token — `restorelab token create <name>`, read-only
+Signing in needs an API token: `restorelab token create <name>`, read-only
 unless `--operate` or `--manage` is given. It is exchanged once for a session
 cookie that lasts twelve hours and is never extended; `restorelab token revoke`
 cuts every session that token opened, at the next request.
@@ -165,7 +165,7 @@ request's `Origin` against its `Host`, and the reference is the request's own
 `Host` precisely so that there is no origin to configure and get wrong. A
 reverse proxy that rewrites `Host` to `127.0.0.1:8080` makes the browser's
 `Origin: https://restorelab.example.com` disagree with it, and **every write
-from the dashboard becomes a 403** — reads keep working, which makes it look
+from the dashboard becomes a 403**: reads keep working, which makes it look
 like a permissions bug rather than a proxy one.
 
 ```nginx

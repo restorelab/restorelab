@@ -20,7 +20,7 @@ $ restorelab runs show 94bce70d
 ```
 
 `runs show` accepts a shortened id, the way git accepts a short sha, and
-renders exactly what the live drill printed — it is the same renderer.
+renders exactly what the live drill printed: it is the same renderer.
 
 ## A broken history never fails a drill
 
@@ -37,7 +37,7 @@ RestoreLab says so once and carries on recording nothing:
 ! drill history is not being recorded: store: open ~/.restorelab/history.db: unable to open database file (14)
 ```
 
-The drill that follows is identical — same steps, same RTO, same verdict, same
+The drill that follows is identical: same steps, same RTO, same verdict, same
 cleanup. The journal does not command the operation.
 
 A test in `internal/cli` drives a whole drill through a store that fails every
@@ -68,7 +68,7 @@ that fixes it.
 
 Before applying a migration to a SQLite file that already holds history, the
 file is copied to `history.db.bak`. A fresh database has nothing to lose and
-gets no backup — a `.bak` appearing on the day of install would be alarming
+gets no backup: a `.bak` appearing on the day of install would be alarming
 for nothing.
 
 ### Keeping the two honest
@@ -88,13 +88,13 @@ not by discipline:
    same number, and a test fails if one side is missing.
 
 When a test passes on one engine and fails on the other, the fix is to correct
-the shared query — never to write a second one.
+the shared query, never to write a second one.
 
 ## Schema
 
 Six tables. `schema_migrations` tracks what has been applied.
 
-**`runs`** — one row per drill. Beyond the obvious fields it carries
+**`runs`**: one row per drill. Beyond the obvious fields it carries
 `plan_snapshot`: the plan **in full**, as it was when the drill started.
 
 That copy is not a convenience. Plans are editable now that they live in the
@@ -103,7 +103,7 @@ March describe checks that were never performed. The history would lie, on a
 tool whose entire value is that its journal can be trusted.
 
 `plan_id` and `plan_version` sit beside it and answer a different question:
-*where did this run come from*. They are provenance and nothing else — the
+*where did this run come from*. They are provenance and nothing else: the
 engine never reads them, and an ad-hoc drill has neither. `plan_id` is a
 foreign key with `ON DELETE SET NULL`, so deleting a plan unlinks its runs
 and changes nothing else about them: the name, the snapshot, the timeline,
@@ -111,39 +111,39 @@ the checks and the confidence score are identical before and after. Deleting
 a plan whose drill is in flight is equally harmless, because the worker
 executes the snapshot, never the catalogue row.
 
-`proof_level` records what the drill **established** — `NONE`, `BOOT`,
-`SERVICE` or `DATA` — beside `result`, which records how it went. `NULL` means
+`proof_level` records what the drill **established** (`NONE`, `BOOT`,
+`SERVICE` or `DATA`) beside `result`, which records how it went. `NULL` means
 the run predates the column, and that is deliberately *not* the same value as
 `NONE`: it means "not recorded", and nothing may be concluded from it in either
 direction. The confidence score reads it as unknown and caps nothing. There is
-no backfill, and there will not be one — writing a level, however cautious, for
+no backfill, and there will not be one: writing a level, however cautious, for
 a drill nobody measured would be the mirror image of the overclaiming this
 column exists to stop. See
 [architecture.md](architecture.md#the-proof-level).
 
-**`plans`** — the catalogue. `plan_yaml` holds the document **exactly as it
+**`plans`**: the catalogue. `plan_yaml` holds the document **exactly as it
 was submitted**, bytes included, so exporting a plan gives back what somebody
 wrote, comments and key order intact. `name` is unique and is the human key:
 it is what `plan apply` matches on to decide between creating and updating,
 and what `POST /recovery-runs` names to trigger a drill.
 
 `description`, `workload_id` and `provider_id` are **derived** from the
-document at write time. They exist to list and filter — "which plans cover
-workload 110" must not mean parsing fifty YAML files — and they are rewritten
+document at write time. They exist to list and filter ("which plans cover
+workload 110" must not mean parsing fifty YAML files), and they are rewritten
 on every update, in one place. The text is what carries authority; if the two
 ever disagreed, the text would be right.
 
 `version` starts at 1 and is incremented **in SQL**, not in Go: two writers
 cannot produce the same version whatever each of them read beforehand. There
 is deliberately no table of immutable plan versions. The history of a plan's
-*content* already exists — every run carries the copy it executed — and a
+*content* already exists (every run carries the copy it executed), and a
 second table recording the same fact would be a second thing to keep in step
 with the first.
 
-**`schedule_slots`** — one row per cron slot the scheduler has decided about,
+**`schedule_slots`**: one row per cron slot the scheduler has decided about,
 keyed by `(plan_id, slot_at)`. **That primary key is not bookkeeping, it is the
-safety mechanism.** A drill is not idempotent — running one twice allocates a
-second temporary VMID and can strand the first clone — so the slot row is
+safety mechanism.** A drill is not idempotent (running one twice allocates a
+second temporary VMID and can strand the first clone), so the slot row is
 written in the same transaction as the run it queues. A scheduler that dies
 between the two writes cannot double-queue, and two `serve` instances against
 one database cannot either: the second claim is simply refused.
@@ -154,13 +154,13 @@ was not tested, instead of only that it wasn't. Slots are removed with their
 plan (`ON DELETE CASCADE`), because a slot for a plan that no longer exists
 answers no question.
 
-**`run_steps`** and **`run_checks`** — the timeline and the verdicts, keyed by
+**`run_steps`** and **`run_checks`**: the timeline and the verdicts, keyed by
 `(run_id, seq)` and upserted at that position. A step is written twice, once
 running and once settled, and the second write replaces the first.
 
-**`run_events`** — the progress stream, exactly as the engine emitted it.
+**`run_events`**: the progress stream, exactly as the engine emitted it.
 `seq` is assigned by the caller rather than by a database sequence: the order
-must be emission order, not the order writes happened to land — two things
+must be emission order, not the order writes happened to land: two things
 that diverge the moment a write is retried. The REST API's SSE endpoint
 replays a reconnecting browser from this table.
 
@@ -178,7 +178,7 @@ conventions serves both engines and the translation is hidden in the store.
 | Duration | `integer` | milliseconds |
 
 The timestamp format earns its own note. It is written at **fixed width**, so
-`ORDER BY started_at DESC` — a text comparison — is a chronological sort.
+`ORDER BY started_at DESC` (a text comparison) is a chronological sort.
 Go's `time.RFC3339Nano` trims trailing zeros, which would sort `…:05.1Z` after
 `…:05.05Z` even though it is earlier: the order of the whole history, wrong.
 Forcing UTC removes the other ambiguity, since a column of mixed offsets
@@ -202,7 +202,7 @@ than an error.
 
 ## Backing it up
 
-The SQLite file is the only thing here that exists nowhere else — the cluster
+The SQLite file is the only thing here that exists nowhere else: the cluster
 can be re-drilled, the history cannot be reconstructed. It lives beside the
 config and the master key:
 

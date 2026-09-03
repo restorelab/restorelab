@@ -1,4 +1,4 @@
-# Binaries — anchored to the repo root, otherwise "restorelab" would also
+# Binaries: anchored to the repo root, otherwise "restorelab" would also
 # ignore cmd/restorelab/
 /bin/
 /dist/
@@ -10,7 +10,7 @@
 *.out
 coverage.*
 
-# Local state and secrets — never commit these
+# Local state and secrets: never commit these
 *.key
 master.key
 /config.yaml
