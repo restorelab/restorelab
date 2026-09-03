@@ -22,6 +22,14 @@ import (
 	"github.com/restorelab/restorelab/internal/store"
 )
 
+// maxCollapse bounds how many missed slots one tick will step over.
+//
+// It only matters for downtime measured in months against a frequent cron,
+// where walking every slot would cost more than the answer is worth. What is
+// left over is stepped over at the next tick, so a long outage still settles
+// in minutes rather than in one enormous pass.
+const maxCollapse = 10_000
+
 // decision is what to do about one plan's next slot.
 //
 // Skip carries a Reason and still records the slot: a slot nobody drilled is
@@ -48,11 +56,22 @@ func decide(sched *plan.Schedule, last *store.Slot, startedAt, now time.Time, gr
 		return nil
 	}
 
-	// The last decided slot is the floor, whether it ran or was skipped: a
-	// slot the scheduler has already ruled on must never be reconsidered,
-	// or a skipped one would be re-examined at every tick forever.
+	// Where to resume from. The last decided slot is the floor whenever there
+	// is one, whether it ran or was skipped: a slot already ruled on must
+	// never be reconsidered, or a skipped one would come back every tick.
+	//
+	// startedAt is the floor only for a plan with no history at all, so that
+	// a plan written today does not back-fill every slot it would have had
+	// since January.
+	//
+	// It is deliberately not the later of the two. Taking startedAt when it
+	// is more recent - a server that was off across a slot - would step over
+	// the missed slot without ever examining it, so nothing would record
+	// that it was missed. That silence is the failure this table exists to
+	// prevent: a machine nobody tested would look exactly like one nobody
+	// scheduled.
 	after := startedAt
-	if last != nil && last.SlotAt.After(after) {
+	if last != nil {
 		after = last.SlotAt
 	}
 
@@ -75,19 +94,37 @@ func decide(sched *plan.Schedule, last *store.Slot, startedAt, now time.Time, gr
 		return nil
 	}
 
+	// Advance to the most recent slot that is due, counting what is stepped
+	// over. A server that was off for a week owes one answer - "nothing ran,
+	// because nothing was running" - not one row per slot it missed, and
+	// recording them one per tick would take a week to catch up on a week of
+	// downtime.
+	//
+	// The count goes into the reason, so the single row still says how much
+	// was missed.
+	missed := 0
+	for missed < maxCollapse {
+		next := sched.Next(slot)
+		if next.After(now) {
+			break
+		}
+		slot = next
+		missed++
+	}
+
 	// Late past the grace period: skipped, and never caught up. A drill
 	// restores tens of gigabytes and occupies the storage it restores onto;
 	// one that starts in the middle of a working day because a server
 	// rebooted is an incident, not a test. Nothing about a backup is learned
 	// more usefully now than at the next slot.
 	if late := now.Sub(slot); late > grace {
-		return &decision{
-			SlotAt: slot,
-			Skip:   true,
-			Reason: fmt.Sprintf("the slot was %s late, past the %s grace period: "+
-				"a drill that starts outside its window is an incident, not a test",
-				late.Round(time.Minute), grace),
+		reason := fmt.Sprintf("the slot was %s late, past the %s grace period: "+
+			"a drill that starts outside its window is an incident, not a test",
+			late.Round(time.Minute), grace)
+		if missed > 0 {
+			reason += fmt.Sprintf(" (%d earlier slot(s) went by with it)", missed)
 		}
+		return &decision{SlotAt: slot, Skip: true, Reason: reason}
 	}
 	return &decision{SlotAt: slot}
 }

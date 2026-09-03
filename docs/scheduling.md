@@ -94,15 +94,21 @@ not a test. Nothing about a backup is learned more usefully at 09:00 than it
 would be next Sunday.
 
 The threshold is the **grace period**, two hours by default. A slot late by less
-than that runs; past it, the slot is skipped with a reason you can read:
+than that runs; past it, the slot is skipped with a reason you can read.
+
+This holds whether the server was running and merely late, or switched off
+across the slot entirely: on the next tick after it comes back, the missed slot
+is examined, found to be past its grace, and recorded. A week of downtime
+records **one** slot — the most recent missed one, whose reason counts the
+others that went by with it — rather than one row per night.
 
 ```bash
 $ restorelab schedule slots postgres-prod
-SLOT                  OUTCOME   DETAIL
-2026-09-06 03:00 UTC  skipped   the slot was 6h0m late, past the 2h grace
-                                period: a drill that starts during working
-                                hours is an incident, not a test
-2026-08-30 03:00 UTC  queued    run 4f2a9c31 - SUCCESS in 28.4s
+SLOT               OUTCOME   DETAIL
+2026-09-06 03:00   skipped   the slot was 6h0m late, past the 2h grace period:
+                             a drill that starts outside its window is an
+                             incident, not a test
+2026-08-30 03:00   queued    run 4f2a9c31
 ```
 
 The corollary is assumed: **a machine that is switched off every night will

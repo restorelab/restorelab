@@ -201,3 +201,80 @@ func TestSlotsAcrossTheSpringForward(t *testing.T) {
 		t.Fatalf("a whole day was skipped across the spring jump: %v", gap)
 	}
 }
+
+// The case the documentation puts front and centre: the server was off at
+// 03:00 and came back at 09:00.
+//
+// The missed slot must be examined and recorded as skipped. Stepping over it
+// - which is what taking the later of startedAt and the last slot did - left
+// no trace at all, so a machine nobody tested looked exactly like one nobody
+// scheduled. That silence is the whole thing the slot table exists to end.
+func TestASlotMissedWhileTheServerWasOffIsRecorded(t *testing.T) {
+	sched := mustSchedule(t, "0 3 * * *", "UTC")
+	grace := 2 * time.Hour
+
+	yesterday := time.Date(2026, 9, 2, 3, 0, 0, 0, time.UTC)
+	last := &store.Slot{SlotAt: yesterday, Outcome: store.SlotQueued}
+
+	// Restarted at 09:00 today, having missed today's 03:00 slot.
+	startedAt := time.Date(2026, 9, 3, 9, 0, 0, 0, time.UTC)
+	got := decide(sched, last, startedAt, startedAt.Add(time.Minute), grace)
+
+	if got == nil {
+		t.Fatal("decide = nil: the missed slot was never examined, so nothing records it")
+	}
+	if !got.Skip {
+		t.Fatalf("decide would run the 03:00 slot at 09:01 - that is the catch-up the design forbids")
+	}
+	want := time.Date(2026, 9, 3, 3, 0, 0, 0, time.UTC)
+	if !got.SlotAt.Equal(want) {
+		t.Fatalf("SlotAt = %v, want the missed slot %v", got.SlotAt, want)
+	}
+	if !strings.Contains(got.Reason, "grace period") {
+		t.Fatalf("Reason = %q, want it to explain the skip", got.Reason)
+	}
+}
+
+// A week of downtime owes one answer, not one row per slot: recording them
+// one per tick would take a week to catch up on a week.
+func TestAWeekOfMissedSlotsCollapsesIntoOne(t *testing.T) {
+	sched := mustSchedule(t, "0 3 * * *", "UTC")
+	grace := 2 * time.Hour
+
+	lastRan := time.Date(2026, 9, 1, 3, 0, 0, 0, time.UTC)
+	last := &store.Slot{SlotAt: lastRan, Outcome: store.SlotQueued}
+
+	// Back a week later, at 09:00.
+	startedAt := time.Date(2026, 9, 8, 9, 0, 0, 0, time.UTC)
+	got := decide(sched, last, startedAt, startedAt.Add(time.Minute), grace)
+
+	if got == nil || !got.Skip {
+		t.Fatalf("decide = %+v, want a skipped slot", got)
+	}
+	// The most recent missed slot, not the oldest: that is the one whose
+	// lateness is worth measuring.
+	want := time.Date(2026, 9, 8, 3, 0, 0, 0, time.UTC)
+	if !got.SlotAt.Equal(want) {
+		t.Fatalf("SlotAt = %v, want the most recent missed slot %v", got.SlotAt, want)
+	}
+	// And the row still says how much went by with it.
+	if !strings.Contains(got.Reason, "earlier slot(s) went by") {
+		t.Fatalf("Reason = %q, want it to count the slots stepped over", got.Reason)
+	}
+}
+
+// A slot missed by less than the grace period still runs. The collapse must
+// not turn a recoverable delay into a skip.
+func TestASlotMissedInsideTheGraceStillRuns(t *testing.T) {
+	sched := mustSchedule(t, "0 3 * * *", "UTC")
+	slot := time.Date(2026, 9, 3, 3, 0, 0, 0, time.UTC)
+	last := &store.Slot{SlotAt: slot.AddDate(0, 0, -1), Outcome: store.SlotQueued}
+
+	got := decide(sched, last, slot.Add(-time.Hour), slot.Add(time.Hour), 2*time.Hour)
+	if got == nil || got.Skip {
+		t.Fatalf("decide = %+v, want the slot to run", got)
+	}
+	if !got.SlotAt.Equal(slot) {
+		t.Fatalf("SlotAt = %v, want %v", got.SlotAt, slot)
+	}
+}
