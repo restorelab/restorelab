@@ -15,6 +15,7 @@ import (
 	"github.com/restorelab/restorelab/internal/config"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/report"
+	"github.com/restorelab/restorelab/internal/scheduler"
 	"github.com/restorelab/restorelab/internal/store"
 	"github.com/restorelab/restorelab/internal/ui"
 	"github.com/restorelab/restorelab/internal/worker"
@@ -49,6 +50,10 @@ two processes, one history.
     restorelab serve --no-listen                        (the worker alone)
     restorelab serve --no-worker --worker-elsewhere     (the API alone)
 
+A process that runs the worker also queues the drills stored plans schedule
+for themselves. Use --no-scheduler to stop that for one night without
+touching any plan; see ` + "`restorelab schedule list`" + ` for what is coming.
+
 Listening anywhere but loopback needs at least one API token, created with
 ` + "`restorelab token create <name>`" + `. Put TLS in front of it with a
 reverse proxy.`,
@@ -66,6 +71,8 @@ reverse proxy.`,
 		"execute drills without serving the API")
 	f.BoolVar(&opts.workerElsewhere, "worker-elsewhere", false,
 		"confirm that another process runs the worker against the same database (required with --no-worker)")
+	f.BoolVar(&opts.noScheduler, "no-scheduler", false,
+		"do not queue the drills stored plans schedule for themselves")
 	return cmd
 }
 
@@ -81,6 +88,10 @@ type serveOptions struct {
 	// machine leaves no trace until it claims something - so the honest
 	// design is to make the claim explicit rather than to guess.
 	workerElsewhere bool
+	// noScheduler stops this process queueing scheduled drills. It is the
+	// switch for "we are migrating the cluster tonight, stop everything";
+	// stopping one plan is done by removing its schedule.
+	noScheduler bool
 }
 
 // check refuses the two shapes of process that cannot do their job.
@@ -200,6 +211,35 @@ func (a *app) serve(ctx context.Context, opts serveOptions) error {
 			fmt.Fprintf(a.out, "%s executing drills, not serving the API\n", a.ok())
 		}
 		fmt.Fprintf(a.out, "  worker: %d drill(s) at a time\n", wk.Concurrency())
+	}
+
+	// The scheduler goes beside the worker, on the same context and the same
+	// wait group: a process that stops waits for it exactly as it waits for
+	// a drill in flight.
+	//
+	// It is tied to the worker on purpose. A process that queues scheduled
+	// drills without draining them fills a queue nobody empties, which is
+	// the same reasoning --no-worker already carries for the API.
+	if !opts.noWorker && !opts.noScheduler && cfg.SchedulerEnabled() {
+		sch, err := scheduler.New(scheduler.Options{
+			Store:  history,
+			Config: cfg,
+			Logger: a.runLogger(),
+		})
+		if err != nil {
+			return err
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := sch.Run(ctx); err != nil {
+				fmt.Fprintf(a.err, "%s scheduler stopped: %v\n", a.warn(), err)
+			}
+		}()
+		fmt.Fprintf(a.out, "  scheduler: on, %s grace for a late slot\n", sch.GracePeriod())
+	} else if !cfg.SchedulerEnabled() {
+		fmt.Fprintf(a.out, "  %s\n", a.paint(colorDim,
+			"scheduler off in the configuration: plans keep their schedule, nothing acts on it"))
 	}
 
 	if opts.noListen {
@@ -332,6 +372,7 @@ func serveAPIOptions(history store.Store, cfg *config.Config, provs api.Provider
 		Tokens:    history,
 		Sessions:  history,
 		Plans:     history,
+		Schedules: history,
 		Providers: provs,
 		Config:    cfg,
 		Weights:   report.DefaultWeights(),
