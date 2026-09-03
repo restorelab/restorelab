@@ -127,14 +127,14 @@ RESTORING                    then harden it (network rewrite, limits, metadata)
 STARTING
   ↓ wait_for_guest         poll status until powered on and addressable
 WAITING_FOR_GUEST
-  ↓ run_checks             ping / tcp / http / dns, with retries
+  ↓ run_checks             cmd (in-guest) / tcp / http / dns / ping, with retries
 RUNNING_CHECKS
   ↓ generate_report
 GENERATING_REPORT
   ↓ cleanup                stop + delete, on a detached context
 CLEANING_UP
   ↓
-SUCCESS | DEGRADED | FAILED | CLEANUP_FAILED
+SUCCESS | DEGRADED | FAILED | INCONCLUSIVE | CLEANUP_FAILED
 ```
 
 **RTO** is measured from the start of the run to the end of the checks. Cleanup
@@ -144,6 +144,24 @@ of the recovery a business would experience.
 **Grading**: every critical check passed and the RTO target met → `SUCCESS`;
 recovered but a non-critical check failed or the RTO target was exceeded →
 `DEGRADED`; a step failed or a critical check failed → `FAILED`.
+
+A fourth ending exists for the case where the drill reached no verdict at all:
+the workload restored and booted, but a critical check **could not be
+evaluated** → `INCONCLUSIVE`, carrying no result. It is a distinct ending
+because RestoreLab isolates the recovery network on purpose, so a `tcp:`,
+`http:`, `dns:` or `ping` check dialled from wherever RestoreLab runs comes
+back silent unless the operator arranged a route. That silence is a fact about
+the operator's topology, not about their backup. Grading it `FAILED` would
+charge a workload's confidence score for where it was tested from, and a
+report nobody can trust is worth less than no report — the same reasoning that
+already makes a cancelled run carry no verdict.
+
+Because that ending has to be reachable, the check layer distinguishes "the
+target answered, badly" from "nothing answered": `internal/checks/reachability.go`
+classifies by errno rather than by message text, per platform. Windows forced
+that — there, `net.Error.Timeout()` reports false for `WSAETIMEDOUT`, the
+portable `syscall.ECONNREFUSED` is a placeholder that never matches a real
+dial, and the message strings are localised.
 
 ## Retries
 

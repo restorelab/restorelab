@@ -415,7 +415,7 @@ Lists the drill history. Every parameter is optional:
 | Parameter | Meaning |
 | --- | --- |
 | `workload` | only runs against this source workload id |
-| `state` | one of `QUEUED`, `DISCOVERING_BACKUP`, `PREPARING_ENVIRONMENT`, `RESTORING`, `STARTING`, `WAITING_FOR_GUEST`, `RUNNING_CHECKS`, `GENERATING_REPORT`, `CLEANING_UP`, `SUCCESS`, `FAILED`, `CANCELLED`, `CLEANUP_FAILED` |
+| `state` | one of `QUEUED`, `DISCOVERING_BACKUP`, `PREPARING_ENVIRONMENT`, `RESTORING`, `STARTING`, `WAITING_FOR_GUEST`, `RUNNING_CHECKS`, `GENERATING_REPORT`, `CLEANING_UP`, `SUCCESS`, `FAILED`, `CANCELLED`, `CLEANUP_FAILED`, `INCONCLUSIVE` |
 | `result` | `SUCCESS`, `DEGRADED` or `FAILED` |
 | `since` | `30d`, `12h`, a date (`2026-08-01`), or a full RFC 3339 instant |
 | `limit` | page size, default 50, capped at 200 |
@@ -456,7 +456,7 @@ anything that would rather poll.
 
 ```
 $ curl -H "Authorization: Bearer rl_..." "https://restorelab.example.com/api/v1/recovery-runs/94bce70d/events?after=12"
-{"items":[{"seq":13,"at":"2026-09-01T02:45:02Z","state":"RUNNING_CHECKS","step":"tcp:22","status":"done","message":"reachable"}]}
+{"items":[{"seq":13,"at":"2026-09-01T02:45:02Z","state":"RUNNING_CHECKS","step":"hostname","status":"done","message":"web-01"}]}
 ```
 
 One endpoint serves two representations, chosen by `Accept`. Send
@@ -618,7 +618,7 @@ same drill.
 | `workload_id` | **required** in this form — the source workload to recovery-test |
 | `provider` | provider id; the configured default when omitted |
 | `backup` | a specific restore point; the most recent one when omitted |
-| `checks` | shorthand specs: `tcp:22`, `ping`, `dns:name`, `cmd:...`, or an `http(s)://` URL. Defaults to `tcp:22` |
+| `checks` | shorthand specs: `tcp:22`, `ping`, `dns:name`, `cmd:...`, or an `http(s)://` URL. Defaults to `cmd:hostname`, which runs inside the guest and needs no route into the isolated recovery network. A network check that cannot reach the guest ends the run `INCONCLUSIVE`, not `FAILED` |
 | `network` | network profile to restore onto; the configured default when omitted |
 | `node`, `storage`, `pool` | where the temporary workload lands |
 | `rto_target` | a duration such as `5m`; the run is graded against it |
@@ -628,7 +628,7 @@ same drill.
 $ curl -i -X POST \
     -H "Authorization: Bearer rl_..." \
     -H "Content-Type: application/json" \
-    -d '{"workload_id":"110","checks":["tcp:22"],"rto_target":"5m"}' \
+    -d '{"workload_id":"110","checks":["cmd:systemctl is-active ssh"],"rto_target":"5m"}' \
     https://restorelab.example.com/api/v1/recovery-runs
 HTTP/1.1 201 Created
 Location: /api/v1/recovery-runs/94bce70d-36c1-470c-b02f-1fa17b6d7714
@@ -923,7 +923,7 @@ Three event types, and the difference between two of them matters:
 | Event | Meaning |
 | --- | --- |
 | `progress` | one journal entry. `data` is exactly the JSON object the polling representation returns, and `id` is its `seq`. |
-| `done` | the run reached a terminal state. `data` carries it: `SUCCESS`, `FAILED`, `CANCELLED` or `CLEANUP_FAILED`. The drill is over. |
+| `done` | the run reached a terminal state. `data` carries it: `SUCCESS`, `FAILED`, `CANCELLED`, `CLEANUP_FAILED` or `INCONCLUSIVE`. The drill is over. |
 | `disconnected` | **this connection** is ending — the server is shutting down. The drill is not over. |
 
 A lone `: heartbeat` comment goes out after fifteen seconds of silence, so a

@@ -277,7 +277,16 @@ recovery network?
 | `SUCCESS` | Every critical check passed and the RTO target was met |
 | `DEGRADED` | Recovered, but a non-critical check failed or the RTO target was exceeded |
 | `FAILED` | A workflow step failed, or a critical check failed |
+| `INCONCLUSIVE` | The workload restored and booted, but a critical check could not be evaluated at all — so the drill reached no verdict. It carries **no** result and does not count against the workload's confidence score |
 | `CLEANUP_FAILED` | The drill finished but the temporary workload could not be destroyed — needs manual attention, with the node and VMID named in the error |
+
+`INCONCLUSIVE` exists because "I could not tell" is not the same news as "your
+backup is broken", and a tool that confuses the two stops being worth
+believing. The usual cause is a `tcp:`, `http:`, `dns:` or `ping` check
+dialling a guest that the machine running RestoreLab has no route to — which
+is the normal state of affairs, since the recovery bridge is isolated on
+purpose. A check that failed for that reason says nothing about the backup,
+so the run says nothing either.
 
 ### Choosing checks for an isolated drill
 
@@ -307,6 +316,22 @@ The same applies to anything that reaches outward: a health endpoint that
 calls a payment API or a message broker will fail in isolation for reasons
 that have nothing to do with your backup. Test what the workload *is*, not
 what it can reach.
+
+The same reasoning applies from the other direction, and it decides which
+*kind* of check to write. `command` checks run inside the guest, through the
+hypervisor's guest agent — the same path RestoreLab already used to restore
+and boot the workload — so they work no matter where RestoreLab is installed.
+`tcp`, `http`, `dns` and `ping` checks dial the guest from wherever RestoreLab
+runs, and the recovery bridge is built so that nothing can do that. They are
+worth using when you have deliberately arranged a route into the recovery
+network (RestoreLab on the node itself, or a routed isolated VLAN), because
+they test something an in-guest check cannot see: that the guest reconfigured
+its own network and a service is reachable as a service. Everywhere else they
+cannot run, and a drill that cannot run its critical checks ends
+`INCONCLUSIVE`.
+
+This is also why an ad-hoc drill with no `--check` runs `cmd:hostname`: it is
+a small claim, but it is one that holds on every installation.
 
 ## Stored plans
 

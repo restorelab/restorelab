@@ -236,7 +236,7 @@ then watch it live:
 
 ```bash
 curl -X POST -H "Authorization: Bearer rl_..." -H "Content-Type: application/json" \
-     -d '{"workload_id":"110","checks":["tcp:22"]}' \
+     -d '{"workload_id":"110","checks":["cmd:systemctl is-active ssh"]}' \
      http://127.0.0.1:8080/api/v1/recovery-runs
 
 curl -N -H "Authorization: Bearer rl_..." -H "Accept: text/event-stream" \
