@@ -7,6 +7,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/restorelab/restorelab/internal/crypto"
 )
@@ -346,5 +349,42 @@ func TestSaveLeavesNoTempFile(t *testing.T) {
 			names[i] = e.Name()
 		}
 		t.Fatalf("directory contains unexpected entries after Save: %v", names)
+	}
+}
+
+// An absent scheduler block must mean enabled. A plain bool would have made
+// the zero value "disabled", and every configuration written before the
+// scheduler existed would have silently stopped drilling.
+func TestSchedulerIsEnabledWhenTheBlockIsAbsent(t *testing.T) {
+	var c Config
+	if err := yaml.Unmarshal([]byte("version: 1\n"), &c); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !c.SchedulerEnabled() {
+		t.Fatal("a config with no scheduler block must still schedule")
+	}
+}
+
+func TestSchedulerCanBeTurnedOff(t *testing.T) {
+	var c Config
+	if err := yaml.Unmarshal([]byte("version: 1\nscheduler:\n  enabled: false\n"), &c); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if c.SchedulerEnabled() {
+		t.Fatal("enabled: false must turn the scheduler off")
+	}
+}
+
+func TestSchedulerReadsItsDurations(t *testing.T) {
+	var c Config
+	doc := "version: 1\nscheduler:\n  grace_period: 30m\n  max_queue_depth: 12\n"
+	if err := yaml.Unmarshal([]byte(doc), &c); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if c.Scheduler.GracePeriod != 30*time.Minute {
+		t.Fatalf("GracePeriod = %v, want 30m", c.Scheduler.GracePeriod)
+	}
+	if c.Scheduler.MaxQueueDepth != 12 {
+		t.Fatalf("MaxQueueDepth = %d, want 12", c.Scheduler.MaxQueueDepth)
 	}
 }

@@ -7,6 +7,8 @@
 package config
 
 import (
+	"time"
+
 	"github.com/restorelab/restorelab/internal/core"
 )
 
@@ -18,6 +20,35 @@ type Config struct {
 	Limits    Limits             `yaml:"limits"`
 	Defaults  Defaults           `yaml:"defaults"`
 	Database  Database           `yaml:"database,omitempty"`
+	Scheduler Scheduler          `yaml:"scheduler,omitempty"`
+}
+
+// Scheduler governs the drills stored plans queue for themselves.
+//
+// Every field has a working default, so the block is absent from most
+// configurations - and its absence means scheduling is on. An installation
+// that upgrades into a version with a scheduler should start honouring the
+// schedules its plans already carry.
+type Scheduler struct {
+	// Enabled is a pointer so that an absent block means enabled while
+	// "enabled: false" means off. A plain bool would make the zero value
+	// "disabled", and every existing configuration would silently stop
+	// drilling the day this field shipped.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// GracePeriod is how late a slot may be and still run. Past it the slot
+	// is skipped and recorded. Zero means the scheduler's own default.
+	GracePeriod time.Duration `yaml:"grace_period,omitempty"`
+
+	// MaxQueueDepth caps the queue the scheduler will add to, so that a
+	// dozen plans due at the same minute cannot push the last of them into
+	// the working day. Zero means the scheduler's own default.
+	MaxQueueDepth int `yaml:"max_queue_depth,omitempty"`
+}
+
+// SchedulerEnabled reports whether scheduled drills should run.
+func (c *Config) SchedulerEnabled() bool {
+	return c.Scheduler.Enabled == nil || *c.Scheduler.Enabled
 }
 
 // Database says where the drill history is kept.
