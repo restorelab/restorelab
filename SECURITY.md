@@ -2,15 +2,17 @@
 
 ## Supported versions
 
-RestoreLab is in alpha. Only the latest `main` and the most recent tagged
+RestoreLab is in alpha. Only the tip of `master` and the most recent tagged
 release receive security fixes.
 
 ## Reporting a vulnerability
 
 **Do not open a public issue.**
 
-Use GitHub's private vulnerability reporting on this repository
-(*Security → Report a vulnerability*), or email the maintainer.
+Use GitHub's private vulnerability reporting on this repository:
+**Security → Report a vulnerability**. It is the only channel, and it is
+deliberately the only one - a report that arrives there is private, threaded,
+and cannot be lost in a mailbox.
 
 Please include:
 
