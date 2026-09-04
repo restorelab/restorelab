@@ -189,10 +189,12 @@ never the reverse:
 - everything else proves `service`: every other command, and every `tcp`,
   `http` and `dns` check.
 
-**`data` is only ever claimed by a declaration.** RestoreLab cannot tell from
-outside that `psql -tAc 'select count(*) from orders'` reads a row rather than
-pokes a socket, and guessing that it does is exactly how a dashboard ends up
-claiming more than the drill established.
+**`data` is claimed by a declaration, or earned by a measurement.** RestoreLab
+cannot tell from outside that `psql -tAc 'select count(*) from orders'` reads a
+row rather than pokes a socket, and guessing that it does is exactly how a
+dashboard ends up claiming more than the drill established. So either you say
+so, or the check proves it by reading a number and holding it to a bound you
+declared: see [`capture`, `assert` and `drift`](#capture-assert-and-drift).
 
 ```yaml
 - type: command
@@ -208,6 +210,89 @@ check that RestoreLab would otherwise have read as a service check.
 Values are case-insensitive. An unknown one fails validation when the plan is
 written (`plan validate`, `plan apply`, or loading the file for a run), never
 silently at three in the morning.
+
+### `capture`, `assert` and `drift`
+
+`exit 0` proves a process ran. `select 1` proves PostgreSQL started. **An
+empty, perfectly restored database passes both**, and a drill that says
+`SUCCESS` about it is worse than no drill: it is a reason to stop looking.
+
+These three fields are how a check reads a number out of the restored workload
+and says what would be wrong with it.
+
+```yaml
+- type: command
+  name: orders
+  run: psql -tAc 'select count(*) from orders'
+  capture: rows
+  assert:
+    min: 1
+  drift:
+    max_drop: 10%
+```
+
+They are separable, and the separation is the point.
+
+**`capture`** names a number. The check's trimmed output is read as one, and
+recorded against the run under that name. Nothing else happens. A measurement
+is worth keeping whether or not anybody has decided yet what it should be.
+
+Numbers only. A check that wants to assert a word already has `expect` and
+`stdout_matches`, and there is no useful sense in which `active` drifted from
+`inactive`. Output that is not a single number, or that is `NaN` or `Inf`,
+fails the check rather than being recorded as something to compare against
+later.
+
+**`assert`** is a bound you vouch for: `min`, `max`, `equals`, inclusive, and
+you can give more than one. Violating it fails the check, and the message
+names the bound and what was actually read. You wrote `min: 1` to say this
+table is never empty; when it is empty, that counts.
+
+**`drift`** is a bound relative to the past. `max_drop` accepts `10%` or a
+bare number for an absolute figure. Violating it fails the check the same way,
+for the same reason: you declared the tolerance.
+
+A **rise is never a drift violation**. `max_drop` is a floor, not a band, and
+a table that grew is not a failed recovery.
+
+#### The baseline
+
+Drift compares against the **median of the last five values** captured under
+the same name, by the same check, for the same workload. Runs that reached no
+verdict do not contribute: a drill nobody could evaluate is not evidence in
+either direction.
+
+A median rather than the previous value, and the difference matters. The
+previous value ratchets: a collapse from 1 204 331 to 0 fails once, and the
+next drill compares 0 against 0, finds no drop, and passes. **The empty
+database would become the new normal on the second night**, which is exactly
+when everybody stops paying attention. A mean has the mirror problem, where
+one reading taken mid-batch-job poisons the baseline for as long as it stays
+in the window.
+
+**No history means no drift verdict.** A workload's first drill, or one run
+against a broken history database, evaluates `assert` normally and reports the
+drift part as skipped, with the reason. A check that could not be evaluated
+has never been a failure in this product.
+
+#### What it earns
+
+**A check that captures a value and holds it to a declared bound reaches
+`data` on its own**, with no `proves: data` needed. It read a number out of
+the restored workload and that number was what you said it must be, which is
+what the level means.
+
+A bare `capture` with no bound does not. Reading a number proves you read a
+number.
+
+#### What is not here
+
+RestoreLab does **not** run your command against the live source workload to
+compare. That would be a better reference than a historical trend, and it is
+deliberately absent: it would mean executing an operator-supplied command on a
+production machine, and today this product touches production through
+read-only API calls and nothing else. That boundary is most of why it can be
+deployed without a conversation with a change board.
 
 ### `ping`
 

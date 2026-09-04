@@ -37,6 +37,7 @@ story:
 | it was the workload's first verdict | nothing to compare against, but the baseline is now set |
 | the workload stopped being evaluable | the first drill that reached no verdict after one that did. A workload whose drills cannot be evaluated is not being verified at all |
 | it became evaluable again | whatever the verdict is. Being able to see the workload again is the news |
+| a captured value fell to zero | a workload that restores, boots and answers, holding an empty database. Only zero from a non-zero baseline: see below |
 
 ## When it stays silent
 
@@ -64,6 +65,23 @@ not empty that pile into it. Those runs are marked as considered and passed
 over: a drill from last month is not an alert, it is archaeology, and the
 dashboard is where that belongs. A dispatcher that was down overnight still
 catches up on everything that mattered.
+
+### Why only zero
+
+A [captured value](recovery-plans.md#capture-assert-and-drift) that trips a
+bound you declared already fails its check, which changes the verdict, which
+is announced by the first row of that table. A second message would say the
+same thing twice.
+
+What is left is drift nobody declared a tolerance for, and there RestoreLab
+has no agreed threshold. Picking one, and deciding on your behalf that losing
+a fifth of a table is worth waking you up, is how a channel starts crying
+wolf. Zero from a non-zero baseline needs no agreed threshold: a database that
+had 1 204 331 rows last night and has none tonight is not a judgement call.
+
+A value that merely halved, with no tolerance declared, produces nothing. Say
+what you consider wrong with `drift.max_drop` and it becomes a verdict, which
+is announced like any other.
 
 ## The message
 

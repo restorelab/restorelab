@@ -86,6 +86,7 @@ internal/
     diag                doctor's readiness checks, as data (Level, Finding, Report)
     api                 the HTTP API: routing, auth and scopes, pagination, SSE, problem+json
     worker              the queue loop: claim, execute, renew, release, reconcile
+    notify              what changed about a workload, and who gets told
     cli                 cobra commands
     version             build metadata
 ```
@@ -117,7 +118,13 @@ second implementation would have become a second answer:
   launched by a cron and one launched from the dashboard must obey the same
   guards.
 
-Planned, not yet present: `notifications`, `audit`, `probe`.
+- **`notify`** decides when the product has something worth saying and
+  delivers it. Like `scheduler` it observes and cannot act: its `Options` hold
+  no provider and no engine, so adding alerts added no destructive surface
+  either. It claims each terminal run with a conditional UPDATE, which is the
+  whole of its concurrency story.
+
+Planned, not yet present: `audit`, `probe`.
 
 ## The recovery workflow
 
@@ -191,7 +198,7 @@ way for a backup-verification tool to fail.
 | `NONE` | nothing: the drill never ran code inside the guest | `startup.skip`, an agent that never answered, a run that ended before its checks |
 | `BOOT` | the OS started and executes code | the guest agent answered, or a trivial in-guest command passed |
 | `SERVICE` | a service started with its real configuration and its real data | any non-trivial check that passed: a `command`, or a `tcp`/`http`/`dns` probe |
-| `DATA` | the data is there and coherent | a passing check declaring `proves: data` in the plan |
+| `DATA` | the data is there and coherent | a passing check declaring `proves: data`, or one that captured a number and held it to a bound the plan declared |
 
 The ladder is ordered by **what is proven, not by what it costs to arrange**.
 A passing `tcp:5432` proves a service listens, no more and no less, and it does
@@ -209,8 +216,21 @@ passing. Never by power state alone.
 
 Where a single check's level comes from is a plan question, documented in
 [recovery-plans.md](recovery-plans.md#proves): declared with `proves:`, or
-deduced by a rule that only ever understates. `DATA` is never deduced: no
-amount of reading a command line tells you it looked at a row.
+deduced by a rule that only ever understates.
+
+`DATA` is never deduced **from a command line**: no amount of reading
+`psql -tAc '...'` tells you it looked at a row rather than poked a socket. It
+is reached two ways, and both are the operator saying something. Either they
+declare `proves: data`, or the check reads a number out of the workload and
+holds it to a bound they wrote, which is a stronger statement than the
+declaration because the product watched it come true. That second route is
+documented in
+[recovery-plans.md](recovery-plans.md#capture-assert-and-drift).
+
+A drift tolerance on its own does not reach `DATA`, and the asymmetry is
+deliberate: drift is only evaluated when there is a history to compare
+against, so a workload's first drill skips it. A level that varied with how
+many rows another table happened to hold would not be a level.
 
 ### The ceiling on the confidence score
 
@@ -298,8 +318,8 @@ it would destroy the temporary workload of a live restore.
 | --- | --- |
 | v0.1 | Proxmox VE + PBS, QEMU VMs, CLI drill, isolated restore, ping/tcp/http checks, cleanup, text/JSON/HTML report |
 | v0.2 | **The web interface**: watching drills live, launching and cancelling them, editing the plan catalogue, and a first-run setup that replaces the install commands. Shipped alongside it, earlier than this list planned: **scheduled drills** and **the proof level** |
-| v0.3 | **Alerts** to Discord, Slack or a webhook, on what changed rather than on every run. **Value assertions and drift detection**. Ready-made **PostgreSQL and MySQL check recipes** |
-| v0.4 | Multi-workload plans, dependencies, restore ordering, parallel restores |
+| v0.3 | **Alerts** to Discord, Slack or a webhook, on what changed rather than on every run. **Value assertions and drift detection**: a check reads a number out of the restored workload and is held to a bound, which is how `DATA` stops being a promise and becomes evidence |
+| v0.4 | Ready-made **PostgreSQL and MySQL check recipes**, and plan discovery: RestoreLab looks inside the guest on a first drill and proposes a plan. Multi-workload plans, dependencies, restore ordering, parallel restores |
 | v0.5 | Remote probes, RBAC, OIDC, PDF reports |
 | v0.6 | LXC, multi-cluster, multiple PBS, capacity checks |
 
@@ -311,8 +331,10 @@ that stands between someone and their first drill is a reason they never run
 one. The CLI keeps every capability: it is what automation drives, and it is
 the only place that touches the master key.
 
-The v0.3 line used to read "SSH / PostgreSQL / MySQL checks". Nothing has been
-dropped, but the form has changed and it is worth saying why. **The tools are
+The v0.3 line used to read "SSH / PostgreSQL / MySQL checks", and the recipes
+that replaced those words are now on the v0.4 line. Nothing has been dropped,
+but both the form and the date changed, and a table that quietly rewrites
+itself is worth less than one that says so. **The tools are
 already inside the backup.** A PostgreSQL server contains `psql`, and a
 [`command`](recovery-plans.md#command) check runs it inside the restored guest
 over the same out-of-band channel that drove the restore, authenticating

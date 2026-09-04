@@ -79,9 +79,18 @@ nothing about the service or the data. So every run records a proof level
 (`NONE`, `BOOT`, `SERVICE` or `DATA`), the reports print it beside the verdict,
 and it is a **ceiling** on the confidence score rather than a footnote: 60 for
 a drill that only verified the boot, 85 for one that verified the service, 100
-only where a check declared `proves: data`. A dashboard of reassuring green
-that proves nothing is the most dangerous way for a tool like this to fail.
+only where a check declared `proves: data` or **earned it by measurement**. A
+dashboard of reassuring green that proves nothing is the most dangerous way for
+a tool like this to fail.
 See [docs/recovery-plans.md](docs/recovery-plans.md#proves).
+
+**And a drill can now prove the data is there.** A check reads a number out of
+the restored workload, and you say what would be wrong with it:
+`min: 1` for a table that is never empty, `max_drop: 10%` against what previous
+drills measured. A value with a bound on it reaches `DATA` on its own, without
+being declared, because the product watched it come true. A reference typed
+into a plan would be stale in three days, so the reference is the history. See
+[docs/recovery-plans.md](docs/recovery-plans.md#capture-assert-and-drift).
 
 Two things in the list below are implemented and unit-tested but have never
 run against real infrastructure, because the cluster this was built on has
@@ -113,7 +122,9 @@ been driven against a live Proxmox VE 9 cluster.
 | Writing the plan catalogue in the browser, validated by the binary as you type | done |
 | First-run setup in the browser, replacing the install commands | done |
 | Scheduled drills: a plan's cron queues its own drills, unattended | done |
-| SSH / PostgreSQL / MySQL checks, notifications | next |
+| Alerts to Discord, Slack or a webhook, on what changed rather than on every run | done |
+| Value assertions and drift: a check reads a number and is held to a bound you declared | done |
+| Ready-made PostgreSQL and MySQL check recipes, plan discovery | next |
 | Remote probes, RBAC, OIDC | planned |
 
 ## Quick start
@@ -344,8 +355,8 @@ A tool whose whole job is to tell you whether your backups are recoverable has
 to be worth believing. So rather than a claim that it is carefully built, here
 is what can be checked:
 
-- **765 Go tests and 230 front-end tests**: 25,517 lines of Go test code
-  against 27,192 lines of Go, close to one for one;
+- **952 Go tests and 259 front-end tests**: 31,222 lines of Go test code
+  against 33,304 lines of Go, close to one for one;
 - the persistence layer runs **the same conformance suite against SQLite and
   PostgreSQL**, because two engines behind one set of queries drift apart
   otherwise;
