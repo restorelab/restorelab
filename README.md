@@ -331,6 +331,8 @@ global administrator rights.
 | [docs/deployment.md](docs/deployment.md) | Where to run RestoreLab, and how checks reach the guest |
 | [docs/configuration.md](docs/configuration.md) | Config file, providers, network profiles, limits |
 | [docs/recovery-plans.md](docs/recovery-plans.md) | Plan reference and every check type |
+| [docs/scheduling.md](docs/scheduling.md) | Drilling on a cron, and what happens to a slot nobody ran |
+| [docs/notifications.md](docs/notifications.md) | Alerts to Discord, Slack or a webhook, and when they stay quiet |
 | [docs/network-isolation.md](docs/network-isolation.md) | Building the isolated bridge, why it matters |
 | [docs/proxmox-permissions.md](docs/proxmox-permissions.md) | Dedicated service account and least privilege |
 | [docs/security.md](docs/security.md) | Threat model, secret handling, audit |

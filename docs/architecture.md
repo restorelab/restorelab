@@ -298,7 +298,7 @@ it would destroy the temporary workload of a live restore.
 | --- | --- |
 | v0.1 | Proxmox VE + PBS, QEMU VMs, CLI drill, isolated restore, ping/tcp/http checks, cleanup, text/JSON/HTML report |
 | v0.2 | **The web interface**: watching drills live, launching and cancelling them, editing the plan catalogue, and a first-run setup that replaces the install commands. Shipped alongside it, earlier than this list planned: **scheduled drills** and **the proof level** |
-| v0.3 | SSH / PostgreSQL / MySQL checks, Discord & Slack alerts |
+| v0.3 | **Alerts** to Discord, Slack or a webhook, on what changed rather than on every run. **Value assertions and drift detection**. Ready-made **PostgreSQL and MySQL check recipes** |
 | v0.4 | Multi-workload plans, dependencies, restore ordering, parallel restores |
 | v0.5 | Remote probes, RBAC, OIDC, PDF reports |
 | v0.6 | LXC, multi-cluster, multiple PBS, capacity checks |
@@ -310,6 +310,27 @@ team, not only by whoever is comfortable in a terminal, and every command
 that stands between someone and their first drill is a reason they never run
 one. The CLI keeps every capability: it is what automation drives, and it is
 the only place that touches the master key.
+
+The v0.3 line used to read "SSH / PostgreSQL / MySQL checks". Nothing has been
+dropped, but the form has changed and it is worth saying why. **The tools are
+already inside the backup.** A PostgreSQL server contains `psql`, and a
+[`command`](recovery-plans.md#command) check runs it inside the restored guest
+over the same out-of-band channel that drove the restore, authenticating
+through the local socket:
+
+```yaml
+- type: command
+  run: psql -tAc 'select count(*) from orders'
+  proves: data
+```
+
+A native `postgres:` check would need a stored credential per workload, a
+driver dependency per engine, and a route into the isolated recovery network
+that this architecture removes on purpose. It would buy all that to prove less
+than the four lines above. What people want when they ask for PostgreSQL checks
+is not to have to write those four lines, and that is a catalogue of recipes:
+versioned YAML, no dependency, no network prerequisite. Same destination, and
+it arrives without dismantling the isolation.
 
 Delivered ahead of that order: persistence (SQLite and PostgreSQL), the HTTP
 API, the queue and worker behind its write paths, stored recovery plans,
