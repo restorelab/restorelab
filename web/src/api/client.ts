@@ -136,14 +136,19 @@ export function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /**
- * POST or DELETE.
+ * POST, PUT or DELETE, with a JSON body.
  *
  * The browser sends Origin on its own, and the API's CSRF guard compares it to
  * Host - which is why the dev-server proxy has to rewrite that header. Nothing
  * to set here.
+ *
+ * PUT is here for the notification channels, the one JSON resource this
+ * dashboard edits in place. The catalogue's PUT goes through apiSendText
+ * instead, because a plan's body is the YAML document itself rather than a
+ * JSON envelope around it.
  */
 export function apiSend<T>(
-  method: "POST" | "DELETE",
+  method: "POST" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
 ): Promise<T> {

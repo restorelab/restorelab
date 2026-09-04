@@ -6,7 +6,8 @@
       "drills": "Drills",
       "workloads": "Workloads",
       "doctor": "Diagnostics",
-      "plans": "Plans"
+      "plans": "Plans",
+      "settings": "Settings"
     },
     "signOut": "Sign out",
     "theme": "Toggle theme"

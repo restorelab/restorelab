@@ -500,3 +500,60 @@ export interface ScheduledPlan {
   error?: string
   last_slot?: Slot
 }
+
+// ------------------------------------------------------------- notifications
+
+/**
+ * The three channel kinds this product can render for.
+ *
+ * A list rather than a bare union so the settings form can build its options
+ * from the same source the type comes from: a fourth kind added to the Go
+ * registry is then one line here, not two.
+ */
+export const NOTIFICATION_KINDS = ["discord", "slack", "webhook"] as const
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number]
+
+/**
+ * A configured notification channel.
+ *
+ * There is no `url`, and there is not going to be one. The API refuses to
+ * hand a webhook URL back in any response, truncated or starred out, because
+ * the URL is the credential: whoever holds it can post into that channel with
+ * no second factor. `host` is what an operator gets instead, and it is enough
+ * to tell two channels apart.
+ *
+ * `kind` is a plain string rather than NotificationKind on purpose. The API
+ * validates the kind on the way in, but a configuration file edited by hand
+ * does not go through the API, so a listing can carry a kind this build has
+ * never heard of. Narrowing it here would make the type lie about that case
+ * instead of letting the screen render it.
+ *
+ * The four last_* fields are the channel's health, read off its most recent
+ * delivery. last_state travels beside last_error because a pending delivery
+ * that will be retried in thirty seconds carries an error too, and painting
+ * that as a dead channel would be an overstatement in the other direction.
+ */
+export interface NotificationChannel {
+  id: string
+  kind: string
+  host: string
+  enabled: boolean
+  last_state?: string
+  last_sent?: string
+  last_status?: number
+  last_error?: string
+}
+
+/**
+ * What one deliberate test message produced.
+ *
+ * `status` is the far end's own answer, not RestoreLab's: Discord replies 204
+ * and Slack replies 200, and somebody who has never seen this path fire needs
+ * to see which of them spoke rather than a 200 this server invented.
+ */
+export interface NotificationTest {
+  id: string
+  kind: string
+  status: number
+  sent_at: string
+}

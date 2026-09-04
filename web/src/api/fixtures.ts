@@ -22,6 +22,9 @@ import cancel202 from "./__fixtures__/cancel-202.json"
 import cleanup from "./__fixtures__/cleanup.json"
 import confidence from "./__fixtures__/confidence.json"
 import doctor from "./__fixtures__/doctor.json"
+import notificationCreated from "./__fixtures__/notification-created.json"
+import notificationTest from "./__fixtures__/notification-test.json"
+import notificationsPage from "./__fixtures__/notifications-page.json"
 import plan from "./__fixtures__/plan.json"
 import plansPage from "./__fixtures__/plans-page.json"
 import problem401 from "./__fixtures__/problem-401.json"
@@ -49,6 +52,8 @@ import type {
   CleanupResult,
   Confidence,
   Doctor,
+  NotificationChannel,
+  NotificationTest,
   Page,
   Plan,
   Problem,
@@ -143,6 +148,12 @@ export const slotsFixture = fixture<Page<Slot>>(scheduleSlots)
 export const validateOkFixture = fixture<Validated>(validateOk)
 export const validateInvalidFixture = fixture<Problem>(validateInvalid)
 export const problem409VersionFixture = fixture<Problem>(problem409Version)
+
+export const notificationsPageFixture =
+  fixture<Page<NotificationChannel>>(notificationsPage)
+export const notificationCreatedFixture =
+  fixture<NotificationChannel>(notificationCreated)
+export const notificationTestFixture = fixture<NotificationTest>(notificationTest)
 
 export const setupResultFixture = fixture<SetupOutcome>(setupResult)
 export const setupFailedFixture = fixture<SetupFailure>(setupFailed)

@@ -9,6 +9,7 @@ const NAV = [
   { to: "/workloads", key: "app.nav.workloads" },
   { to: "/plans", key: "app.nav.plans" },
   { to: "/doctor", key: "app.nav.doctor" },
+  { to: "/settings", key: "app.nav.settings" },
 ] as const
 
 export function AppShell({

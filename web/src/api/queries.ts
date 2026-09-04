@@ -4,6 +4,7 @@ import {
   type Backup,
   type Confidence,
   type Doctor,
+  type NotificationChannel,
   type Page,
   type Plan,
   type Provider,
@@ -226,5 +227,23 @@ export const slotsQuery = (filter: { plan?: string; workload?: string } = {}) =>
       const qs = q.toString()
       return apiGet<Page<Slot>>(qs ? `/schedule/slots?${qs}` : "/schedule/slots")
     },
+    refetchInterval: SLOW_MS,
+  })
+
+// ------------------------------------------------------------- notifications
+
+/**
+ * The configured channels, with the health of each one's last delivery.
+ *
+ * It polls at the catalogue's cadence rather than a drill's: a channel changes
+ * when a human changes it. The refresh matters anyway, because the last_*
+ * fields do not - a delivery failing at three in the morning is exactly what
+ * this listing is read for, and a screen left open on a wall display should
+ * come to say so on its own.
+ */
+export const notificationsQuery = () =>
+  queryOptions({
+    queryKey: ["notifications"] as const,
+    queryFn: () => apiGet<Page<NotificationChannel>>("/notifications"),
     refetchInterval: SLOW_MS,
   })

@@ -1,5 +1,13 @@
 import { apiSend, apiSendText, apiSendWithStatus } from "@/api/client"
-import type { CleanupResult, Plan, RunSummary, Validated } from "@/api/types"
+import type {
+  CleanupResult,
+  NotificationChannel,
+  NotificationKind,
+  NotificationTest,
+  Plan,
+  RunSummary,
+  Validated,
+} from "@/api/types"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 /** A drill described in place: a workload, and whatever else differs. */
@@ -153,5 +161,99 @@ export function useDeletePlan() {
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["plans"] })
     },
+  })
+}
+
+// ------------------------------------------------------------- notifications
+
+/** A channel being created. Everything about it is stated, because nothing exists yet. */
+export interface NewNotification {
+  id: string
+  kind: NotificationKind
+  url: string
+  enabled: boolean
+}
+
+/**
+ * The half of a channel an edit changes.
+ *
+ * Every field is optional and an absent one keeps what is stored, which is a
+ * PATCH's semantics under a PUT. That is deliberate on both sides of the wire:
+ * the resource has a field the API refuses to hand back, so a client can never
+ * send the whole thing.
+ *
+ * `url` being optional is the load-bearing part of this type. The screen
+ * cannot prefill a webhook URL it is never given, so an edit of a name or a
+ * toggle arrives with the field blank; sending that blank as an empty string
+ * would ask the server to distinguish "unchanged" from "cleared" on a value
+ * it cannot see. Omitting the key says "unchanged" and nothing else can.
+ */
+export interface NotificationEdit {
+  kind?: NotificationKind
+  url?: string
+  enabled?: boolean
+}
+
+/** Stores a new channel, sealing its URL on the way in. */
+export function useCreateNotification() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: NewNotification) =>
+      apiSend<NotificationChannel>("POST", "/notifications", body),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["notifications"] })
+    },
+  })
+}
+
+/** Changes a channel, keeping every field the caller left out. */
+export function useUpdateNotification(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: NotificationEdit) =>
+      apiSend<NotificationChannel>(
+        "PUT",
+        `/notifications/${encodeURIComponent(id)}`,
+        body,
+      ),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["notifications"] })
+    },
+  })
+}
+
+/**
+ * Removes a channel.
+ *
+ * Deliveries already written keep their channel id, so this stops future
+ * messages without rewriting what was said about past runs.
+ */
+export function useDeleteNotification() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiSend<void>("DELETE", `/notifications/${encodeURIComponent(id)}`),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["notifications"] })
+    },
+  })
+}
+
+/**
+ * Sends one sample message, on purpose, now.
+ *
+ * It invalidates nothing, and that is not an oversight: the server records no
+ * delivery for a test, because the delivery table is keyed by (run, channel)
+ * and there is no run here. So the listing's last_* fields still describe the
+ * last real message, which is the honest answer - a green test badge must not
+ * overwrite the record of a channel that failed last night.
+ */
+export function useTestNotification(id: string) {
+  return useMutation({
+    mutationFn: () =>
+      apiSend<NotificationTest>(
+        "POST",
+        `/notifications/${encodeURIComponent(id)}/test`,
+      ),
   })
 }

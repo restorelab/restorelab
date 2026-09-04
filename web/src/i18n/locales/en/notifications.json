@@ -1,0 +1,73 @@
+{
+  "title": "Notification channels",
+  "question": "Who hears about it when a workload stops being provable?",
+  "intro": "RestoreLab speaks only when a verdict or a proof level moves. A quiet channel is a channel with nothing to report, which is why a channel that has silently broken is worth finding before it matters.",
+  "readOnly": "This session can read the channels but not change them.",
+  "add": "Add a channel",
+  "edit": "Edit",
+  "columns": {
+    "id": "Channel",
+    "kind": "Kind",
+    "host": "Destination",
+    "health": "Last delivery",
+    "action": " "
+  },
+  "empty": {
+    "title": "No channel yet",
+    "description": "Nothing is told when a drill changes what it proves. Add a channel here, or from a terminal.",
+    "command": "restorelab notify add ops --kind discord --url <webhook>"
+  },
+  "unavailable": {
+    "title": "This server has no configuration to write back to",
+    "description": "Channels live in config.yaml, and this RestoreLab was started without a file it can write. Nothing on this screen would survive a restart.",
+    "command": "restorelab serve --config /etc/restorelab/config.yaml"
+  },
+  "kinds": {
+    "discord": "Discord",
+    "slack": "Slack",
+    "webhook": "Webhook"
+  },
+  "enabled": {
+    "on": "On",
+    "off": "Off",
+    "offHint": "This channel is configured and receives nothing."
+  },
+  "health": {
+    "never": "Nothing sent yet",
+    "neverHint": "This channel has never carried a message. Send it a test.",
+    "sent": "Delivered {{when}}",
+    "pending": "Retrying, last answer {{status}}",
+    "failed": "Failed with {{status}}",
+    "unknown": "Last delivery: {{state}}"
+  },
+  "test": {
+    "button": "Test",
+    "sending": "Sending…",
+    "ok": "Delivered. The channel answered {{status}}.",
+    "hint": "Sends one sample message now, so this path has been seen working before it is needed."
+  },
+  "form": {
+    "createTitle": "New channel",
+    "editTitle": "Editing {{id}}",
+    "id": "Id",
+    "idHint": "How this channel is named in the logs, in doctor and on this screen.",
+    "idFixed": "A channel cannot be renamed. Remove it and add another.",
+    "kind": "Kind",
+    "url": "Webhook URL",
+    "urlNew": "https://discord.com/api/webhooks/...",
+    "urlNewHint": "Sealed with the master key before it reaches disk, and never shown again.",
+    "urlKept": "Leave blank and it keeps the stored URL",
+    "urlKeptHint": "RestoreLab never hands a webhook URL back, so this field starts empty. Leaving it empty changes nothing; typing one replaces it.",
+    "enabled": "Send to this channel",
+    "submit": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel"
+  },
+  "delete": {
+    "button": "Remove",
+    "title": "Remove {{id}}?",
+    "description": "This channel stops receiving anything, and nothing will say so afterwards.",
+    "keeps": "Messages already delivered keep their record, and no other channel is affected.",
+    "submit": "Remove"
+  }
+}
