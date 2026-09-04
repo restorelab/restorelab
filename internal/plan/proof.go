@@ -16,13 +16,14 @@ import (
 //
 // Without a declaration the level is deduced, and the deduction is built to be
 // wrong only in the safe direction - it understates, never the reverse. It has
-// two rules beyond the default: a bare liveness probe, whether it is a command
-// like `hostname` or a ping answered by the kernel, proves the guest boots -
-// and everything else is taken to be a real check of a real service. Guessing
-// more finely than that would mean guessing what an arbitrary command means,
-// and being wrong there would put a number on the dashboard that claims more
-// than the drill established - the one outcome this whole slice exists to
-// prevent.
+// three rules beyond the default: a bare liveness probe, whether it is a
+// command like `hostname` or a ping answered by the kernel, proves the guest
+// boots - a captured value with a bound on it proves the data (see
+// provesTheData) - and everything else is taken to be a real check of a real
+// service. Guessing more finely than that would mean guessing what an
+// arbitrary command means, and being wrong there would put a number on the
+// dashboard that claims more than the drill established - the one outcome this
+// whole slice exists to prevent.
 func (c CheckSpec) ProvenLevel() core.ProofLevel {
 	if c.Proves != "" {
 		if l, ok := core.ParseProofLevel(strings.ToUpper(c.Proves)); ok && l.Recorded() {
@@ -33,6 +34,14 @@ func (c CheckSpec) ProvenLevel() core.ProofLevel {
 		// deduction rather than trusting a string nobody checked.
 	}
 
+	// Ahead of the liveness table, because a bound on a value read out of the
+	// workload says more about the check than the program that printed it: an
+	// `echo` that has to print a number the plan vouches for is no longer a
+	// liveness probe.
+	if c.provesTheData() {
+		return core.ProofData
+	}
+
 	if c.Type == "command" && isLivenessCommand(c.Params) {
 		return core.ProofBoot
 	}
@@ -40,6 +49,33 @@ func (c CheckSpec) ProvenLevel() core.ProofLevel {
 		return core.ProofBoot
 	}
 	return core.ProofService
+}
+
+// provesTheData reports whether this check reaches DATA on its own, with no
+// `proves: data` in the plan.
+//
+// E1 wrote that only a declaration could claim DATA and that the next slice
+// would refine it. This is the refinement, and it is the one deduction that
+// reaches the top of the ladder: a check that captured a number out of the
+// restored workload and passed a bound the plan stated on that number has read
+// the data and found it to be what it was supposed to be. That is exactly what
+// the level means, and unlike a declaration it is a claim RestoreLab checked
+// itself - which is the difference between evidence and a promise. ProvenBy
+// only counts a check that passed, so the bound was met wherever this level is
+// finally recorded.
+//
+// A bare `capture:` with no bound stays where it was: reading a number proves
+// you read a number. It is the bound that turns a measurement into a claim.
+//
+// Drift is deliberately not enough on its own, though it is a bound the
+// operator declared just as much as `assert:` is. It is evaluated only when
+// there is a history to compare against, and a first drill, or one against a
+// database that would not answer, evaluates nothing and is skipped with its
+// reason. A proof level that depended on whether some other table had rows in
+// it would not be a proof level. A capture bounded by both is DATA on the
+// strength of the assert, which is the common case the design note shows.
+func (c CheckSpec) provesTheData() bool {
+	return c.Capture != "" && c.Assert.Any()
 }
 
 // livenessCheckTypes are the check types that prove the guest is up without

@@ -100,8 +100,10 @@ func TestCheckProvenLevelIsDeduced(t *testing.T) {
 }
 
 // The rule the deduction is built on: it may understate what a check proves,
-// never overstate it. Any check RestoreLab cannot read is worth at most
-// SERVICE, and the only way past that is somebody saying so in the plan.
+// never overstate it. A command line RestoreLab cannot read is worth at most
+// SERVICE however much it looks like it queries a table, and the only ways
+// past that are somebody saying so in the plan and a bound on a captured
+// value that RestoreLab checks itself.
 func TestTheDeductionNeverClaimsDataOnItsOwn(t *testing.T) {
 	for _, run := range []string{
 		"psql -tAc 'select count(*) from orders'",
@@ -110,8 +112,111 @@ func TestTheDeductionNeverClaimsDataOnItsOwn(t *testing.T) {
 	} {
 		spec := CheckSpec{Type: "command", Params: map[string]any{"run": run}}
 		if got := spec.ProvenLevel(); got.AtLeast(core.ProofData) {
-			t.Errorf("%q deduced as %s: only a declaration may claim DATA", run, got)
+			t.Errorf("%q deduced as %s: reading a command line is not evidence", run, got)
 		}
+	}
+}
+
+// The E2 refinement. A check that read a number out of the restored workload
+// and found it to be what the plan said it must be has demonstrated the data,
+// and needs no `proves: data` to say so: RestoreLab enforced the bound itself,
+// which is the difference between this and a declaration.
+func TestABoundedCaptureReachesDataByDeduction(t *testing.T) {
+	one := 1.0
+	tests := []struct {
+		name string
+		spec CheckSpec
+		want core.ProofLevel
+	}{
+		{
+			name: "a captured value with a bound on it proves the data",
+			spec: CheckSpec{
+				Type:    "command",
+				Params:  map[string]any{"run": "psql -tAc 'select count(*) from orders'"},
+				Capture: "rows",
+				Assert:  &core.AssertSpec{Min: &one},
+			},
+			want: core.ProofData,
+		},
+		{
+			// Reading a number proves you read a number.
+			name: "a bare capture proves what it would have proven anyway",
+			spec: CheckSpec{
+				Type:    "command",
+				Params:  map[string]any{"run": "psql -tAc 'select count(*) from orders'"},
+				Capture: "rows",
+			},
+			want: core.ProofService,
+		},
+		{
+			// The bound belongs to a value: without one there is nothing for
+			// it to be a bound on, and validation refuses the combination.
+			name: "a bound with nothing captured proves nothing more",
+			spec: CheckSpec{
+				Type:   "command",
+				Params: map[string]any{"run": "systemctl is-active postgresql"},
+				Assert: &core.AssertSpec{Min: &one},
+			},
+			want: core.ProofService,
+		},
+		{
+			// A liveness probe that counts something is no longer a liveness
+			// probe, and the bound outranks the program name.
+			name: "a bounded capture lifts even a liveness command",
+			spec: CheckSpec{
+				Type:    "command",
+				Params:  map[string]any{"run": "echo 42"},
+				Capture: "answer",
+				Assert:  &core.AssertSpec{Equals: &one},
+			},
+			want: core.ProofData,
+		},
+		{
+			// Both directions, still. Somebody who knows their capture is a
+			// smoke test is believed when they say so.
+			name: "a declaration still wins over the deduction",
+			spec: CheckSpec{
+				Type:    "command",
+				Params:  map[string]any{"run": "echo 42"},
+				Capture: "answer",
+				Assert:  &core.AssertSpec{Min: &one},
+				Proves:  "boot",
+			},
+			want: core.ProofBoot,
+		},
+		{
+			// Drift is a bound the operator declared too, but it is evaluated
+			// only when there is a history to compare against. A level that
+			// depended on whether a table had rows in it would not be a level.
+			name: "drift alone does not claim the data",
+			spec: CheckSpec{
+				Type:    "command",
+				Params:  map[string]any{"run": "psql -tAc 'select count(*) from orders'"},
+				Capture: "rows",
+				Drift:   &core.DriftSpec{MaxDrop: 10, MaxDropIsPercent: true},
+			},
+			want: core.ProofService,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.spec.ProvenLevel(); got != tc.want {
+				t.Errorf("ProvenLevel() = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// The whole reason the refinement is worth having: the plan from the design
+// note reaches DATA with nothing declared, straight out of the file.
+func TestAPlanThatBoundsACaptureWouldProveTheData(t *testing.T) {
+	p, err := Parse([]byte(capturePlan))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := p.ProvenLevel(); got != core.ProofData {
+		t.Errorf("ProvenLevel() = %s, want DATA", got)
 	}
 }
 

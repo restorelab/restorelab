@@ -44,9 +44,18 @@ const (
 	// command against the service, or a tcp/http/dns probe that answered.
 	ProofService ProofLevel = "SERVICE"
 
-	// ProofData: the data is there and coherent. Only ever claimed when a
-	// check says so itself, via `proves: data` in the plan. Deducing it is
-	// the job of the next slice, which compares captured values across runs.
+	// ProofData: the data is there and coherent.
+	//
+	// Claimed by a declaration, via `proves: data` in the plan, or earned by
+	// a measurement: a check that captures a number and holds it to a bound
+	// the plan declared has read a value out of the restored workload and
+	// found it to be what the operator said it must be, which is what this
+	// level means.
+	//
+	// A drift tolerance alone does not earn it, and the asymmetry is
+	// deliberate. Drift is only evaluated when there is a history to compare
+	// against, so a first drill skips it; a level that depended on how many
+	// rows another table happens to hold would not be a level at all.
 	ProofData ProofLevel = "DATA"
 )
 

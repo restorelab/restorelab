@@ -155,6 +155,27 @@ type CheckSpec struct {
 	// higher than the truth, and a declaration is only needed by someone who
 	// knows their check proves more than RestoreLab can tell from outside.
 	Proves string
+
+	// Capture names the number this check reads out of the restored workload,
+	// or is empty. The value is recorded against the run under that name and
+	// nothing else happens to it: a measurement is worth keeping whether or
+	// not anybody has decided yet what it should be.
+	Capture string
+
+	// Assert is what the plan says the captured value must be. Violating it
+	// fails the check, because somebody wrote `min: 1` to say "this table is
+	// never empty" and meant that to count.
+	Assert *core.AssertSpec
+
+	// Drift is how far the captured value may fall against what previous
+	// drills of this workload measured. Violating it fails the check, for the
+	// same reason: the tolerance was declared.
+	//
+	// Both of these are core types rather than plan-local ones because they
+	// are the same statement at both ends. Their YAML shapes live in
+	// values.go, which is where the file's spelling is allowed to differ from
+	// the runtime's.
+	Drift *core.DriftSpec
 }
 
 // reservedCheckKeys are consumed by CheckSpec itself and never forwarded to
@@ -162,7 +183,7 @@ type CheckSpec struct {
 var reservedCheckKeys = map[string]bool{
 	"type": true, "name": true, "timeout": true,
 	"retries": true, "retry_interval": true, "critical": true,
-	"proves": true,
+	"proves": true, "capture": true, "assert": true, "drift": true,
 }
 
 // UnmarshalYAML splits a check mapping into typed fields plus free-form params.
@@ -173,13 +194,16 @@ func (c *CheckSpec) UnmarshalYAML(node *yaml.Node) error {
 	}
 
 	var head struct {
-		Type          string   `yaml:"type"`
-		Name          string   `yaml:"name"`
-		Timeout       Duration `yaml:"timeout"`
-		Retries       int      `yaml:"retries"`
-		RetryInterval Duration `yaml:"retry_interval"`
-		Critical      *bool    `yaml:"critical"`
-		Proves        string   `yaml:"proves"`
+		Type          string      `yaml:"type"`
+		Name          string      `yaml:"name"`
+		Timeout       Duration    `yaml:"timeout"`
+		Retries       int         `yaml:"retries"`
+		RetryInterval Duration    `yaml:"retry_interval"`
+		Critical      *bool       `yaml:"critical"`
+		Proves        string      `yaml:"proves"`
+		Capture       string      `yaml:"capture"`
+		Assert        *assertSpec `yaml:"assert"`
+		Drift         *driftSpec  `yaml:"drift"`
 	}
 	if err := node.Decode(&head); err != nil {
 		return err
@@ -192,6 +216,13 @@ func (c *CheckSpec) UnmarshalYAML(node *yaml.Node) error {
 	c.RetryInterval = head.RetryInterval
 	c.Critical = head.Critical
 	c.Proves = head.Proves
+	// Trimmed because the name is part of the key the value is stored and read
+	// back under: " rows" and "rows" would quietly split one workload's
+	// history in two, and the drift comparison would then find no baseline for
+	// either half.
+	c.Capture = strings.TrimSpace(head.Capture)
+	c.Assert = head.Assert.core()
+	c.Drift = head.Drift.core()
 
 	c.Params = make(map[string]any, len(raw))
 	for k, v := range raw {
@@ -242,6 +273,15 @@ func (c CheckSpec) MarshalYAML() (any, error) {
 	if c.Proves != "" {
 		out["proves"] = c.Proves
 	}
+	if c.Capture != "" {
+		out["capture"] = c.Capture
+	}
+	if c.Assert != nil {
+		out["assert"] = assertYAML(c.Assert)
+	}
+	if c.Drift != nil {
+		out["drift"] = driftYAML(c.Drift)
+	}
 	return out, nil
 }
 
@@ -271,6 +311,9 @@ func (c CheckSpec) ToCore() core.CheckConfig {
 		Critical:      c.IsCritical(),
 		Params:        c.Params,
 		Proves:        c.ProvenLevel(),
+		Capture:       c.Capture,
+		Assert:        c.Assert,
+		Drift:         c.Drift,
 	}
 }
 
@@ -391,6 +434,33 @@ func (p *Plan) Validate() error {
 			errs = append(errs, fmt.Sprintf(
 				"checks[%d].proves = %q: must be one of none, boot, service, data", i, c.Proves))
 		}
+		// A plan that cannot work should say so where it is written, not at
+		// three in the morning where the only thing left to do about it is
+		// read a log. Every rule below refuses a combination that has no
+		// reading at all, never one that is merely unusual.
+		if c.Capture != "" && c.Type != "" && !capturingCheckTypes[c.Type] {
+			errs = append(errs, fmt.Sprintf(
+				"checks[%d].capture: a %s check does not read a value; only a command check does",
+				i, c.Type))
+		}
+		if c.Assert != nil && !c.Assert.Any() {
+			errs = append(errs, fmt.Sprintf(
+				"checks[%d].assert states no bound: set min, max or equals", i))
+		}
+		if c.Assert != nil && c.Capture == "" {
+			errs = append(errs, fmt.Sprintf(
+				"checks[%d].assert has nothing to bound: set capture to name the value it applies to", i))
+		}
+		if c.Drift != nil && c.Capture == "" {
+			errs = append(errs, fmt.Sprintf(
+				"checks[%d].drift has nothing to compare: set capture to name the value it bounds", i))
+		}
+		if c.Drift != nil && !statesATolerance(c.Drift) {
+			errs = append(errs, fmt.Sprintf(
+				`checks[%d].drift.max_drop must be a positive tolerance ("10%%" or a number of units), got %v`,
+				i, c.Drift.MaxDrop))
+		}
+
 		name := c.DisplayName()
 		if seen[name] {
 			errs = append(errs, fmt.Sprintf("checks[%d]: duplicate check name %q, set an explicit name", i, name))
