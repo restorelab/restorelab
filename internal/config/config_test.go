@@ -388,3 +388,202 @@ func TestSchedulerReadsItsDurations(t *testing.T) {
 		t.Fatalf("MaxQueueDepth = %d, want 12", c.Scheduler.MaxQueueDepth)
 	}
 }
+
+// A Discord webhook URL is a bearer credential: whoever holds it can post
+// into that channel, with no second factor. Invariant 8 covers it exactly as
+// it covers a provider token, so Save has to refuse the same way.
+func TestSaveRefusesAnUnsealedWebhookURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+
+	c := New()
+	c.Notifications = []Notification{{
+		ID:   "ops",
+		Kind: "discord",
+		URL:  "https://discord.com/api/webhooks/1/abc",
+	}}
+
+	err := Save(path, c)
+	if err == nil {
+		t.Fatal("Save wrote a plaintext webhook URL to disk")
+	}
+	if !strings.Contains(err.Error(), "ops") {
+		t.Errorf("error does not name the offending channel: %v", err)
+	}
+	if !strings.Contains(err.Error(), "url") {
+		t.Errorf("error does not say which field is unsealed, so the reader cannot tell it from a provider refusal: %v", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("Save left a file behind despite refusing: %v", statErr)
+	}
+}
+
+func TestSetNotificationURLSealsIt(t *testing.T) {
+	k := mustKey(t)
+	const plaintext = "https://discord.com/api/webhooks/1/abc"
+
+	c := New()
+	c.UpsertNotification(Notification{ID: "ops", Kind: "discord"})
+	if err := c.SetNotificationURL("ops", plaintext, k); err != nil {
+		t.Fatalf("SetNotificationURL: %v", err)
+	}
+
+	n, err := c.Notification("ops")
+	if err != nil {
+		t.Fatalf("Notification: %v", err)
+	}
+	if !crypto.IsSealed(n.URL) {
+		t.Fatalf("stored url is not sealed: %q", n.URL)
+	}
+	if strings.Contains(n.URL, "abc") {
+		t.Fatalf("the sealed url still carries the plaintext: %q", n.URL)
+	}
+
+	got, err := n.Target(k)
+	if err != nil {
+		t.Fatalf("Target: %v", err)
+	}
+	if got != plaintext {
+		t.Fatalf("Target() = %q, want %q", got, plaintext)
+	}
+
+	// Target must refuse an unsealed value rather than hand it back, for the
+	// same reason Provider.Secret does: a plaintext url in that field means
+	// something bypassed the sealing path.
+	plain := Notification{ID: "hand-edited", URL: plaintext}
+	if _, err := plain.Target(k); err == nil {
+		t.Fatal("Target() on an unsealed url succeeded, want error")
+	}
+
+	// A %v of a channel must never be able to leak the url.
+	if strings.Contains(n.String(), n.URL) || strings.Contains(n.String(), plaintext) {
+		t.Fatalf("String() leaked the url: %s", n.String())
+	}
+	if r := n.Redacted(); r.URL == n.URL || strings.Contains(r.URL, "abc") {
+		t.Fatalf("Redacted() kept the url: %q", r.URL)
+	}
+
+	if err := c.SetNotificationURL("nope", plaintext, k); err == nil {
+		t.Fatal("SetNotificationURL on an unknown channel succeeded, want error")
+	}
+}
+
+// An absent enabled field must mean on. A plain bool would make the zero
+// value "off", and a channel added by hand in YAML would silently never fire.
+func TestAnAbsentEnabledMeansOn(t *testing.T) {
+	var c Config
+	doc := "version: 1\nnotifications:\n  - id: ops\n    kind: discord\n    url: rlsec:v1:x\n"
+	if err := yaml.Unmarshal([]byte(doc), &c); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(c.Notifications) != 1 {
+		t.Fatalf("len(Notifications) = %d, want 1", len(c.Notifications))
+	}
+	if !c.Notifications[0].On() {
+		t.Fatal("a channel with no enabled field must still fire")
+	}
+
+	off := false
+	if (Notification{Enabled: &off}).On() {
+		t.Fatal("enabled: false must turn the channel off")
+	}
+	on := true
+	if !(Notification{Enabled: &on}).On() {
+		t.Fatal("enabled: true must leave the channel on")
+	}
+}
+
+func TestValidateRejectsAnUnknownKind(t *testing.T) {
+	c := New()
+	c.Notifications = []Notification{{
+		ID:   "ops",
+		Kind: "telegram",
+		URL:  "https://example.com/hook",
+	}}
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("Validate() accepted an unknown notification kind")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "notifications[0] (ops)") {
+		t.Errorf("error does not locate the channel: %s", msg)
+	}
+	// The message has to name the kinds that do exist, or the reader is left
+	// guessing which three words are legal.
+	for _, want := range []string{"discord", "slack", "webhook"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error does not name the valid kind %q; got:\n%s", want, msg)
+		}
+	}
+}
+
+func TestValidateRejectsABadNotificationBlock(t *testing.T) {
+	c := New()
+	c.Notifications = []Notification{
+		{ID: "", Kind: "discord", URL: "https://example.com/hook"},
+		{ID: "dup", Kind: "slack", URL: ""},
+		{ID: "dup", Kind: "webhook", URL: "https://example.com/hook"},
+		{ID: "cleartext", Kind: "webhook", URL: "http://example.com/hook"},
+		{ID: "loopback", Kind: "webhook", URL: "http://127.0.0.1:9000/hook"},
+		{ID: "localhost", Kind: "webhook", URL: "http://localhost:9000/hook"},
+	}
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("Validate() accepted a broken notifications block")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"notifications[0]: id is required",
+		"duplicate notification id",
+		"notifications[1] (dup): url is required",
+		"notifications[3] (cleartext)",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error missing %q; got:\n%s", want, msg)
+		}
+	}
+	// A webhook on a loopback host is how somebody tests a receiver on their
+	// own machine, and nothing on the wire can read it.
+	for _, unwanted := range []string{"(loopback)", "(localhost)"} {
+		if strings.Contains(msg, unwanted) {
+			t.Errorf("Validate() rejected a loopback receiver: %s", msg)
+		}
+	}
+}
+
+func TestValidateChecksTheBaseURL(t *testing.T) {
+	c := New()
+	c.Server.BaseURL = "dashboard.example.com"
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), "base_url") {
+		t.Fatalf("Validate() = %v, want a server.base_url error", err)
+	}
+
+	c.Server.BaseURL = "https://dashboard.example.com"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate() rejected a good base_url: %v", err)
+	}
+}
+
+// TestSetNotificationURLRefusesPlainHTTP guards the order callers actually
+// work in. Sealing happens before Save, so a scheme check that only lived in
+// Validate would inspect ciphertext and pass everything: the rule has to bite
+// at the moment the URL is still readable.
+func TestSetNotificationURLRefusesPlainHTTP(t *testing.T) {
+	k, err := crypto.NewKey()
+	if err != nil {
+		t.Fatalf("NewKey: %v", err)
+	}
+	c := New()
+	c.UpsertNotification(Notification{ID: "ops", Kind: "discord"})
+
+	if err := c.SetNotificationURL("ops", "http://hooks.example.com/ingest/abc", k); err == nil {
+		t.Fatal("SetNotificationURL sealed a bearer credential destined for plain http")
+	}
+
+	// Loopback stays allowed: nothing on a wire can read it, and it is how
+	// somebody tries a receiver of their own first.
+	if err := c.SetNotificationURL("ops", "http://127.0.0.1:9000/hook", k); err != nil {
+		t.Errorf("SetNotificationURL refused a loopback receiver: %v", err)
+	}
+}

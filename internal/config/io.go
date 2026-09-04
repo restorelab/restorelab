@@ -78,14 +78,25 @@ func (c *Config) applyDefaults() {}
 // Save atomically writes c to path as YAML with owner-only permissions
 // (0600), creating parent directories (0700) as needed.
 //
-// Save refuses to write when any provider's TokenSecret is not a sealed
-// value (see crypto.IsSealed): that check is what keeps a plaintext API
-// token from ever landing on disk, so it is enforced here rather than left
-// to callers to remember.
+// Save refuses to write when any provider's TokenSecret or any notification
+// channel's URL is not a sealed value (see crypto.IsSealed): those checks are
+// what keep a plaintext bearer credential from ever landing on disk, so they
+// are enforced here rather than left to callers to remember.
 func Save(path string, c *Config) error {
 	for _, p := range c.Providers {
 		if p.TokenSecret != "" && !crypto.IsSealed(p.TokenSecret) {
 			return fmt.Errorf("refusing to save config: provider %q has an unsealed token_secret (use Config.SetProviderSecret to seal it before saving)", p.ID)
+		}
+	}
+
+	// A second loop rather than one merged with the first, on purpose. The two
+	// refusals name different fields and different repair paths, and whoever
+	// reads the refusal has to know which of the two secrets is in the clear
+	// before they can fix it.
+	for _, n := range c.Notifications {
+		if n.URL != "" && !crypto.IsSealed(n.URL) {
+			return fmt.Errorf("refusing to save config: notification %q has an unsealed url "+
+				"(use Config.SetNotificationURL to seal it before saving)", n.ID)
 		}
 	}
 

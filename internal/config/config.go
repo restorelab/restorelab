@@ -1,9 +1,14 @@
 // Package config reads, validates and persists the on-disk RestoreLab
-// configuration: providers (with sealed secrets), network profiles, resource
-// limits and defaults. It never handles plaintext provider secrets except
-// transiently in memory (see Provider.Secret / Config.SetProviderSecret), and
-// it refuses to write a config file that would put a plaintext secret on
-// disk.
+// configuration: providers (with sealed secrets), notification channels (with
+// sealed webhook URLs), network profiles, resource limits and defaults.
+//
+// It holds two kinds of secret and treats them identically. A provider token
+// secret and a notification webhook URL are both bearer credentials: whoever
+// has one can act with it, with no second factor. Neither is ever handled in
+// plaintext except transiently in memory (see Provider.Secret /
+// Config.SetProviderSecret and Notification.Target /
+// Config.SetNotificationURL), and Save refuses to write a config file that
+// would put either of them on disk in the clear.
 package config
 
 import (
@@ -21,6 +26,43 @@ type Config struct {
 	Defaults  Defaults           `yaml:"defaults"`
 	Database  Database           `yaml:"database,omitempty"`
 	Scheduler Scheduler          `yaml:"scheduler,omitempty"`
+	Server    Server             `yaml:"server,omitempty"`
+
+	Notifications []Notification `yaml:"notifications,omitempty"`
+}
+
+// Server describes how this installation is reached from outside itself.
+//
+// It exists because a notification is read somewhere else than where it is
+// produced. RestoreLab cannot work out its own public address: it may sit
+// behind a reverse proxy, a tunnel, or a hostname that only DNS elsewhere
+// knows about. So the address is configured rather than guessed, and when it
+// is absent a message simply carries no link rather than an address that
+// resolves to nothing for the person reading it.
+type Server struct {
+	BaseURL string `yaml:"base_url,omitempty"`
+}
+
+// Notification is one place RestoreLab speaks when what a workload proves
+// changes.
+type Notification struct {
+	ID   string `yaml:"id"`   // "ops-discord"
+	Kind string `yaml:"kind"` // "discord" | "slack" | "webhook"
+
+	// URL is ALWAYS sealed on disk (rlsec:v1:...), for the same reason
+	// Provider.TokenSecret is. A Discord or Slack webhook URL is a bearer
+	// credential: it carries its own authorisation in its path, so anyone who
+	// reads it can post into that channel, and there is no second factor and
+	// nothing to revoke short of deleting the webhook. Save refuses to write a
+	// Config whose URLs are not sealed; use Config.SetNotificationURL rather
+	// than assigning directly.
+	URL string `yaml:"url"`
+
+	// Enabled is a pointer for the reason Scheduler.Enabled is: an absent
+	// field must mean enabled. With a plain bool the zero value would be
+	// "off", and a channel somebody added by hand in YAML would never fire
+	// while looking perfectly configured.
+	Enabled *bool `yaml:"enabled,omitempty"`
 }
 
 // Scheduler governs the drills stored plans queue for themselves.
