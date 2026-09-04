@@ -269,6 +269,15 @@ func writeChecks(buf *bytes.Buffer, run *core.RecoveryRun, opts Options) {
 		dur := FormatDuration(c.Duration)
 		fmt.Fprintf(tw, "  %s %s\t%s\t%s\t%s\n", coloredGlyph, c.Name, coloredStatus, dur, c.Message)
 
+		// What the check measured, printed whether or not the report is
+		// verbose. A captured value is not a detail: it is the evidence the
+		// drill produced, and hiding it behind a flag would mean the default
+		// report of a check that read a row count says only that a command
+		// exited 0.
+		for _, line := range valueLines(capturedValues(c.Details)) {
+			fmt.Fprintf(tw, "      %s\t\t\t\n", line)
+		}
+
 		if opts.Verbose {
 			if detail := safeDetails(c.Details); detail != "" {
 				fmt.Fprintf(tw, "      %s\t\t\t\n", detail)

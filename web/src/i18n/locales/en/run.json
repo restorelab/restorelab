@@ -12,6 +12,11 @@
   "attempts_one": "{{count}} attempt",
   "attempts_other": "{{count}} attempts",
   "disconnected": "Connection lost. The drill is still running. Reconnecting.",
+  "value": {
+    "line": "{{name}}: {{value}} (baseline {{baseline}})",
+    "rose": "Higher than the baseline, the median of the last five drills",
+    "fell": "Lower than the baseline, the median of the last five drills"
+  },
   "noSteps": { "title": "This drill recorded no steps" },
   "noBackup": "No backup recorded"
 }

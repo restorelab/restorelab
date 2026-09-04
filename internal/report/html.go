@@ -66,6 +66,11 @@ type htmlCheck struct {
 	Label string
 
 	StatusClass string
+
+	// ValueLines is what this check measured, one rendered line per value,
+	// each already carrying its baseline. Empty for a check that measured
+	// nothing, which the template renders as nothing at all.
+	ValueLines []string
 }
 
 // HTML writes run as a single self-contained HTML document (inline CSS,
@@ -124,6 +129,7 @@ func HTML(w io.Writer, run *core.RecoveryRun) error {
 			CheckDTO:    c,
 			Label:       checkLabel(c),
 			StatusClass: statusClass(c.Status),
+			ValueLines:  valueLines(c.Values),
 		})
 	}
 
@@ -387,6 +393,10 @@ const htmlTemplateSource = `<!doctype html>
   .status-pill.bad{background:var(--bad-bg); color:var(--bad);}
   .status-pill.skip{background:var(--border); color:var(--muted);}
   .status-pill.pending{background:var(--border); color:var(--muted);}
+  .measure{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:12px; margin-top:3px;
+  }
   .empty{color:var(--muted); font-style:italic;}
   footer{color:var(--muted); font-size:11px; margin-top:24px;}
   @media print{
@@ -482,7 +492,7 @@ const htmlTemplateSource = `<!doctype html>
           <td>{{.Type}}</td>
           <td><span class="status-pill {{.StatusClass}}">{{.Status}}</span></td>
           <td>{{.Duration}}</td>
-          <td>{{.Message}}</td>
+          <td>{{.Message}}{{range .ValueLines}}<div class="measure">{{.}}</div>{{end}}</td>
         </tr>
         {{end}}
       </tbody>

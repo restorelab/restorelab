@@ -147,6 +147,17 @@ type CheckDTO struct {
 	Attempts int            `json:"attempts"`
 	Message  string         `json:"message,omitempty"`
 	Details  map[string]any `json:"details,omitempty"`
+
+	// Values is what this check measured, with the figure each measurement
+	// was judged against. Absent when the check captured nothing, which is
+	// most checks: a client can then tell a check that measures nothing from
+	// one that measured zero.
+	//
+	// It is a typed field of its own rather than something a client digs out
+	// of Details, which carries the same numbers in the untyped bag every
+	// check fills as it pleases. The bag is where a consumer goes to guess;
+	// this is the part of the document that is a contract.
+	Values []CapturedValueDTO `json:"values,omitempty"`
 }
 
 // JSON writes run to w as the versioned Document described by this file's
@@ -310,5 +321,6 @@ func NewCheckDTO(c core.CheckResult) CheckDTO {
 		Attempts: c.Attempts,
 		Message:  c.Message,
 		Details:  c.Details,
+		Values:   capturedValues(c.Details),
 	}
 }

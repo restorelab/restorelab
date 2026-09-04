@@ -159,6 +159,22 @@ export interface Step {
   error?: string
 }
 
+/**
+ * One number a check read out of the restored workload, beside the figure the
+ * drill judged it against - report.CapturedValueDTO.
+ *
+ * `baseline` is null rather than 0 when no previous drill measured this value,
+ * and the Go DTO writes the key even when it is null so that the distinction
+ * survives the wire. A client that renders the two the same way turns a first
+ * drill into an alarm, and turns an emptied table into a first drill.
+ */
+export interface CapturedValue {
+  name: string
+  value: number
+  /** The median of what previous drills measured, null when there is none. */
+  baseline: number | null
+}
+
 /** One in-guest check, as report.CheckDTO renders it. */
 export interface Check {
   name: string
@@ -171,6 +187,12 @@ export interface Check {
   duration: string
   attempts: number
   message?: string
+
+  /**
+   * What this check measured. Absent when it captured nothing, which is most
+   * checks: the Go DTO omits an empty list rather than sending `[]`.
+   */
+  values?: CapturedValue[]
 }
 
 /**

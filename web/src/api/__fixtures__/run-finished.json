@@ -99,6 +99,67 @@
         "status_code": 200,
         "url": "http://10.10.10.5/"
       }
+    },
+    {
+      "name": "orders",
+      "type": "command",
+      "status": "pass",
+      "pass": true,
+      "started_at": "2026-09-01T10:01:26Z",
+      "completed_at": "2026-09-01T10:01:27Z",
+      "duration_seconds": 0.41,
+      "duration": "410ms",
+      "attempts": 1,
+      "message": "exit 0",
+      "details": {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "psql -tAc \"select count(*) from orders\""
+        ],
+        "baseline": {
+          "rows": 1204331
+        },
+        "captured": {
+          "rows": 1206890
+        }
+      },
+      "values": [
+        {
+          "name": "rows",
+          "value": 1206890,
+          "baseline": 1204331
+        }
+      ]
+    },
+    {
+      "name": "sessions",
+      "type": "command",
+      "status": "pass",
+      "pass": true,
+      "started_at": "2026-09-01T10:01:27Z",
+      "completed_at": "2026-09-01T10:01:28Z",
+      "duration_seconds": 0.26,
+      "duration": "260ms",
+      "attempts": 1,
+      "message": "exit 0",
+      "details": {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "psql -tAc \"select count(*) from sessions\""
+        ],
+        "captured": {
+          "rows": 4821
+        }
+      },
+      "values": [
+        {
+          "name": "rows",
+          "value": 4821,
+          "baseline": null
+        }
+      ]
     }
   ],
   "rto_seconds": 84,

@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/restorelab/restorelab/internal/checks"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/store"
 )
@@ -219,6 +220,31 @@ func fixtureFinishedRun() core.RecoveryRun {
 				Duration: 340 * time.Millisecond, Attempts: 1,
 				Message: "GET / returned 200",
 				Details: map[string]any{"status_code": 200, "url": "http://10.10.10.5/"},
+			},
+			// The two shapes a captured value comes in, both present on
+			// purpose: a dashboard has to render a comparison and an absent
+			// one, and a capture with only the first would let the second be
+			// written as a zero.
+			{
+				Name: "orders", Type: "command", Status: core.CheckPass,
+				StartedAt: started.Add(86 * time.Second), CompletedAt: started.Add(87 * time.Second),
+				Duration: 410 * time.Millisecond, Attempts: 1,
+				Message: "exit 0",
+				Details: map[string]any{
+					"argv":                []string{"/bin/sh", "-c", "psql -tAc \"select count(*) from orders\""},
+					checks.DetailCaptured: map[string]float64{"rows": 1206890},
+					checks.DetailBaseline: map[string]float64{"rows": 1204331},
+				},
+			},
+			{
+				Name: "sessions", Type: "command", Status: core.CheckPass,
+				StartedAt: started.Add(87 * time.Second), CompletedAt: started.Add(88 * time.Second),
+				Duration: 260 * time.Millisecond, Attempts: 1,
+				Message: "exit 0",
+				Details: map[string]any{
+					"argv":                []string{"/bin/sh", "-c", "psql -tAc \"select count(*) from sessions\""},
+					checks.DetailCaptured: map[string]float64{"rows": 4821},
+				},
 			},
 		},
 

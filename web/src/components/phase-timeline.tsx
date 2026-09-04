@@ -1,9 +1,11 @@
 import type { StreamState } from "@/api/runStream"
-import type { Check, Step, StepStatus } from "@/api/types"
+import type { CapturedValue, Check, Step, StepStatus } from "@/api/types"
 import { EmptyState } from "@/components/empty-state"
 import { CheckStatusIcon, StepStatusIcon, toneClass } from "@/components/run-status"
 import { addNamespace } from "@/i18n"
 import run from "@/i18n/locales/en/run.json"
+import { formatBaseline, formatCount, formatDelta } from "@/lib/number"
+import { MoveDown, MoveUp } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 // The module that uses a namespace is the one that registers it. Without this
@@ -58,6 +60,58 @@ function merge(steps: Step[], live: StreamState | null): Row[] {
   return rows
 }
 
+/**
+ * What a check measured, beside what it used to measure.
+ *
+ * The comparison is the point, not the number. "1 206 890" answers nothing on
+ * its own; "1 206 890, and last week it was 1 204 331" is the line somebody
+ * can act on, and it is why the baseline is never dropped even when it is
+ * absent - a first drill says so with the no-value glyph rather than by
+ * leaving a gap the reader has to interpret.
+ *
+ * Nothing here is coloured, and that is a decision rather than an oversight.
+ * RestoreLab fails a value only against a bound the plan declared, and a
+ * declared bound that trips has already failed the check above. Painting an
+ * undeclared drop red would give the screen an opinion the engine does not
+ * have, which is how an operator learns to ignore red. The arrow says which
+ * way it went and stops there.
+ */
+function CapturedValues({ values }: { values: CapturedValue[] }) {
+  const { t } = useTranslation("run")
+  return (
+    <ul className="mt-1 space-y-0.5 pl-6">
+      {values.map((v) => {
+        const delta = formatDelta(v.value, v.baseline)
+        const rose = delta?.startsWith("+") ?? false
+        const Arrow = rose ? MoveUp : MoveDown
+        return (
+          <li
+            key={v.name}
+            className="tabular flex flex-wrap items-center gap-x-2 text-muted-foreground text-xs"
+          >
+            <span>
+              {t("value.line", {
+                name: v.name,
+                value: formatCount(v.value),
+                baseline: formatBaseline(v.baseline),
+              })}
+            </span>
+            {delta ? (
+              <span
+                className="inline-flex items-center gap-0.5"
+                title={t(rose ? "value.rose" : "value.fell")}
+              >
+                <Arrow aria-hidden="true" className="size-3 shrink-0" />
+                {delta}
+              </span>
+            ) : null}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 function CheckList({ checks }: { checks: Check[] }) {
   const { t } = useTranslation("run")
   return (
@@ -80,6 +134,9 @@ function CheckList({ checks }: { checks: Check[] }) {
             <p className={`mt-1 pl-6 text-xs ${toneClass("failed")}`}>
               {check.message}
             </p>
+          ) : null}
+          {check.values && check.values.length > 0 ? (
+            <CapturedValues values={check.values} />
           ) : null}
         </li>
       ))}
