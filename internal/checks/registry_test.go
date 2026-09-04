@@ -260,3 +260,53 @@ func TestRunOne_FillsNameTypeDurationAttempts(t *testing.T) {
 }
 
 var _ core.Check = (*fakeCheck)(nil)
+
+// TestACheckThatIgnoresItsCaptureFails is the mechanical backstop.
+//
+// The plan validator refuses a capture on a type that does not implement one,
+// so in a correct build this path is unreachable. It is tested anyway, with a
+// deliberately broken check, because the failure it prevents is silent: a
+// bound somebody wrote to catch an empty database, judged by nobody, reported
+// as success. An unreachable guard that is tested stays correct; one that is
+// only argued for rots.
+func TestACheckThatIgnoresItsCaptureFails(t *testing.T) {
+	r := New()
+	r.Register(passingCheckStub{typ: "forgetful"})
+
+	got := r.RunOne(context.Background(), core.Target{}, core.CheckConfig{
+		Type:    "forgetful",
+		Capture: "rows",
+		Assert:  &core.AssertSpec{Min: float64Ptr(1)},
+	})
+
+	if got.Status != core.CheckFail {
+		t.Fatalf("status = %q, want fail: the bound on %q was never judged", got.Status, "rows")
+	}
+	if !strings.Contains(got.Message, "rows") || !strings.Contains(got.Message, "forgetful") {
+		t.Errorf("message names neither the value nor the type: %q", got.Message)
+	}
+}
+
+// TestACheckWithNoCaptureIsLeftAlone keeps the guard from firing on the
+// overwhelming majority of checks, which capture nothing at all.
+func TestACheckWithNoCaptureIsLeftAlone(t *testing.T) {
+	r := New()
+	r.Register(passingCheckStub{typ: "ordinary"})
+
+	got := r.RunOne(context.Background(), core.Target{}, core.CheckConfig{Type: "ordinary"})
+	if got.Status != core.CheckPass {
+		t.Fatalf("status = %q, want pass: %s", got.Status, got.Message)
+	}
+}
+
+// passingCheckStub passes and records nothing, which is exactly the shape of
+// a check type that declared support for capture and never implemented it.
+type passingCheckStub struct{ typ string }
+
+func (s passingCheckStub) Type() string { return s.typ }
+
+func (s passingCheckStub) Run(context.Context, core.Target, core.CheckConfig) core.CheckResult {
+	return core.CheckResult{Status: core.CheckPass, Message: "fine"}
+}
+
+func float64Ptr(v float64) *float64 { return &v }

@@ -68,6 +68,11 @@ func (w *Worker) execute(parent context.Context, q store.QueuedRun) {
 			rec.Emit(e)
 			w.mirrorState(q.ID, e)
 		},
+		// Same store the journal writes to, narrowed to one read-only method
+		// and pinned to this run's workload. The engine holds no database
+		// handle, so a database that will not answer costs a drift check its
+		// baseline and costs the drill nothing.
+		Baselines: journal.Baselines(w.store, q.SourceWorkloadID),
 	})
 	if err != nil {
 		w.fail(q.ID, err)

@@ -136,7 +136,41 @@ attemptLoop:
 	result.CompletedAt = now
 	result.Duration = now.Sub(start)
 	result.Attempts = attempts
+
+	if msg := unreadCapture(result, cfg); msg != "" {
+		result.Status = core.CheckFail
+		result.Message = msg
+	}
 	return result
+}
+
+// unreadCapture catches a check that passed while quietly ignoring the value
+// the plan told it to read, and reports why, or "" when there is nothing
+// wrong.
+//
+// The plan validator already refuses a capture on a type that does not
+// implement one, so in a correct build this never fires. It exists for the
+// build that is not correct: the day somebody adds a type to
+// capturingCheckTypes in the plan package and does not implement the reading,
+// the failure without this guard is a check that passes, records nothing and
+// judges no bound. A bound written to catch an empty database, quietly
+// judging nothing, is the exact thing this slice exists to remove, and it is
+// worth one comparison per check to make that impossible rather than
+// unlikely.
+//
+// It fires only on a check that passed. One that already failed has a better
+// message than this one, and overwriting it would hide the real fault.
+func unreadCapture(result core.CheckResult, cfg core.CheckConfig) string {
+	if cfg.Capture == "" || !result.OK() {
+		return ""
+	}
+	captured, _ := result.Details[DetailCaptured].(map[string]float64)
+	if _, ok := captured[cfg.Capture]; ok {
+		return ""
+	}
+	return fmt.Sprintf(
+		"a %s check does not read the value %q that this plan captures, so the bounds on it were never judged",
+		cfg.Type, cfg.Capture)
 }
 
 // runAttempt runs a single attempt of check, applying cfg.Timeout as a

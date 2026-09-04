@@ -56,6 +56,18 @@ type Deps struct {
 
 	// Emit streams progress events to the CLI / an SSE handler. nil -> no-op.
 	Emit func(Event)
+
+	// Baselines lets a check compare what it measured against what previous
+	// drills of this workload measured. nil -> no history, which a drift
+	// check reports as skipped with its reason rather than as a failure.
+	//
+	// It is one read-only method and must stay one. The engine has never held
+	// a database handle and must not start: the journal writes the history,
+	// the engine emits events, and that separation is what stops a locked or
+	// corrupt database from being able to fail a drill. Whose history this is
+	// was decided by the caller that built the reader, which is why a check
+	// running inside the workflow has no way to name another workload.
+	Baselines core.BaselineReader
 }
 
 // RunOptions carries the per-run knobs that come from the caller (CLI flags,
@@ -82,6 +94,10 @@ type Engine struct {
 	now     func() time.Time
 	sleep   func(ctx context.Context, d time.Duration) error
 	emit    func(Event)
+
+	// baselines is nil whenever there is no history to read, which is a
+	// supported state and not a degraded one.
+	baselines core.BaselineReader
 }
 
 // New builds an Engine from Deps, applying safe defaults to every optional
@@ -105,6 +121,13 @@ func New(d Deps) (*Engine, error) {
 		now:     d.Now,
 		sleep:   d.Sleep,
 		emit:    d.Emit,
+
+		// Deliberately not defaulted. Every other optional field gets a safe
+		// stand-in here; this one stays nil, because a reader that answered
+		// "no values" would be indistinguishable from a real history that
+		// happens to be empty, and the checks already read nil as the thing
+		// it is.
+		baselines: d.Baselines,
 	}
 	if e.log == nil {
 		e.log = slog.Default()

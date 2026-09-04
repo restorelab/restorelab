@@ -182,7 +182,147 @@ func (CommandCheck) Run(ctx context.Context, target core.Target, cfg core.CheckC
 	if trimmedStdout != "" {
 		msg = fmt.Sprintf("exit %d, stdout %q", res.ExitCode, truncate(trimmedStdout, 200))
 	}
+
+	// Only here, once every contract the command declared for itself has
+	// held. A number read out of a command that exited non-zero, or printed
+	// something other than what the plan said it would, is not a measurement
+	// of anything: recording it would drop a reading nobody can trust into
+	// the window the next drill is graded against, and the median is meant to
+	// describe five nights that actually happened.
+	if cfg.Capture == "" {
+		return core.CheckResult{Status: core.CheckPass, Message: msg, Details: details}
+	}
+	return evaluateCapture(ctx, target, cfg, stdout, msg, details)
+}
+
+// Details keys under which a check reports what it measured. They are read by
+// the journal on its way to the database and by the report on its way to a
+// screen, so they are named once here rather than spelled out at each end.
+const (
+	// DetailCaptured holds map[string]float64: the numbers this check read
+	// out of the workload, by capture name.
+	DetailCaptured = "captured"
+
+	// DetailBaseline holds map[string]float64: what the drift verdict was
+	// judged against. A number with nothing to compare it against is trivia;
+	// the comparison is the product, so it travels with the value.
+	DetailBaseline = "baseline"
+
+	// DetailDriftSkipped holds a string: why no drift verdict was reached.
+	// Present only when the plan asked for one, so its absence never has to
+	// be read as a silent pass.
+	DetailDriftSkipped = "drift_skipped"
+)
+
+// DriftWindow is how many previous readings a drift verdict is judged
+// against: the median of the last five.
+//
+// Short on purpose. A long window keeps a workload being compared against
+// what it looked like a month ago, which is how a table that grows every day
+// starts failing a tolerance nobody changed. Five is enough for a median to
+// resist one anomalous reading and short enough to follow a real trend.
+const DriftWindow = 5
+
+// evaluateCapture reads the number the command printed and judges it against
+// whatever the plan declared about it.
+//
+// The order is assert then drift, and it matters when both are declared: the
+// assert is a bound the operator vouched for outright, the drift is a bound
+// relative to a history that may not exist. Reporting the absolute violation
+// first means the message names the fact that is true regardless of what the
+// database could answer.
+func evaluateCapture(ctx context.Context, target core.Target, cfg core.CheckConfig,
+	stdout, msg string, details map[string]any) core.CheckResult {
+
+	value, err := ParseCaptured(stdout)
+	if err != nil {
+		// A failure, not a core.CheckError. CheckError means the check could
+		// not run, makes no claim about the workload and never degrades a
+		// verdict; a query that was supposed to print a row count and printed
+		// nothing is a fact about the restored workload. Grading that as "the
+		// check could not run" is the silent pass this whole slice exists to
+		// prevent.
+		return core.CheckResult{
+			Status:  core.CheckFail,
+			Message: fmt.Sprintf("could not capture %q: %v", cfg.Capture, err),
+			Details: details,
+		}
+	}
+
+	// Recorded before any bound is judged, so a reading that broke a bound is
+	// still in the history and still in the report. The value that failed is
+	// the one somebody will want to see.
+	details[DetailCaptured] = map[string]float64{cfg.Capture: value}
+
+	if cfg.Assert != nil {
+		if violation := CheckAssert(value, *cfg.Assert); violation != "" {
+			return core.CheckResult{
+				Status:  core.CheckFail,
+				Message: fmt.Sprintf("%s: %s", cfg.Capture, violation),
+				Details: details,
+			}
+		}
+	}
+
+	if cfg.Drift == nil {
+		return core.CheckResult{Status: core.CheckPass, Message: msg, Details: details}
+	}
+
+	baseline, skipped := readBaseline(ctx, target, cfg)
+	if skipped != "" {
+		// Skipped with its reason, never failed. Being unable to read the
+		// past is not evidence about the present, and a first drill has no
+		// past at all: failing it would mean every new workload starts red.
+		details[DetailDriftSkipped] = skipped
+		return core.CheckResult{
+			Status:  core.CheckPass,
+			Message: fmt.Sprintf("%s (%s)", msg, skipped),
+			Details: details,
+		}
+	}
+	details[DetailBaseline] = map[string]float64{cfg.Capture: baseline}
+
+	if violation := CheckDrift(value, baseline, *cfg.Drift); violation != "" {
+		return core.CheckResult{
+			Status:  core.CheckFail,
+			Message: fmt.Sprintf("%s: %s", cfg.Capture, violation),
+			Details: details,
+		}
+	}
 	return core.CheckResult{Status: core.CheckPass, Message: msg, Details: details}
+}
+
+// readBaseline returns the figure this reading is judged against, or the
+// reason there is none.
+//
+// The three ways of having no baseline get three different sentences and one
+// verdict. They are genuinely different situations for whoever is reading the
+// report at 03:00: a first drill is expected, a database that would not answer
+// is worth investigating, and neither is a statement about the workload.
+//
+// The check names its own check and its own capture and nothing else. The
+// workload is fixed where the reader was built, by the caller that knows which
+// drill this is, which is why a check has no way to ask for another machine.
+func readBaseline(ctx context.Context, target core.Target, cfg core.CheckConfig) (float64, string) {
+	if target.Baseline == nil {
+		return 0, fmt.Sprintf("drift not judged: no history is available for this workload, "+
+			"so there is nothing to compare %q against", cfg.Capture)
+	}
+
+	// displayName, so the name asked for here is the name the journal wrote
+	// the check under. A check with no name is stored under its type, and a
+	// lookup on anything else would read a history of nothing and quietly
+	// report every drill as having no baseline.
+	values, err := target.Baseline.Values(ctx, displayName(cfg), cfg.Capture, DriftWindow)
+	if err != nil {
+		return 0, fmt.Sprintf("drift not judged: the history could not be read: %v", err)
+	}
+
+	baseline, ok := Baseline(values)
+	if !ok {
+		return 0, fmt.Sprintf("drift not judged: no previous drill of this workload measured %q", cfg.Capture)
+	}
+	return baseline, ""
 }
 
 // resolveShellArgv turns a "run" command line into an argv per the

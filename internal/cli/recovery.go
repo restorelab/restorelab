@@ -240,7 +240,8 @@ func (a *app) runPlan(ctx context.Context, p *plan.Plan, stored *store.Plan, f *
 	// The drill is mirrored into the history as it happens. rec never returns
 	// an error: a locked database or a full disk must not abort a destructive
 	// operation on a production cluster.
-	rec := journal.New(a.store(ctx), a.runLogger())
+	hist := a.store(ctx)
+	rec := journal.New(hist, a.runLogger())
 	rec.Prepare(p.Name, hvEntry.ID, p.Workload.ID, p.Workload.Name, planYAML(p))
 	if stored != nil {
 		// So a drill run from the terminal on a stored plan looks in the
@@ -270,6 +271,13 @@ func (a *app) runPlan(ctx context.Context, p *plan.Plan, stored *store.Plan, f *
 		// The event stream is what the user reads; structured logs are for
 		// --verbose and for the future server, not for a terminal timeline.
 		Logger: a.runLogger(),
+		// A read-only view of this workload's own history, and nothing more.
+		// The engine never sees the store: the journal writes history, the
+		// engine emits events, and that separation is what stops a locked or
+		// unreadable database from failing a drill. When there is no history
+		// (store.Noop, an empty database, a first drill) this answers with no
+		// values and a declared drift check is skipped with its reason.
+		Baselines: journal.Baselines(hist, p.Workload.ID),
 	})
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/restorelab/restorelab/internal/checks"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/recovery"
 	"github.com/restorelab/restorelab/internal/store"
@@ -183,6 +184,21 @@ func (b *brokenStore) LastDeliveries(context.Context, []string) (map[string]stor
 	return nil, errBroken
 }
 
+// The captured-value methods fail too, and the write failing is the one that
+// matters: the recorder must keep returning no error when a value cannot be
+// stored. A drill that measured the number is not less true because the
+// database refused to remember it.
+func (b *brokenStore) SaveCheckValue(context.Context, string, int, string, float64) error {
+	b.calls++
+	return errBroken
+}
+func (b *brokenStore) CapturedValues(context.Context, string, string, string, int) ([]float64, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) RunCheckValues(context.Context, string) (map[int]map[string]float64, error) {
+	return nil, errBroken
+}
+
 func (b *brokenStore) Describe() string { return "broken" }
 func (b *brokenStore) Close() error     { return errBroken }
 
@@ -195,6 +211,16 @@ type tempWorkloadCall struct {
 	node           string
 }
 
+// savedValue records one SaveCheckValue invocation seen by spyStore. The seq
+// is the point of recording it: a value has to land on the same check row the
+// check itself was written to, or the next drill reads a history of nothing.
+type savedValue struct {
+	runID string
+	seq   int
+	name  string
+	value float64
+}
+
 // spyStore records what it was asked to write.
 type spyStore struct {
 	store.Noop
@@ -204,6 +230,7 @@ type spyStore struct {
 	runs          []*core.RecoveryRun
 	plans         []string
 	tempWorkloads []tempWorkloadCall
+	values        []savedValue
 }
 
 func (s *spyStore) CreateRun(_ context.Context, run *core.RecoveryRun, planYAML string) error {
@@ -221,6 +248,10 @@ func (s *spyStore) SaveStep(_ context.Context, _ string, _ int, step core.Step) 
 }
 func (s *spyStore) SaveCheck(_ context.Context, _ string, _ int, check core.CheckResult) error {
 	s.checks = append(s.checks, check)
+	return nil
+}
+func (s *spyStore) SaveCheckValue(_ context.Context, runID string, seq int, name string, value float64) error {
+	s.values = append(s.values, savedValue{runID: runID, seq: seq, name: name, value: value})
 	return nil
 }
 func (s *spyStore) SetTempWorkload(_ context.Context, runID, tempWorkloadID, node string) error {
@@ -253,8 +284,15 @@ func TestRecorderSwallowsEveryStoreFailure(t *testing.T) {
 	run := &core.RecoveryRun{
 		ID: "abc", PlanName: "adhoc-110", StartedAt: now,
 		State: core.RunSuccess, Result: core.ResultSuccess,
-		Steps:  []core.Step{{Name: "restore", Status: core.StepDone}},
-		Checks: []core.CheckResult{{Name: "COMMAND", Status: core.CheckPass}},
+		Steps: []core.Step{{Name: "restore", Status: core.StepDone}},
+		// The check carries a captured value, so the store's value writes are
+		// exercised too. A measurement that cannot be stored costs the next
+		// drill its baseline and must cost this one nothing.
+		Checks: []core.CheckResult{{
+			Name:    "COMMAND",
+			Status:  core.CheckPass,
+			Details: map[string]any{checks.DetailCaptured: map[string]float64{"rows": 1204331}},
+		}},
 	}
 	rec.Finish(ctx, run)
 

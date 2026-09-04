@@ -13,6 +13,8 @@ package journal
 import (
 	"context"
 	"log/slog"
+	"maps"
+	"slices"
 	"sync"
 
 	"github.com/restorelab/restorelab/internal/core"
@@ -247,10 +249,36 @@ func (r *Recorder) Finish(ctx context.Context, run *core.RecoveryRun) {
 			break // one failure means the rest will fail the same way
 		}
 	}
+	// A measured value rides along at its check's own seq. CapturedValues
+	// joins check_values back to run_checks by that seq to recover the name
+	// the plan wrote, so a value one row off is a value attributed to a
+	// different measurement.
+	//
+	// valuesFailed stops after the first refusal rather than warning once per
+	// value: they will all fail the same way, and a drill measuring a dozen
+	// things should not answer a full disk with a dozen identical lines.
+	// Failing here costs the next drill its baseline, which is a skipped
+	// comparison, and costs this drill nothing at all.
+	valuesFailed := false
 	for i, check := range run.Checks {
 		if err := r.store.SaveCheck(ctx, run.ID, i, check); err != nil {
 			r.warn("could not record a check", err)
 			break
+		}
+		if valuesFailed {
+			continue
+		}
+		values := capturedValues(check)
+		// By name, because Go randomises map iteration and a history whose
+		// write order changes between two drills of the same plan is a
+		// history nobody can diff when they are trying to work out what
+		// happened.
+		for _, name := range slices.Sorted(maps.Keys(values)) {
+			if err := r.store.SaveCheckValue(ctx, run.ID, i, name, values[name]); err != nil {
+				r.warn("could not record a captured value", err)
+				valuesFailed = true
+				break
+			}
 		}
 	}
 

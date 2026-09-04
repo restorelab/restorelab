@@ -555,3 +555,336 @@ func TestCommandCheck_NoFallbackNoteWhenDetectionWorked(t *testing.T) {
 		t.Fatalf("Message must not blame detection when it succeeded, got: %q", res.Message)
 	}
 }
+
+// --- capture, assert and drift ------------------------------------------
+//
+// The judgement itself is exercised in values_test.go, against pure
+// functions and no guest at all. What is tested here is the wiring: that
+// nothing is measured out of a command that already failed its own contract,
+// that a declared bound changes the verdict, and that an unreadable history
+// never does.
+
+// fakeBaselines is a scriptable core.BaselineReader. It records what it was
+// asked for, because "which history did this check read" is a question the
+// design has an opinion about: a check may only ever see its own.
+type fakeBaselines struct {
+	values []float64
+	err    error
+
+	calls         int
+	lastCheckName string
+	lastValueName string
+	lastLimit     int
+}
+
+func (f *fakeBaselines) Values(_ context.Context, checkName, valueName string, limit int) ([]float64, error) {
+	f.calls++
+	f.lastCheckName = checkName
+	f.lastValueName = valueName
+	f.lastLimit = limit
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.values, nil
+}
+
+var _ core.BaselineReader = (*fakeBaselines)(nil)
+
+// runCaptureCheck runs a command check that carries capture/assert/drift,
+// against a target whose Baseline may be nil (the no-history case).
+func runCaptureCheck(t *testing.T, exec core.GuestExecutor, baselines core.BaselineReader, cfg core.CheckConfig) core.CheckResult {
+	t.Helper()
+	target := core.Target{WorkloadID: "vm-1", IP: "10.0.0.5", Exec: exec}
+	if baselines != nil {
+		target.Baseline = baselines
+	}
+	cfg.Type = "command"
+	return CommandCheck{}.Run(context.Background(), target, cfg)
+}
+
+// capturedValue reads one measurement back out of a result's details.
+func capturedValue(t *testing.T, res core.CheckResult, name string) (float64, bool) {
+	t.Helper()
+	values, ok := res.Details[DetailCaptured].(map[string]float64)
+	if !ok {
+		return 0, false
+	}
+	v, ok := values[name]
+	return v, ok
+}
+
+// A capture with no bound records the number and changes no verdict. That is
+// C5 carried forward: RestoreLab does not accuse a backup on a statistic
+// nobody agreed to.
+func TestCommandCheck_CaptureRecordsTheValue(t *testing.T) {
+	exec := &fakeExecutor{result: passResult(0, "1204331\n", "")}
+	res := runCaptureCheck(t, exec, nil, core.CheckConfig{
+		Name:    "orders",
+		Params:  map[string]any{"run": "psql -tAc " + sqlCount},
+		Capture: "rows",
+	})
+
+	if res.Status != core.CheckPass {
+		t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+	}
+	got, ok := capturedValue(t, res, "rows")
+	if !ok {
+		t.Fatalf("no captured value in details %#v", res.Details)
+	}
+	if got != 1204331 {
+		t.Fatalf("captured %v, want 1204331", got)
+	}
+}
+
+// sqlCount is the query the design note uses, kept out of the test body so
+// its quoting does not fight the Go string literal.
+const sqlCount = `'select count(*) from orders'`
+
+// The measurement comes after the command's own contract, and this is the
+// case that matters: a number read out of a command that already failed is
+// not a measurement of anything, and recording it would put a reading nobody
+// can trust into the window the next drill is graded against.
+func TestCommandCheck_NothingIsCapturedFromACommandThatFailed(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *core.ExecResult
+		params map[string]any
+	}{
+		{"bad exit code", passResult(1, "0\n", "could not connect"), map[string]any{"run": "q"}},
+		{"expect mismatch", passResult(0, "0\n", ""), map[string]any{"run": "q", "expect": "1204331"}},
+		{"stdout_contains mismatch", passResult(0, "0\n", ""), map[string]any{"run": "q", "stdout_contains": "12"}},
+		{"stdout_matches mismatch", passResult(0, "0\n", ""), map[string]any{"run": "q", "stdout_matches": `^1\d+$`}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baselines := &fakeBaselines{values: []float64{1204331}}
+			res := runCaptureCheck(t, &fakeExecutor{result: tt.result}, baselines, core.CheckConfig{
+				Name:    "orders",
+				Params:  tt.params,
+				Capture: "rows",
+				Assert:  &core.AssertSpec{Min: floatPtr(1)},
+				Drift:   &core.DriftSpec{MaxDrop: 10, MaxDropIsPercent: true},
+			})
+
+			if res.Status != core.CheckFail {
+				t.Fatalf("Status = %v, Message = %q, want CheckFail", res.Status, res.Message)
+			}
+			if _, ok := capturedValue(t, res, "rows"); ok {
+				t.Errorf("a value was captured out of a command that failed its own contract: %#v", res.Details)
+			}
+			if baselines.calls != 0 {
+				t.Errorf("the history was read for a command that failed its own contract")
+			}
+		})
+	}
+}
+
+// A capture that cannot be read fails the check rather than erroring it.
+// core.CheckError makes no claim about the workload and never degrades a
+// verdict; a query that was supposed to print a row count and printed nothing
+// is a fact about the restored workload, and grading it as "the check could
+// not run" is the silent pass this whole slice exists to prevent.
+func TestCommandCheck_CaptureRefusesWhatIsNotANumber(t *testing.T) {
+	for _, stdout := range []string{"", "three\n", "NaN\n", "1\n2\n"} {
+		t.Run(fmt.Sprintf("%q", stdout), func(t *testing.T) {
+			res := runCaptureCheck(t, &fakeExecutor{result: passResult(0, stdout, "")}, nil, core.CheckConfig{
+				Name:    "orders",
+				Params:  map[string]any{"run": "q"},
+				Capture: "rows",
+			})
+
+			if res.Status != core.CheckFail {
+				t.Fatalf("Status = %v, Message = %q, want CheckFail", res.Status, res.Message)
+			}
+			if !strings.Contains(res.Message, "rows") {
+				t.Errorf("Message should name the capture, got %q", res.Message)
+			}
+			if _, ok := capturedValue(t, res, "rows"); ok {
+				t.Errorf("an unreadable capture was recorded anyway: %#v", res.Details)
+			}
+		})
+	}
+}
+
+func TestCommandCheck_AssertViolationFailsTheCheck(t *testing.T) {
+	res := runCaptureCheck(t, &fakeExecutor{result: passResult(0, "0\n", "")}, nil, core.CheckConfig{
+		Name:    "orders",
+		Params:  map[string]any{"run": "q"},
+		Capture: "rows",
+		Assert:  &core.AssertSpec{Min: floatPtr(1)},
+	})
+
+	if res.Status != core.CheckFail {
+		t.Fatalf("Status = %v, Message = %q, want CheckFail", res.Status, res.Message)
+	}
+	// The capture name, the reading and the bound: the three facts an
+	// operator needs at 03:00 without opening the plan.
+	for _, want := range []string{"rows", "0", "1"} {
+		if !strings.Contains(res.Message, want) {
+			t.Errorf("Message %q should mention %q", res.Message, want)
+		}
+	}
+	// The value is still recorded. A reading that broke a bound is exactly
+	// the one the next report should be able to show.
+	if got, ok := capturedValue(t, res, "rows"); !ok || got != 0 {
+		t.Errorf("captured = %v (present %v), want 0 recorded", got, ok)
+	}
+}
+
+func TestCommandCheck_AssertSatisfiedPasses(t *testing.T) {
+	res := runCaptureCheck(t, &fakeExecutor{result: passResult(0, "1204331\n", "")}, nil, core.CheckConfig{
+		Name:    "orders",
+		Params:  map[string]any{"run": "q"},
+		Capture: "rows",
+		Assert:  &core.AssertSpec{Min: floatPtr(1)},
+	})
+
+	if res.Status != core.CheckPass {
+		t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+	}
+}
+
+func TestCommandCheck_DriftViolationFailsTheCheck(t *testing.T) {
+	baselines := &fakeBaselines{values: []float64{1200000, 1204331, 1210000}}
+	res := runCaptureCheck(t, &fakeExecutor{result: passResult(0, "0\n", "")}, baselines, core.CheckConfig{
+		Name:    "orders",
+		Params:  map[string]any{"run": "q"},
+		Capture: "rows",
+		Drift:   &core.DriftSpec{MaxDrop: 10, MaxDropIsPercent: true},
+	})
+
+	if res.Status != core.CheckFail {
+		t.Fatalf("Status = %v, Message = %q, want CheckFail", res.Status, res.Message)
+	}
+	if !strings.Contains(res.Message, "1204331") {
+		t.Errorf("Message %q should name the baseline it was judged against", res.Message)
+	}
+}
+
+// A check reads its own history and nobody else's. The workload is fixed
+// where the reader is built; the check may only name its own check and its
+// own capture, and five is the window the median is defined over.
+func TestCommandCheck_DriftReadsOnlyItsOwnHistory(t *testing.T) {
+	baselines := &fakeBaselines{values: []float64{1204331}}
+	runCaptureCheck(t, &fakeExecutor{result: passResult(0, "1204331\n", "")}, baselines, core.CheckConfig{
+		Name:    "orders",
+		Params:  map[string]any{"run": "q"},
+		Capture: "rows",
+		Drift:   &core.DriftSpec{MaxDrop: 10, MaxDropIsPercent: true},
+	})
+
+	if baselines.lastCheckName != "orders" || baselines.lastValueName != "rows" {
+		t.Errorf("the history was read for check %q value %q, want orders/rows",
+			baselines.lastCheckName, baselines.lastValueName)
+	}
+	if baselines.lastLimit != DriftWindow {
+		t.Errorf("the window was %d, want %d", baselines.lastLimit, DriftWindow)
+	}
+}
+
+// Being unable to read the past is not evidence about the present. Three ways
+// of having no history, one verdict: the drift half is skipped with its
+// reason and the check is not failed on it.
+func TestCommandCheck_DriftWithoutAHistoryIsSkippedNotFailed(t *testing.T) {
+	tests := []struct {
+		name      string
+		baselines core.BaselineReader
+		reason    string
+	}{
+		{"no reader at all", nil, "no history"},
+		{"the history could not be read", &fakeBaselines{err: errors.New("database is locked")}, "database is locked"},
+		{"no previous drill measured this", &fakeBaselines{}, "no previous drill"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := runCaptureCheck(t, &fakeExecutor{result: passResult(0, "1204331\n", "")}, tt.baselines, core.CheckConfig{
+				Name:    "orders",
+				Params:  map[string]any{"run": "q"},
+				Capture: "rows",
+				Drift:   &core.DriftSpec{MaxDrop: 10, MaxDropIsPercent: true},
+			})
+
+			if res.Status != core.CheckPass {
+				t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+			}
+			skipped, _ := res.Details[DetailDriftSkipped].(string)
+			if skipped == "" {
+				t.Fatalf("the drift check was not reported as skipped: %#v", res.Details)
+			}
+			if !strings.Contains(skipped, tt.reason) {
+				t.Errorf("skip reason %q should say why (%q)", skipped, tt.reason)
+			}
+			// The reason has to reach the operator, not just the database.
+			if !strings.Contains(res.Message, skipped) {
+				t.Errorf("Message %q should carry the skip reason %q", res.Message, skipped)
+			}
+			if _, ok := capturedValue(t, res, "rows"); !ok {
+				t.Errorf("the value was not recorded even though the command succeeded: %#v", res.Details)
+			}
+		})
+	}
+}
+
+// The two halves are independent. A history that cannot be read must not stop
+// the bound the operator actually vouched for from being judged.
+func TestCommandCheck_AssertIsJudgedEvenWhenDriftIsSkipped(t *testing.T) {
+	res := runCaptureCheck(t, &fakeExecutor{result: passResult(0, "0\n", "")}, nil, core.CheckConfig{
+		Name:    "orders",
+		Params:  map[string]any{"run": "q"},
+		Capture: "rows",
+		Assert:  &core.AssertSpec{Min: floatPtr(1)},
+		Drift:   &core.DriftSpec{MaxDrop: 10, MaxDropIsPercent: true},
+	})
+
+	if res.Status != core.CheckFail {
+		t.Fatalf("Status = %v, Message = %q, want CheckFail on the declared minimum", res.Status, res.Message)
+	}
+	if !strings.Contains(res.Message, "minimum") {
+		t.Errorf("Message %q should be about the assert, not about the missing history", res.Message)
+	}
+}
+
+// A check with no capture must not gain a history read, a details key or any
+// new way to fail. Most checks in most plans are this one.
+func TestCommandCheck_NoCaptureTouchesNothing(t *testing.T) {
+	baselines := &fakeBaselines{values: []float64{1204331}}
+	res := runCaptureCheck(t, &fakeExecutor{result: passResult(0, "hello\n", "")}, baselines, core.CheckConfig{
+		Name:   "smoke",
+		Params: map[string]any{"run": "echo hello"},
+	})
+
+	if res.Status != core.CheckPass {
+		t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+	}
+	if baselines.calls != 0 {
+		t.Errorf("a check with no capture read the history %d times", baselines.calls)
+	}
+	if _, ok := res.Details[DetailCaptured]; ok {
+		t.Errorf("a check with no capture reported a captured value: %#v", res.Details)
+	}
+}
+
+// The baseline a drift verdict was judged against travels with the result, so
+// a report can show the comparison rather than a bare number.
+func TestCommandCheck_TheBaselineIsRecordedBesideTheValue(t *testing.T) {
+	baselines := &fakeBaselines{values: []float64{1200000, 1204331, 1210000}}
+	res := runCaptureCheck(t, &fakeExecutor{result: passResult(0, "1206890\n", "")}, baselines, core.CheckConfig{
+		Name:    "orders",
+		Params:  map[string]any{"run": "q"},
+		Capture: "rows",
+		Drift:   &core.DriftSpec{MaxDrop: 10, MaxDropIsPercent: true},
+	})
+
+	if res.Status != core.CheckPass {
+		t.Fatalf("Status = %v, Message = %q, want CheckPass", res.Status, res.Message)
+	}
+	got, ok := res.Details[DetailBaseline].(map[string]float64)
+	if !ok {
+		t.Fatalf("no baseline in details %#v", res.Details)
+	}
+	if got["rows"] != 1204331 {
+		t.Fatalf("baseline = %v, want the median 1204331", got["rows"])
+	}
+}

@@ -290,7 +290,13 @@ func (e *Engine) waitForGuest(ctx context.Context, run *core.RecoveryRun, p *pla
 
 	if p.Startup.Skip {
 		e.endStep(run, idx, core.StepSkipped, "startup skipped, guest was not booted", nil)
-		return core.Target{WorkloadID: tempID, Node: run.Node, Name: run.SourceName, Exec: e.guestExecutor()}, nil
+		return core.Target{
+			WorkloadID: tempID,
+			Node:       run.Node,
+			Name:       run.SourceName,
+			Exec:       e.guestExecutor(),
+			Baseline:   e.baselines,
+		}, nil
 	}
 
 	timeout := p.Startup.Timeout.D()
@@ -326,6 +332,7 @@ func (e *Engine) waitForGuest(ctx context.Context, run *core.RecoveryRun, p *pla
 				Node:       run.Node,
 				Name:       run.SourceName,
 				Exec:       e.guestExecutor(),
+				Baseline:   e.baselines,
 			}
 			e.endStep(run, idx, core.StepDone, fmt.Sprintf("guest is up%s", ipSuffix(ip)), nil)
 			return target, nil
