@@ -14,6 +14,7 @@ import (
 	"github.com/restorelab/restorelab/internal/api"
 	"github.com/restorelab/restorelab/internal/config"
 	"github.com/restorelab/restorelab/internal/core"
+	"github.com/restorelab/restorelab/internal/notify"
 	"github.com/restorelab/restorelab/internal/report"
 	"github.com/restorelab/restorelab/internal/scheduler"
 	"github.com/restorelab/restorelab/internal/store"
@@ -54,6 +55,11 @@ A process that runs the worker also queues the drills stored plans schedule
 for themselves. Use --no-scheduler to stop that for one night without
 touching any plan; see ` + "`restorelab schedule list`" + ` for what is coming.
 
+Any process announces the runs that changed what a workload proves, whether or
+not it runs the worker, because in a split deployment the drills happen
+elsewhere. Use --no-notify to stay quiet for one night; see
+` + "`restorelab notify list`" + ` for the channels.
+
 Listening anywhere but loopback needs at least one API token, created with
 ` + "`restorelab token create <name>`" + `. Put TLS in front of it with a
 reverse proxy.`,
@@ -73,6 +79,8 @@ reverse proxy.`,
 		"confirm that another process runs the worker against the same database (required with --no-worker)")
 	f.BoolVar(&opts.noScheduler, "no-scheduler", false,
 		"do not queue the drills stored plans schedule for themselves")
+	f.BoolVar(&opts.noNotify, "no-notify", false,
+		"do not send notifications for runs that change what a workload proves")
 	return cmd
 }
 
@@ -92,6 +100,11 @@ type serveOptions struct {
 	// switch for "we are migrating the cluster tonight, stop everything";
 	// stopping one plan is done by removing its schedule.
 	noScheduler bool
+	// noNotify stops this process sending notifications. It is the switch for
+	// a maintenance window where the drills are expected to fail and nobody
+	// wants to be told about each one; silencing one channel for good is done
+	// by disabling it in the configuration.
+	noNotify bool
 }
 
 // check refuses the two shapes of process that cannot do their job.
@@ -172,6 +185,14 @@ func (a *app) serve(ctx context.Context, opts serveOptions) error {
 	// first one keeps.
 	provs := &cliProviders{a: a}
 
+	// One adapter, shared by the dispatcher and the API, and that sharing is
+	// the fix rather than a convenience. It owns the mutex that serialises
+	// every read and write of the channel configuration; two instances would
+	// hold two mutexes and serialise nothing, so the dashboard writing a
+	// channel while the dispatcher read the list would be the same data race
+	// with the lock taken.
+	channels := &cliNotifications{a: a}
+
 	// A worker stops when this context does, and it is cancelled on the way
 	// out of this function whatever ends it - a signal, or a listener that
 	// could not bind. Without that, a serve that failed to listen would leave
@@ -242,13 +263,17 @@ func (a *app) serve(ctx context.Context, opts serveOptions) error {
 			"scheduler off in the configuration: plans keep their schedule, nothing acts on it"))
 	}
 
+	if err := a.startDispatcher(ctx, cfg, channels, history, opts, &wg); err != nil {
+		return err
+	}
+
 	if opts.noListen {
 		fmt.Fprintf(a.out, "  history: %s\n", history.Describe())
 		<-ctx.Done()
 		return nil
 	}
 
-	srv := api.New(serveAPIOptions(history, cfg, provs))
+	srv := api.New(serveAPIOptions(history, cfg, provs, channels, opts.noNotify))
 
 	fmt.Fprintf(a.out, "%s listening on http://%s/api/v1\n", a.ok(), opts.listen)
 	fmt.Fprintf(a.out, "  history: %s\n", history.Describe())
@@ -268,6 +293,97 @@ func (a *app) serve(ctx context.Context, opts serveOptions) error {
 	return api.Serve(ctx, opts.listen, srv, func(format string, args ...any) {
 		fmt.Fprintf(a.err, format+"\n", args...)
 	})
+}
+
+// startDispatcher starts the notification dispatcher beside the scheduler, on
+// the same context and the same wait group, and prints what it will do.
+//
+// Unlike the scheduler it is deliberately not tied to the worker. The
+// scheduler is, because a process that queues drills nobody drains fills a
+// queue nobody empties; nothing of the sort applies here. A process that only
+// serves the API still has a database full of runs somebody should hear
+// about, and in a split deployment the drills are executed somewhere else
+// entirely - tying alerting to the worker would mean the half of the
+// installation people look at is the half that cannot speak.
+//
+// The line it prints is not decoration. An operator who believes alerts are
+// on when they are not misreads every silence that follows, which is the
+// failure this whole slice exists to prevent.
+//
+// It starts even when no channel is configured yet. That is not idling for
+// its own sake: the channel list is re-read on every tick, so a process that
+// declined to start one because config.yaml happened to be empty at boot
+// would still need a restart before the first channel added from the
+// dashboard said anything. What it costs while nothing is configured is two
+// indexed queries a minute; what it changes is that the runs going past are
+// marked as considered rather than kept, so a channel added on Friday
+// announces what happens from Friday and not a backlog of the whole week.
+func (a *app) startDispatcher(
+	ctx context.Context, cfg *config.Config, channels *cliNotifications,
+	history store.Store, opts serveOptions, wg *sync.WaitGroup,
+) error {
+	if opts.noNotify {
+		fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
+			"notifications off (--no-notify): the channels stay configured, nothing is sent"))
+		return nil
+	}
+
+	// The URLs are sealed, so the dispatcher needs the master key. Failing to
+	// find it is reported and survived rather than fatal: notifications are
+	// the one component that must never be the reason a process that also
+	// drills workloads refuses to start.
+	//
+	// The warning is worth printing even with nothing configured yet, because
+	// the dispatcher would start without it and then fail every message the
+	// dashboard's first channel produced. Its wording does not assume there is
+	// a channel today: there may be one in a minute.
+	key, err := a.masterKey()
+	if err != nil {
+		fmt.Fprintf(a.err, "%s the master key cannot be read, so no notification will be sent: %v\n",
+			a.warn(), err)
+		return nil
+	}
+
+	disp, err := notify.New(notify.Options{
+		Store: history,
+		// The accessor, not the slice. It is read on every tick, under the
+		// lock the dashboard's writes take, which is what makes a channel
+		// added at 02:00 speak at 02:01 instead of after the next restart.
+		Channels: channels.configured,
+		Key:      key,
+		BaseURL:  cfg.Server.BaseURL,
+		Logger:   a.runLogger(),
+	})
+	if err != nil {
+		return err
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := disp.Run(ctx); err != nil {
+			fmt.Fprintf(a.err, "%s notifications stopped: %v\n", a.warn(), err)
+		}
+	}()
+	// A count at this instant, and it says so when there is none. The
+	// dispatcher runs either way now: the list is re-read every tick, so a
+	// process that declined to start one because config.yaml was empty at boot
+	// would still need a restart to use the first channel somebody adds from
+	// the dashboard, which is the failure this was all for.
+	if n := disp.Channels(); n > 0 {
+		fmt.Fprintf(a.out, "  notifications: on, %d channel(s) right now\n", n)
+	} else {
+		fmt.Fprintf(a.out, "  %s\n", a.paint(colorYellow,
+			"notifications: on, no channel enabled yet; one added from the dashboard is used within a minute"))
+	}
+
+	if cfg.Server.BaseURL == "" {
+		// Worth one line: a message with no link is a message somebody has to
+		// come and find the run for, and the reason is a single setting.
+		fmt.Fprintf(a.out, "  %s\n", a.paint(colorDim,
+			"no server.base_url: messages will carry no link back to the run"))
+	}
+	return nil
 }
 
 // newSetupToken mints the secret printed on the console.
@@ -366,7 +482,10 @@ func (a *app) serveSetup(ctx context.Context, opts serveOptions, setup *cliSetup
 // dependency left out of api.Options does not fail a build and does not fail
 // a handler: it answers 503 forever, and every test that never asked stays
 // green. That happened once already, to the whole plan catalogue.
-func serveAPIOptions(history store.Store, cfg *config.Config, provs api.ProviderSet) api.Options {
+func serveAPIOptions(
+	history store.Store, cfg *config.Config, provs api.ProviderSet,
+	channels api.Notifications, dispatcherOff bool,
+) api.Options {
 	return api.Options{
 		History:   history,
 		Tokens:    history,
@@ -377,6 +496,17 @@ func serveAPIOptions(history store.Store, cfg *config.Config, provs api.Provider
 		Config:    cfg,
 		Weights:   report.DefaultWeights(),
 		UI:        ui.FS(),
+
+		// The channel configuration comes from this side because sealing a
+		// webhook URL needs the master key; the delivery history comes
+		// straight from the store, because the dispatcher writes that table
+		// and the API only reports it.
+		Notifications: channels,
+		Deliveries:    history,
+		// Reported rather than inferred: from inside the API a channel that
+		// is enabled and a channel nobody drains look identical, and the
+		// difference is the whole reason somebody opens that page.
+		NotifyDispatcherOff: dispatcherOff,
 	}
 }
 

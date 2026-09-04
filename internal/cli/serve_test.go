@@ -115,7 +115,7 @@ func TestServeWiresSessionsAndUI(t *testing.T) {
 	// store.Noop is enough: the assertion is that the field is not nil, not
 	// that the store behaves. A real store would test the store, not the
 	// wiring.
-	opts := serveAPIOptions(store.Noop{}, &config.Config{}, &cliProviders{})
+	opts := serveAPIOptions(store.Noop{}, &config.Config{}, &cliProviders{}, &cliNotifications{}, false)
 
 	if opts.Sessions == nil {
 		t.Error("Options.Sessions is nil: every login would answer 503")

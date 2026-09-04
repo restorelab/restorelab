@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/restorelab/restorelab/internal/config"
 	"github.com/restorelab/restorelab/internal/core"
 	"github.com/restorelab/restorelab/internal/diag"
 	"github.com/restorelab/restorelab/internal/providers/proxmox"
@@ -19,6 +20,7 @@ func newDoctorCmd(a *app) *cobra.Command {
 	var (
 		providerID string
 		workloadID string
+		noNotify   bool
 	)
 
 	cmd := &cobra.Command{
@@ -26,7 +28,8 @@ func newDoctorCmd(a *app) *cobra.Command {
 		Short: "Check that everything a recovery drill needs is in place",
 		Long: `Inspects the configured provider and reports what is ready and what is not:
 credentials, node reachability, storages holding backups, an isolated network
-to restore onto, and whether workloads have a guest agent and recent backups.
+to restore onto, whether workloads have a guest agent and recent backups, and
+whether the notification channels are still getting through.
 
 It changes nothing.`,
 		Args: cobra.NoArgs,
@@ -34,12 +37,18 @@ It changes nothing.`,
 			if a.rawAPI {
 				a.verbose = true
 			}
-			return a.doctor(cmd.Context(), providerID, workloadID)
+			return a.doctor(cmd.Context(), providerID, workloadID, noNotify)
 		},
 	}
 
 	cmd.Flags().StringVar(&providerID, "provider", "", "provider to inspect")
 	cmd.Flags().StringVar(&workloadID, "workload", "", "also inspect one workload in detail")
+	// This process is not the one that sends notifications, and it cannot see
+	// how the serving process was started. So the flag is how an operator
+	// tells it, rather than the diagnostic guessing: `serve` reports the same
+	// fact to GET /api/v1/doctor from the process that actually knows.
+	cmd.Flags().BoolVar(&noNotify, "no-notify", false,
+		"report the channels as undispatched, for when the serving process runs with --no-notify")
 	cmd.Flags().BoolVar(&a.rawAPI, "raw", false, "print raw API responses (implies --verbose); for reporting a discovery bug")
 	return cmd
 }
@@ -51,7 +60,7 @@ It changes nothing.`,
 // surfaces read it. What stays here is the debugging output nobody would put
 // in an API - raw Proxmox responses, effective permissions, the tour of why
 // a backup someone swears they took is not visible.
-func (a *app) doctor(ctx context.Context, providerID, workloadID string) error {
+func (a *app) doctor(ctx context.Context, providerID, workloadID string, noNotify bool) error {
 	cfg, err := a.config()
 	if err != nil {
 		return err
@@ -64,23 +73,12 @@ func (a *app) doctor(ctx context.Context, providerID, workloadID string) error {
 
 	fmt.Fprintf(a.out, "%s  %s\n\n", a.paint(colorBold, entry.ID), a.paint(colorDim, entry.Endpoint))
 
-	in := diag.Input{
-		Provider:    hv,
-		ProviderID:  entry.ID,
-		Endpoint:    entry.Endpoint,
-		Node:        entry.Node,
-		WorkloadID:  workloadID,
-		HistoryDesc: store.Describe(a.storeConfig()),
-	}
+	in := a.doctorInput(ctx, cfg, entry, workloadID, noNotify)
+	in.Provider = hv
 	// A missing backup provider is a finding, not a reason to stop.
 	if bp, _, err := a.backups(providerID); err == nil {
 		in.Backups = bp
 	}
-	in.NetworkName = cfg.Defaults.Network
-	if in.NetworkName == "" {
-		in.NetworkName = "isolated"
-	}
-	in.Network, in.NetworkErr = cfg.ResolveNetwork(in.NetworkName)
 
 	rep := diag.Run(ctx, in)
 	for _, f := range rep.Findings {
@@ -95,6 +93,48 @@ func (a *app) doctor(ctx context.Context, providerID, workloadID string) error {
 	}
 	fmt.Fprintf(a.out, "%s ready to run a recovery drill\n", a.ok())
 	return nil
+}
+
+// doctorInput assembles everything the diagnostic reads that is not the
+// cluster itself.
+//
+// It is a function rather than a literal inside doctor for the reason
+// serveAPIOptions is one: a dependency left out of it does not fail a build
+// and does not fail a request. It makes a whole section of the report quietly
+// disappear, and the command stays green while saying nothing about the
+// channels an operator is trusting.
+//
+// The notification half is filled exactly as internal/api fills it, from the
+// configuration and from the store. Two diagnostics that disagree about
+// whether alerting works are worse than one that is incomplete: an operator
+// who saw the dashboard say nothing is wrong will not go and run the command.
+func (a *app) doctorInput(
+	ctx context.Context, cfg *config.Config, entry config.Provider,
+	workloadID string, dispatcherOff bool,
+) diag.Input {
+	in := diag.Input{
+		ProviderID:  entry.ID,
+		Endpoint:    entry.Endpoint,
+		Node:        entry.Node,
+		WorkloadID:  workloadID,
+		HistoryDesc: store.Describe(a.storeConfig()),
+
+		// Through the same accessor the dispatcher uses, and in the same
+		// shape the API sends: diag is given an id, a kind and whether the
+		// channel is on, and cannot be handed a URL even by accident. This
+		// process has no concurrent writer of the configuration, so the lock
+		// it takes is uncontended here; going through it anyway is what keeps
+		// one way of reading the channel list rather than two.
+		Notifications:       (&cliNotifications{a: a}).diagChannels(),
+		Deliveries:          a.store(ctx),
+		NotifyDispatcherOff: dispatcherOff,
+	}
+	in.NetworkName = cfg.Defaults.Network
+	if in.NetworkName == "" {
+		in.NetworkName = "isolated"
+	}
+	in.Network, in.NetworkErr = cfg.ResolveNetwork(in.NetworkName)
+	return in
 }
 
 // printFinding renders one finding, with its detail indented underneath.
