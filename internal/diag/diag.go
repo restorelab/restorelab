@@ -45,6 +45,10 @@ const (
 	AreaNetwork     = "network"
 	AreaWorkload    = "workload"
 	AreaHistory     = "history"
+	// AreaNotifications is the only area that says nothing about the cluster.
+	// It reports whether what the product establishes still reaches a human,
+	// which is the one failure a healthy cluster hides rather than shows.
+	AreaNotifications = "notifications"
 )
 
 // Finding is one observation. Title is the line a human reads; Detail is the
@@ -116,24 +120,58 @@ type Input struct {
 	// HistoryDesc is store.Store.Describe(), reported as-is. It is already
 	// free of passwords; do not put a raw DSN here.
 	HistoryDesc string
+
+	// Notifications are the configured channels, in the shape this package is
+	// allowed to see them: an id, a kind and whether they are on. No URL
+	// crosses this boundary, sealed or otherwise, because a finding is
+	// printed, rendered in the dashboard and returned by GET /api/v1/doctor,
+	// and a webhook URL is a bearer credential. See Channel.
+	Notifications []Channel
+
+	// Deliveries reads back what each enabled channel last delivered.
+	// Optional: with a nil one the channels are still listed, and the section
+	// says plainly that their health was not checked rather than implying it
+	// is fine.
+	Deliveries DeliveryHistory
+
+	// NotifyDispatcherOff says the dispatcher that would send those messages
+	// is not running (serve --no-notify).
+	//
+	// It is a parameter rather than something read from the config, because
+	// it is a property of the running process and not of the file: the flag
+	// belongs to serve, and this package must not grow an opinion about which
+	// process is meant to be sending.
+	NotifyDispatcherOff bool
 }
 
 // Run performs the diagnostic. It never returns an error: every failure is a
 // finding, which is the whole point of the package.
 func Run(ctx context.Context, in Input) Report {
 	r := Report{ProviderID: in.ProviderID, Endpoint: in.Endpoint}
+	r.appendCluster(ctx, in)
+	// The channels are examined whatever the cluster said, which is why this
+	// call is out here rather than at the end of appendCluster: a dead
+	// hypervisor does not make a revoked webhook any less revoked, and the
+	// moment an operator most needs to know their alerting works is the
+	// moment something else has already gone wrong.
+	r.appendNotifications(ctx, in)
+	return r
+}
 
+// appendCluster is everything the diagnostic asks the hypervisor. It returns
+// early on the two failures that make every later check meaningless.
+func (r *Report) appendCluster(ctx context.Context, in Input) {
 	if in.Provider == nil {
 		r.fail(AreaCredentials, "no hypervisor provider is configured",
 			"add one with `restorelab connect` or `restorelab provider add`")
-		return r
+		return
 	}
 
 	if err := in.Provider.Ping(ctx); err != nil {
 		// Nothing after this would mean anything: every other check needs the
 		// API to answer.
 		r.fail(AreaCredentials, "cannot reach the API", err.Error())
-		return r
+		return
 	}
 	r.ok(AreaCredentials, "API reachable, credentials accepted", "")
 
@@ -166,7 +204,6 @@ func Run(ctx context.Context, in Input) Report {
 	if in.HistoryDesc != "" {
 		r.ok(AreaHistory, "drill history: "+in.HistoryDesc, "")
 	}
-	return r
 }
 
 // appendNetwork reports whether there is somewhere safe to restore onto.
