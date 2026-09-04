@@ -175,3 +175,25 @@ func (Noop) SettleDelivery(context.Context, Delivery) error { return ErrNoHistor
 func (Noop) LastDeliveries(context.Context, []string) (map[string]Delivery, error) {
 	return map[string]Delivery{}, nil
 }
+
+// The captured-value methods are all silence, with no ErrNoHistory anywhere.
+//
+// The write is the plain case this type was built for: history is optional
+// and must never fail a drill, so a value nobody can store costs the next
+// drill its baseline and costs this drill nothing.
+//
+// The two reads are silence for a sharper reason. Empty is not a stand-in for
+// an error here, it is the true answer: with no database there is no history,
+// and "no history" is precisely what the drift evaluation is already written
+// to handle - it reports the check skipped with its reason rather than failing
+// it. Returning an error instead would turn a missing database into a failed
+// check, which is the one thing this package exists to prevent.
+func (Noop) SaveCheckValue(context.Context, string, int, string, float64) error { return nil }
+
+func (Noop) CapturedValues(context.Context, string, string, string, int) ([]float64, error) {
+	return nil, nil
+}
+
+func (Noop) RunCheckValues(context.Context, string) (map[int]map[string]float64, error) {
+	return map[int]map[string]float64{}, nil
+}

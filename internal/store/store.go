@@ -568,6 +568,34 @@ type Store interface {
 	// from the map rather than present and empty.
 	LastDeliveries(ctx context.Context, channelIDs []string) (map[string]Delivery, error)
 
+	// SaveCheckValue records one number a check read out of the restored
+	// workload, at the check's position in the run.
+	//
+	// Saving the same (run, check, name) twice replaces rather than
+	// duplicating: a check that retries ran its command again, and two rows
+	// for one drill would put the same night into the drift window twice.
+	SaveCheckValue(ctx context.Context, runID string, checkSeq int, name string, value float64) error
+	// CapturedValues returns what previous drills of this workload measured
+	// under this check name and this capture name, most recent first.
+	//
+	// It skips runs that reached no verdict, for the reason the confidence
+	// ceiling skips them: a drill nobody could evaluate is not evidence about
+	// the workload in either direction, and letting one into the window would
+	// let an unevaluable night move the median the next night is graded
+	// against.
+	//
+	// A workload with no history is an empty slice and no error. A first
+	// drill has nothing to compare against, and that is what a first drill
+	// is.
+	CapturedValues(ctx context.Context, workloadID, checkName, valueName string, limit int) ([]float64, error)
+	// RunCheckValues returns everything one run measured, keyed by check seq
+	// then by capture name.
+	//
+	// Unlike CapturedValues it filters on nothing: this is the report's
+	// question rather than drift's, and a run that could not be evaluated
+	// still measured what it measured.
+	RunCheckValues(ctx context.Context, runID string) (map[int]map[string]float64, error)
+
 	// Describe names the engine and location, for `db status`. It must never
 	// include a password.
 	Describe() string

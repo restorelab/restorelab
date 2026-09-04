@@ -95,11 +95,18 @@ func (s *sqlStore) UnnotifiedRuns(ctx context.Context, limit int) ([]RunSummary,
 // previousStorySQL finds the newest earlier run of a workload that reached a
 // verdict.
 //
-// "Reached a verdict" is result IS NOT NULL AND result <> ”: a cancelled run
-// and an inconclusive one both carry an empty result, persisted as NULL, and
-// neither is a claim about whether the backup restores. That emptiness is
-// written by recovery.markCancelled and recovery.markInconclusive, and this
-// clause is what reads it back correctly. The <> ” half is not redundant
+// "Reached a verdict" is the pair of conditions
+//
+//	result IS NOT NULL AND result <> ''
+//
+// spelled as a block because gofmt rewrites a bare pair of apostrophes into a
+// curly quote in doc comment prose, and this is SQL, not typography.
+//
+// A cancelled run and an inconclusive one both carry an empty result,
+// persisted as NULL, and neither is a claim about whether the backup restores.
+// That emptiness is written by recovery.markCancelled and
+// recovery.markInconclusive, and this clause is what reads it back correctly.
+// The empty-string half is not redundant
 // with the NULL check: nullString maps "" to NULL on the way in, but a row
 // written by an older build or by hand can still hold an empty string.
 //
