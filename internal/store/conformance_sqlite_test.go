@@ -34,3 +34,5 @@ func TestSQLiteQueueClaimConformance(t *testing.T) { QueueClaimConformance(t, ne
 func TestQueueStatesMatchCoreTerminal(t *testing.T) { QueueStatesMatchCoreTerminal(t) }
 
 func TestSQLiteScheduleConformance(t *testing.T) { ScheduleConformance(t, newTestStore) }
+
+func TestSQLiteNotifyConformance(t *testing.T) { NotifyConformance(t, newTestStore) }

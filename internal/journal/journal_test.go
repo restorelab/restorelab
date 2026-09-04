@@ -159,6 +159,30 @@ func (b *brokenStore) StaleRuns(context.Context, time.Time) ([]store.QueuedRun, 
 func (b *brokenStore) RunLease(context.Context, string) (string, time.Time, error) {
 	return "", time.Time{}, errBroken
 }
+
+// The notification methods fail like every other one. brokenStore is a
+// hand-written implementation rather than an embedding of store.Noop on
+// purpose: a method added to the interface has to be an explicit decision
+// here too, and "it fails" is that decision.
+func (b *brokenStore) ClaimRunForNotify(context.Context, string, time.Time) (bool, error) {
+	return false, errBroken
+}
+func (b *brokenStore) UnnotifiedRuns(context.Context, int) ([]store.RunSummary, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) PreviousStory(context.Context, string, store.Position) (*store.RunSummary, bool, error) {
+	return nil, false, errBroken
+}
+func (b *brokenStore) CreateDelivery(context.Context, store.Delivery) error { return errBroken }
+func (b *brokenStore) DueDeliveries(context.Context, time.Time, int) ([]store.Delivery, error) {
+	return nil, errBroken
+}
+func (b *brokenStore) SettleDelivery(context.Context, store.Delivery) error { return errBroken }
+
+func (b *brokenStore) LastDeliveries(context.Context, []string) (map[string]store.Delivery, error) {
+	return nil, errBroken
+}
+
 func (b *brokenStore) Describe() string { return "broken" }
 func (b *brokenStore) Close() error     { return errBroken }
 

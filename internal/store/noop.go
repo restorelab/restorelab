@@ -143,3 +143,35 @@ func (Noop) ClaimSlot(context.Context, Slot, *core.RecoveryRun, string) error {
 func (Noop) LastSlot(context.Context, string) (*Slot, error) { return nil, ErrNoHistory }
 
 func (Noop) ListSlots(context.Context, SlotFilter) ([]Slot, error) { return nil, ErrNoHistory }
+
+// The notification methods.
+//
+// Silence for the claim and the two queries: an installation with no history
+// has no runs to announce, and returning an error would make the dispatcher
+// log a warning every tick about a database the operator deliberately does
+// not have. A claim that reports false is also the safe answer, because false
+// means "somebody else has this run" and the caller then says nothing.
+//
+// The two writes are the exception, and it is the exception the token methods
+// already make: pretending to have recorded a message that will never be sent
+// would leave a caller believing somebody was told.
+func (Noop) ClaimRunForNotify(context.Context, string, time.Time) (bool, error) { return false, nil }
+
+func (Noop) UnnotifiedRuns(context.Context, int) ([]RunSummary, error) { return nil, nil }
+
+func (Noop) PreviousStory(context.Context, string, Position) (*RunSummary, bool, error) {
+	return nil, false, nil
+}
+
+func (Noop) CreateDelivery(context.Context, Delivery) error { return ErrNoHistory }
+
+func (Noop) DueDeliveries(context.Context, time.Time, int) ([]Delivery, error) { return nil, nil }
+
+func (Noop) SettleDelivery(context.Context, Delivery) error { return ErrNoHistory }
+
+// LastDeliveries is silence for the reason the other reads are: with no
+// history there are no deliveries to describe, and doctor asking about a
+// channel that has never been used gets the same empty answer either way.
+func (Noop) LastDeliveries(context.Context, []string) (map[string]Delivery, error) {
+	return map[string]Delivery{}, nil
+}

@@ -276,6 +276,62 @@ type Filter struct {
 	NotTerminal bool
 }
 
+// DeliveryState is where one notification stands.
+//
+// There are three, and there is deliberately no "given up" distinct from
+// "failed": a delivery that exhausted its attempts and one that was refused
+// outright are the same thing to the operator reading doctor, and the status
+// and the reason on the row say which happened.
+type DeliveryState string
+
+// The three states a delivery moves through.
+const (
+	// DeliveryPending is written and not yet accepted by the far end. It is
+	// the only state DueDeliveries ever returns.
+	DeliveryPending DeliveryState = "pending"
+	// DeliverySent is accepted by the far end, with the status it answered.
+	DeliverySent DeliveryState = "sent"
+	// DeliveryFailed is given up on, carrying the last status and reason.
+	// The row is kept rather than deleted: a channel that quietly stopped
+	// working is exactly what this feature exists to make visible.
+	DeliveryFailed DeliveryState = "failed"
+)
+
+// Delivery is one message, to one channel, about one run.
+//
+// The payload is stored rather than re-rendered at each attempt. A retry has
+// to send what the first attempt tried to send: re-rendering would let a
+// configuration change between attempts alter the message, and an operator
+// comparing what arrived against what the run says would find neither wrong
+// nor equal.
+//
+// ChannelID names a configured channel and nothing more. The URL is a bearer
+// credential and never reaches this table, so a leaked history database hands
+// an attacker no way to post anywhere - the same reasoning that keeps API
+// token secrets out of APIToken.
+type Delivery struct {
+	ID        string
+	RunID     string
+	ChannelID string
+	// Kind is the transition that caused this message, as the webhook schema
+	// spells it. It is stored so doctor and the API can say what a channel was
+	// last told without re-deciding anything.
+	Kind     string
+	State    DeliveryState
+	Attempts int
+	// NextAt is when this delivery may next be attempted. Zero means "not
+	// scheduled", which is what a settled delivery carries.
+	NextAt time.Time
+	// Status is the last HTTP status the far end answered, 0 when the request
+	// never got that far.
+	Status int
+	// Err is why the last attempt failed, in words an operator can act on.
+	Err       string
+	Payload   string
+	CreatedAt time.Time
+	SentAt    time.Time
+}
+
 // DefaultListLimit caps a listing that did not ask for a size.
 const DefaultListLimit = 50
 
@@ -461,6 +517,56 @@ type Store interface {
 	// included, because "why was this machine not tested" is the question
 	// the table exists to answer.
 	ListSlots(ctx context.Context, f SlotFilter) ([]Slot, error)
+
+	// ClaimRunForNotify takes responsibility for deciding whether a run is
+	// worth announcing, and reports whether this caller won.
+	//
+	// It is the whole concurrency story: the UPDATE requires notified_at to
+	// be null, so exactly one caller can ever win and a second dispatcher
+	// gets false rather than a duplicate message. No lease is needed, because
+	// unlike a drill there is nothing in flight to protect - the claim and
+	// the decision are the same statement.
+	ClaimRunForNotify(ctx context.Context, runID string, at time.Time) (bool, error)
+	// UnnotifiedRuns lists terminal runs nobody has claimed yet, oldest
+	// first. A run still in flight is never offered: announcing one would say
+	// a drill ended before it started.
+	UnnotifiedRuns(ctx context.Context, limit int) ([]RunSummary, error)
+	// PreviousStory returns the workload's most recent run before this one
+	// that reached a verdict, and whether the run immediately before it
+	// reached none.
+	//
+	// The two answers look at different runs on purpose. The baseline skips
+	// verdict-less runs, because a workload with an impeccable history must
+	// not appear to collapse just because one drill could not be evaluated -
+	// the rule the confidence ceiling already follows. The flag looks at the
+	// immediately preceding run, because "we could not see this workload, and
+	// now we can" is a fact about consecutive attempts.
+	//
+	// A workload with no earlier run at all is (nil, false, nil), never an
+	// error: nothing was attempted, so nothing was unevaluable.
+	PreviousStory(ctx context.Context, workloadID string, before Position) (*RunSummary, bool, error)
+	// CreateDelivery records one message to send. It returns ErrDuplicate
+	// when this run has already produced a message for this channel, which is
+	// what stops a restarted dispatcher from posting twice to the same place.
+	CreateDelivery(ctx context.Context, d Delivery) error
+	// DueDeliveries lists pending deliveries whose next attempt time has
+	// arrived, oldest first.
+	DueDeliveries(ctx context.Context, now time.Time, limit int) ([]Delivery, error)
+	// SettleDelivery writes the outcome of an attempt: the new state, the
+	// attempt count, when to try again, and what the far end said. It returns
+	// ErrNotFound for an unknown id rather than succeeding silently - a
+	// dispatcher that believes it recorded an outcome it never wrote would
+	// post the same message again.
+	SettleDelivery(ctx context.Context, d Delivery) error
+	// LastDeliveries returns each named channel's most recent delivery,
+	// whatever became of it.
+	//
+	// "Whatever became of it" is the point: doctor and the dashboard both
+	// need to show a channel that stopped working, and filtering to the last
+	// successful one would render a revoked webhook as a channel that has
+	// simply been quiet. A channel that has never been used at all is absent
+	// from the map rather than present and empty.
+	LastDeliveries(ctx context.Context, channelIDs []string) (map[string]Delivery, error)
 
 	// Describe names the engine and location, for `db status`. It must never
 	// include a password.
