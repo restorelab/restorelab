@@ -1,0 +1,6 @@
+{
+  "id": "ops-discord",
+  "kind": "discord",
+  "host": "discord.com",
+  "enabled": true
+}

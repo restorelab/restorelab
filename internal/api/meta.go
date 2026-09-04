@@ -97,6 +97,36 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 	}
 	in.NetworkName, in.Network, in.NetworkErr = s.network()
 
+	// The notification section is filled through the Notifications interface
+	// rather than from s.cfg, and that is a correctness fix rather than a
+	// tidy-up. The CLI's implementation edits cfg.Notifications in place under
+	// its own mutex whenever the dashboard adds or removes a channel, so
+	// reading the slice header here without that mutex was a data race on
+	// every doctor request that overlapped an edit. Going through the
+	// interface takes the same lock and hands back a copy.
+	//
+	// The shape it returns has no URL on it, which is exactly what diag wants:
+	// an id, a kind and whether the channel is on. Host is dropped here rather
+	// than carried, because no finding names it.
+	//
+	// A nil s.notifications leaves the section absent, as before: a deployment
+	// with no channel configuration is not one whose alerting is broken.
+	if s.notifications != nil {
+		for _, ch := range s.notifications.Channels() {
+			in.Notifications = append(in.Notifications, diag.Channel{
+				ID: ch.ID, Kind: ch.Kind, Enabled: ch.Enabled,
+			})
+		}
+	}
+	// A nil Deliveries is left nil rather than substituted: diag draws a
+	// distinction between "this channel has never delivered" and "nobody could
+	// tell me", and handing it an empty store would turn the second into the
+	// first.
+	if s.deliveries != nil {
+		in.Deliveries = s.deliveries
+	}
+	in.NotifyDispatcherOff = s.notifyDispatcherOff
+
 	rep := diag.Run(r.Context(), in)
 
 	dto := doctorDTO{

@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "id": "ops-discord",
+      "kind": "discord",
+      "host": "discord.com",
+      "enabled": true,
+      "last_state": "sent",
+      "last_sent": "2026-09-01T10:00:03Z",
+      "last_status": 204
+    },
+    {
+      "id": "ops-slack",
+      "kind": "slack",
+      "host": "hooks.slack.com",
+      "enabled": true,
+      "last_state": "failed",
+      "last_status": 404,
+      "last_error": "notify: refused with status 404: no_service"
+    }
+  ]
+}

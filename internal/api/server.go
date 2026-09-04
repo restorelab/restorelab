@@ -13,6 +13,7 @@ import (
 
 	"github.com/restorelab/restorelab/internal/config"
 	"github.com/restorelab/restorelab/internal/core"
+	"github.com/restorelab/restorelab/internal/notify"
 	"github.com/restorelab/restorelab/internal/report"
 	"github.com/restorelab/restorelab/internal/store"
 	"github.com/restorelab/restorelab/internal/version"
@@ -70,6 +71,71 @@ type Plans interface {
 type Schedules interface {
 	LastSlot(ctx context.Context, planID string) (*store.Slot, error)
 	ListSlots(ctx context.Context, f store.SlotFilter) ([]store.Slot, error)
+}
+
+// NotificationChannel is a configured notification channel as this package is
+// allowed to see one.
+//
+// Host rather than URL, and that is the whole reason this type exists instead
+// of config.Notification crossing the interface. A Discord or Slack webhook
+// URL is a bearer credential whose path is the secret half, so the only safe
+// redaction of one is its absence: with no URL field on this side of the
+// boundary, no response can carry one by accident rather than by discipline.
+// The host is here because an operator has to be able to tell two channels
+// apart, and it is the one part that gives nothing away.
+//
+// Host is filled in on the way out and ignored on the way in: only the URL
+// decides it, and the URL is sealed on the other side of Notifications.
+type NotificationChannel struct {
+	ID      string
+	Kind    string
+	Host    string
+	Enabled bool
+}
+
+// Notifications is the notification-channel configuration this API reads and
+// writes.
+//
+// internal/cli implements it, for the reason it implements ProviderSet and
+// Setup: a webhook URL is sealed with the master key, and this package must
+// not learn what a master key is - imports_test.go fails the day it does. So
+// sealing, unsealing and writing config.yaml all live on the far side, and
+// what crosses is a channel with no credential on it.
+type Notifications interface {
+	// Channels lists the configured channels, newest configuration order.
+	Channels() []NotificationChannel
+
+	// Save creates or replaces a channel and persists the configuration.
+	//
+	// An empty target keeps whatever URL is stored. That rule is here rather
+	// than in a handler because it is the one this endpoint most needs to get
+	// right: the API never returns a URL, so the dashboard cannot prefill the
+	// field, and every edit of a name or an enabled flag arrives with it
+	// empty. An empty field that wiped a working webhook would break alerting
+	// without anybody being told.
+	Save(ch NotificationChannel, target string) error
+
+	// Remove deletes a channel.
+	Remove(id string) error
+
+	// Target returns the channel's plaintext webhook URL.
+	//
+	// It is the one place a credential crosses into this package, for the one
+	// route that has to post to it, and it lives for the duration of that
+	// handler. Rendering happens here (it is a pure function of public facts)
+	// while unsealing happens there, which is what keeps the key out.
+	Target(id string) (string, error)
+}
+
+// Deliveries is the delivery slice of the store: what became of the messages
+// this installation has already tried to send.
+//
+// Reads only, and one method. The dispatcher writes this table; the API
+// reports it. It is separate from Notifications because a different thing
+// implements it - the store, not the CLI - and folding the two together would
+// force whoever wires a deployment to have both to have either.
+type Deliveries interface {
+	LastDeliveries(ctx context.Context, channelIDs []string) (map[string]store.Delivery, error)
 }
 
 // TokenStore is what authentication needs, and nothing more: it cannot create
@@ -132,6 +198,26 @@ type Options struct {
 	// plan is scheduled" and be a lie.
 	Schedules Schedules
 
+	// Notifications is the channel configuration. Nil is a deployment with no
+	// configuration file to write back to - an API-only process built from
+	// flags - and the routes then answer 503 rather than returning an empty
+	// list, which would read as "no channel is configured" and be a lie.
+	Notifications Notifications
+
+	// Deliveries reports what became of the messages already sent. Nil means
+	// no history database, and the channels then come back without their
+	// health rather than not at all: they are still configured.
+	Deliveries Deliveries
+
+	// NotifyDispatcherOff says this process was started with --no-notify, so
+	// the configured channels exist and nothing will ever post to them.
+	//
+	// It is reported by doctor rather than inferred there, because from inside
+	// diag a channel that is enabled and a channel nobody drains look
+	// identical, and the difference is the whole reason somebody is reading
+	// that page.
+	NotifyDispatcherOff bool
+
 	// Sessions backs the dashboard's cookie. Nil is a deployment with no
 	// usable history database: the session routes then answer 503, the same
 	// way the catalogue does, rather than pretending a login failed.
@@ -182,6 +268,19 @@ type Server struct {
 	sessions  SessionStore
 	ui        fs.FS
 
+	// The notification half. notifications is nil on a deployment with no
+	// configuration to write, which every channel route answers 503 to;
+	// deliveries falls back to store.Noop, so a missing history database
+	// costs the health decoration and nothing else.
+	notifications Notifications
+	deliveries    Deliveries
+	// notifyDispatcherOff is passed straight to diag; see Options.
+	notifyDispatcherOff bool
+	// sender posts a test message. One client for the process, built beside
+	// the routes that use it, for the reason proxmox.New builds one: a client
+	// per request leaks a connection pool per request.
+	sender *notify.Sender
+
 	// The first-run half. setupToken is cleared by the request that spends
 	// it, under setupMu; unconfigured is decided once, in New, and read by
 	// every route afterwards.
@@ -227,6 +326,11 @@ func New(opts Options) *Server {
 		ui:        opts.UI,
 		setup:     opts.Setup,
 
+		notifications: opts.Notifications,
+		deliveries:    opts.Deliveries,
+
+		notifyDispatcherOff: opts.NotifyDispatcherOff,
+
 		setupToken: opts.SetupToken,
 		setupDoneC: make(chan struct{}),
 		cfg:        opts.Config,
@@ -259,6 +363,19 @@ func New(opts Options) *Server {
 	}
 	if s.sessions == nil {
 		s.sessions = store.Noop{}
+	}
+	// A missing delivery table is not a missing channel: Noop answers "no
+	// delivery" to LastDeliveries, which is what a channel that has never
+	// been used looks like, and it is the honest shape for one whose history
+	// cannot be read either.
+	if s.deliveries == nil {
+		s.deliveries = store.Noop{}
+	}
+	// Built only where there is something to send to. A deployment with no
+	// channel configuration never reaches the test route, and every Server
+	// the tests build would otherwise carry a transport it never uses.
+	if s.notifications != nil {
+		s.sender = notify.NewSender(0)
 	}
 	// A server in setup mode has no database and no providers: it was built
 	// before there was a configuration to build them from. Every route but
@@ -356,6 +473,17 @@ func (s *Server) routes() *http.ServeMux {
 	mux.Handle("POST /api/v1/plans", s.requireScope(store.ScopeManage, s.handleCreatePlan))
 	mux.Handle("PUT /api/v1/plans/{ref}", s.requireScope(store.ScopeManage, s.handleUpdatePlan))
 	mux.Handle("DELETE /api/v1/plans/{ref}", s.requireScope(store.ScopeManage, s.handleDeletePlan))
+
+	// The channels. Writing one needs `manage`, beside the catalogue and for
+	// the same reason: deciding what this product says out loud is the same
+	// kind of power as deciding what a drill is. Sending a test message needs
+	// `operate` instead, because it makes the product act on the world
+	// without changing what it is - the distinction /cleanup already draws.
+	mux.Handle("GET /api/v1/notifications", s.authed(s.handleListNotifications))
+	mux.Handle("POST /api/v1/notifications", s.requireScope(store.ScopeManage, s.handleCreateNotification))
+	mux.Handle("PUT /api/v1/notifications/{id}", s.requireScope(store.ScopeManage, s.handleUpdateNotification))
+	mux.Handle("DELETE /api/v1/notifications/{id}", s.requireScope(store.ScopeManage, s.handleDeleteNotification))
+	mux.Handle("POST /api/v1/notifications/{id}/test", s.requireScope(store.ScopeOperate, s.handleTestNotification))
 
 	mux.Handle("GET /api/v1/providers", s.authed(s.handleProviders))
 	mux.Handle("GET /api/v1/doctor", s.authed(s.handleDoctor))

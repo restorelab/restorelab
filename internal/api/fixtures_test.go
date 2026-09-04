@@ -490,6 +490,55 @@ func fixtureCases() []fixtureCase {
 			return recorded(t, do(s, http.MethodGet, "/api/v1/providers"), http.StatusOK)
 		}},
 
+		{"notifications-page", func(t *testing.T) []byte {
+			// One channel getting through and one that stopped: they are the
+			// two rows the settings screen has to draw differently, and a
+			// capture holding only the healthy one would let the broken state
+			// be written against nothing. Neither carries a url, which is the
+			// contract this file is the standing proof of.
+			s, channels, deliveries := notifyServer(t)
+			channels.seed("ops-discord", "discord", testWebhookURL)
+			channels.seed("ops-slack", "slack", "https://hooks.slack.com/services/T0/B0/zzz")
+			deliveries.last["ops-discord"] = store.Delivery{
+				ID: "3c2f8a10-0000-4000-8000-000000000001", RunID: fixtureFinishedRunID,
+				ChannelID: "ops-discord", Kind: "verdict_changed",
+				State: store.DeliverySent, Status: 204, Attempts: 1,
+				CreatedAt: fixtureNow.Add(-2 * time.Hour),
+				SentAt:    fixtureNow.Add(-2 * time.Hour).Add(3 * time.Second),
+			}
+			deliveries.last["ops-slack"] = store.Delivery{
+				ID: "3c2f8a10-0000-4000-8000-000000000002", RunID: fixtureFinishedRunID,
+				ChannelID: "ops-slack", Kind: "verdict_changed",
+				State: store.DeliveryFailed, Status: 404, Attempts: 4,
+				Err:       "notify: refused with status 404: no_service",
+				CreatedAt: fixtureNow.Add(-2 * time.Hour),
+			}
+			return recorded(t, do(s, http.MethodGet, "/api/v1/notifications"), http.StatusOK)
+		}},
+
+		{"notification-created", func(t *testing.T) []byte {
+			s, _, _ := notifyServer(t)
+			// The url goes in and does not come out. This capture is where
+			// that is visible on disk rather than only in a test name.
+			return recorded(t, send(s, http.MethodPost, manageSecret, "/api/v1/notifications",
+				`{"id":"ops-discord","kind":"discord","url":"`+testWebhookURL+`"}`),
+				http.StatusCreated)
+		}},
+
+		{"notification-test", func(t *testing.T) []byte {
+			s, channels, _ := notifyServer(t)
+			// A far end that accepts, answering 204 the way Discord does. The
+			// status in the body is its answer, not ours, which is the whole
+			// point of showing it.
+			far := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer far.Close()
+			channels.seed("ops-webhook", "webhook", far.URL)
+			return recorded(t, send(s, http.MethodPost, operateSecret,
+				"/api/v1/notifications/ops-webhook/test", ""), http.StatusOK)
+		}},
+
 		{"trigger-201", func(t *testing.T) []byte {
 			s := operatingServer(t, newFakeHistory(),
 				fakeProviders{hv: testFleet(t), bp: backupSource{}})
