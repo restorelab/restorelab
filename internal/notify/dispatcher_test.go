@@ -51,6 +51,14 @@ type fakeStore struct {
 	settled  []store.Delivery
 	prevCall int
 
+	// values is what each run measured, by run id, in the shape the store
+	// answers with: by check seq, then by capture name. valueCall counts the
+	// reads, because how many there are is a contract of its own - the
+	// dispatcher must not pay a round trip for a run it is not going to
+	// speak about.
+	values    map[string]map[int]map[string]float64
+	valueCall int
+
 	broken bool
 }
 
@@ -155,6 +163,22 @@ func (f *fakeStore) settledRows() []store.Delivery {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]store.Delivery(nil), f.settled...)
+}
+
+func (f *fakeStore) RunCheckValues(_ context.Context, runID string) (map[int]map[string]float64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.valueCall++
+	if f.broken {
+		return nil, errBroken
+	}
+	return f.values[runID], nil
+}
+
+func (f *fakeStore) valueCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.valueCall
 }
 
 func (f *fakeStore) previousCalls() int {

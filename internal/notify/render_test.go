@@ -223,3 +223,34 @@ func TestDiscordColourMatchesTheVerdict(t *testing.T) {
 		t.Error("degraded renders in the same colour as success, which is the lie this test exists to prevent")
 	}
 }
+
+// TestACollapsedValueIsNeverGreen guards the one place where the verdict's
+// colour would lie.
+//
+// The transition fires on a run that passed, because nobody declared a bound
+// for it to fail, so the verdict is SUCCESS. An embed saying "this workload
+// now holds an empty database" painted green is the reassuring green this
+// product exists to remove, arriving in the one place nobody can correct it
+// afterwards.
+func TestACollapsedValueIsNeverGreen(t *testing.T) {
+	collapsed := Transition{
+		Kind:     KindValueCollapsed,
+		Current:  Story{Result: core.ResultSuccess, ProofLevel: core.ProofService},
+		Headline: "rows fell to 0, was 1204331",
+	}
+	if got := embedColour(collapsed); got == colourSuccess {
+		t.Fatalf("a collapsed value renders green (%#x): the drill was honest and the message is not", got)
+	} else if got != colourDegraded {
+		t.Errorf("colour = %#x, want amber %#x: nothing failed, but somebody should look", got, colourDegraded)
+	}
+
+	// Every other kind still follows the verdict, which is the rule this is
+	// the exception to.
+	ordinary := Transition{
+		Kind:    KindVerdict,
+		Current: Story{Result: core.ResultSuccess, ProofLevel: core.ProofService},
+	}
+	if got := embedColour(ordinary); got != colourSuccess {
+		t.Errorf("a plain success renders %#x, want green %#x", got, colourSuccess)
+	}
+}

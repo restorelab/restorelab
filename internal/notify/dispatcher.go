@@ -63,6 +63,7 @@ type Store interface {
 	UnnotifiedRuns(ctx context.Context, limit int) ([]store.RunSummary, error)
 	ClaimRunForNotify(ctx context.Context, runID string, at time.Time) (bool, error)
 	PreviousStory(ctx context.Context, workloadID string, before store.Position) (*store.RunSummary, bool, error)
+	RunCheckValues(ctx context.Context, runID string) (map[int]map[string]float64, error)
 	CreateDelivery(ctx context.Context, d store.Delivery) error
 	DueDeliveries(ctx context.Context, now time.Time, limit int) ([]store.Delivery, error)
 	SettleDelivery(ctx context.Context, d store.Delivery) error
@@ -377,6 +378,11 @@ func (d *Dispatcher) consider(ctx context.Context, run store.RunSummary, channel
 
 	transition, said := Decide(run.State, current, previous, unevaluable)
 	if !said {
+		// Nothing moved in what the drill graded. The numbers it read can
+		// still be news, and that is the only remaining question.
+		transition, said = d.considerValues(ctx, run, current, previous, before)
+	}
+	if !said {
 		d.log.Debug("notify: nothing changed, saying nothing",
 			"run_id", run.ID, "workload", run.SourceWorkloadID)
 		return
@@ -389,6 +395,52 @@ func (d *Dispatcher) consider(ctx context.Context, run store.RunSummary, channel
 		}
 		d.queue(ctx, ch, run, msg)
 	}
+}
+
+// considerValues asks whether a number this drill read is worth a message,
+// and it is asked only when nothing else about the drill was.
+//
+// The shape of the queries is the design. What a run measured is read once,
+// and only for a run this dispatcher has already claimed: reading every
+// unnotified run would be a round trip per run per tick, most of them for
+// runs another dispatcher owns or for runs nobody will ever speak about. The
+// previous drill is read only when this one holds a value at zero, because
+// nothing else can be a collapse. An ordinary night, where every number held,
+// costs exactly one extra query on a run this process was already committed
+// to deciding.
+func (d *Dispatcher) considerValues(ctx context.Context, run store.RunSummary,
+	current Story, previous *Story, before *store.RunSummary) (Transition, bool) {
+
+	// Two refusals that DecideCollapse would make anyway, made here so that
+	// they cost nothing: a run that reached no verdict says nothing about
+	// the numbers it read, and a workload with no earlier drill has no
+	// reading to have fallen from.
+	if run.Result == "" || before == nil {
+		return Transition{}, false
+	}
+
+	values := d.measured(ctx, run.ID)
+	if !Zeroed(values) {
+		return Transition{}, false
+	}
+
+	return DecideCollapse(run.State, current, previous, values, d.measured(ctx, before.ID))
+}
+
+// measured reads what one run captured, keyed by capture name.
+//
+// A read that fails is a warning and an empty map, never a stop. Being unable
+// to say what a drill measured is not a reason to say nothing at all, and the
+// run has already been claimed: returning early here would leave it claimed
+// and never spoken about.
+func (d *Dispatcher) measured(ctx context.Context, runID string) map[string]float64 {
+	byCheck, err := d.store.RunCheckValues(ctx, runID)
+	if err != nil {
+		d.log.Warn("notify: could not read what a drill measured",
+			"run_id", runID, "err", err)
+		return nil
+	}
+	return valuesByName(byCheck)
 }
 
 // queue renders one message for one channel and records it.

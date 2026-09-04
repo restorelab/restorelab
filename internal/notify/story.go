@@ -56,6 +56,17 @@ const (
 	// that could not. It fires whatever that verdict is, because being able
 	// to see the workload again is the news.
 	KindEvaluable Kind = "became_evaluable_again"
+
+	// KindValueCollapsed is a captured value that fell to zero from a
+	// non-zero baseline.
+	//
+	// Only that case, and the restraint is the point. A declared bound that
+	// trips already fails the check, which changes the verdict, which is
+	// announced already: a second message would say the same thing twice.
+	// What is left is undeclared drift, where there is no agreed threshold,
+	// and inventing a percentage nobody signed up for is how a channel
+	// starts crying wolf. Zero from non-zero needs no agreed threshold.
+	KindValueCollapsed Kind = "value_collapsed"
 )
 
 // Transition is one thing worth saying about one workload.

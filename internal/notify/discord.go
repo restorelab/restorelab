@@ -74,13 +74,32 @@ func (discordChannel) Render(m Message) ([]byte, error) {
 		Title:       m.Workload,
 		URL:         m.Link,
 		Description: m.Transition.Headline,
-		Color:       verdictColour(m.Transition.Current.Result),
+		Color:       embedColour(m.Transition),
 		Timestamp:   m.At.UTC().Format(time.RFC3339),
 		Fields:      fields,
 		// The run id rather than the workload id, because it is what an
 		// operator types into the CLI next.
 		Footer: discordEmbedFooter{Text: "run " + m.RunID},
 	}}})
+}
+
+// embedColour picks the embed colour for a transition.
+//
+// It is the verdict's colour, with one exception. A collapsed value fires on a
+// run that passed every bound it was given, because none was given, so the
+// verdict is SUCCESS and the verdict colour is green. Painting "this workload
+// now holds an empty database" green would be the reassuring green this whole
+// product exists to remove, one level further out: the drill was honest, and
+// the message about it would not be.
+//
+// Amber rather than red, and the distinction is the same one DEGRADED already
+// makes. Nothing failed. Nobody declared this wrong. RestoreLab is saying it
+// noticed, which is worth an operator's eyes and not their night.
+func embedColour(t Transition) int {
+	if t.Kind == KindValueCollapsed {
+		return colourDegraded
+	}
+	return verdictColour(t.Current.Result)
 }
 
 func verdictColour(r core.RunResult) int {
