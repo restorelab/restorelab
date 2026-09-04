@@ -373,6 +373,7 @@ GET  /api/v1/plans                         workload, limit
 GET  /api/v1/plans/{ref}                   format=yaml for the document itself
 GET  /api/v1/schedule                      the plans that drill themselves
 GET  /api/v1/schedule/slots                plan, workload, limit
+GET  /api/v1/notifications                 the channels, and what each last delivered
 
 POST   /api/v1/session                     unauthenticated: token for a cookie
 DELETE /api/v1/session                     log out
@@ -383,6 +384,10 @@ POST   /api/v1/plans/validate              manage:  check a document, store noth
 POST   /api/v1/plans                       manage:  store a new plan
 PUT    /api/v1/plans/{ref}                 manage:  replace one, version=N to guard
 DELETE /api/v1/plans/{ref}                 manage:  remove one
+POST   /api/v1/notifications               manage:  add a channel
+PUT    /api/v1/notifications/{id}          manage:  change one, url omitted keeps it
+DELETE /api/v1/notifications/{id}          manage:  remove one
+POST   /api/v1/notifications/{id}/test     operate: send a sample message
 ```
 
 `GET /` is the dashboard, served from the binary. It needs no token: it is
@@ -985,6 +990,86 @@ drill in flight is unaffected too: the worker executes the snapshot taken when
 the run was queued, never the catalogue row, so deleting a plan cannot disturb
 an execution or rewrite a report.
 
+## Notification channels
+
+Where RestoreLab speaks when what a workload proves changes. The behaviour is
+in [notifications.md](notifications.md); this is the surface.
+
+**The URL is write-only across this API.** `POST` and `PUT` accept it, and no
+response ever contains it: not truncated, not starred out. A Discord or Slack
+webhook URL is a bearer credential, and the only safe redaction of one is its
+absence. The host comes back so that an operator can tell two channels apart,
+and nothing else does.
+
+### `GET /api/v1/notifications`
+
+Lists the configured channels with the health of each: its kind, its host,
+whether it is enabled, and what became of its last delivery.
+
+```json
+{"items":[{"id":"ops-discord","kind":"discord","host":"discord.com",
+  "enabled":true,"last_state":"sent","last_sent":"2026-09-04T03:04:11Z",
+  "last_status":204}]}
+```
+
+`last_state` is `sent`, `pending` or `failed`, and it is there so that
+`last_error` on a delivery that is merely being retried does not read as a
+dead channel. A channel that has never delivered anything carries none of the
+`last_*` fields.
+
+Answers `503` when the process has no configuration file to write back to: an
+empty list would read as "no channel is configured", which is a different
+statement and a false one.
+
+### `POST /api/v1/notifications`
+
+Adds a channel. Needs `manage`. Answers `201`.
+
+```json
+{"id":"ops-discord","kind":"discord","url":"https://discord.com/api/webhooks/..."}
+```
+
+`kind` is `discord`, `slack` or `webhook`; anything else is a `400` naming the
+three. The URL must be `https`, unless its host is a loopback address, because
+a bearer credential carried in a request line over plain http is handed to
+every hop on the path. It is sealed with the master key before it reaches
+disk.
+
+`manage` rather than `operate`, matching the plan catalogue: deciding what the
+product says out loud is the same kind of power as deciding what a drill is.
+
+### `PUT /api/v1/notifications/{id}`
+
+Replaces a channel. Needs `manage`.
+
+**Omitting `url` keeps the stored one.** The dashboard cannot prefill a field
+this API never returns, so every edit of a toggle arrives without it, and
+erasing a working webhook on that would be the obvious trap here. Send the key
+to change it.
+
+### `DELETE /api/v1/notifications/{id}`
+
+Removes a channel. Needs `manage`. Answers `204`. Deliveries already recorded
+keep their rows.
+
+### `POST /api/v1/notifications/{id}/test`
+
+Sends a sample message through the channel and reports what the far end said.
+Needs `operate`: it makes the product act on the world without changing what
+it is.
+
+```json
+{"id":"ops-discord","kind":"discord","status":204,"sent_at":"2026-09-04T13:22:07Z"}
+```
+
+A far end that refuses answers `502`, never `500`: the fault is upstream, and
+saying otherwise sends somebody hunting through their own logs. The error
+never carries the target URL.
+
+Nothing is recorded. The delivery ledger is keyed by run and channel, and a
+test has no run, so a green test never overwrites the record of a channel that
+failed last night.
+
 ## Following a drill live
 
 `GET /api/v1/recovery-runs/{id}/events` with `Accept: text/event-stream`
@@ -1192,6 +1277,6 @@ a queued run already carries its plan as a snapshot, precisely so that making
 plans editable cannot change the shape of a drill between the moment it was
 queued and the moment it runs.
 
-The scheduler, notifications and the web dashboard come after that. All three
+The web dashboard, the scheduler and the notifications came after that. All
 are consumers of what is documented above rather than new surface underneath
 it.
